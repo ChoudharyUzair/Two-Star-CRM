@@ -214,12 +214,13 @@ const App = {
           </button>
         </div>
 
-        <div class="nav-section">
+        <div class="nav-section" id="sections-nav">
           <div class="nav-section-title">
             <span>Sections</span>
             <button onclick="App.showAddFolder()" class="text-blue-400 hover:text-blue-300" title="Add Section"><i class="fas fa-plus-circle"></i></button>
           </div>
-          <div id="folders-list"></div>
+          <div id="folders-nav-list"></div>
+          <div id="folders-list" style="display:none;"></div>
         </div>
 
         <div class="nav-section">
@@ -265,34 +266,24 @@ const App = {
   },
 
   renderFolders() {
-    const list = document.getElementById('folders-list');
+    const list = document.getElementById('folders-nav-list');
     if (!list) return;
     if (this.state.folders.length === 0) {
       list.innerHTML = '<p class="text-gray-500 text-xs px-3 py-2">No sections yet.</p>';
       return;
     }
+    // Render each folder as a top-level nav-btn (matches Bills, Inventory, etc.)
+    // with edit pencil + count badge.
     list.innerHTML = this.state.folders.map(f => {
-      const isActive = this.state.currentFolderId === f.id && this.state.view !== 'dashboard';
-      const isExpanded = this.state.currentFolderId === f.id;
-      const clientsHtml = isExpanded && this.state.clients.length > 0
-        ? this.state.clients.map(c => `
-            <div class="client-item ${this.state.currentClientId === c.id ? 'active' : ''}"
-                 onclick="App.openClient(${c.id})">
-              <i class="fas fa-user text-xs mr-1.5 opacity-60"></i>${this.escapeHtml(c.name)}
-            </div>`).join('') : '';
+      const isActive = this.state.currentFolderId === f.id && (this.state.view === 'folder' || this.state.view === 'ledger');
       return `
-        <div class="mb-1">
-          <div class="folder-item ${isActive ? 'active' : ''}" onclick="App.openFolder(${f.id})">
+        <div class="nav-btn-wrap" style="position:relative;">
+          <button class="nav-btn ${isActive ? 'active' : ''}" onclick="App.openFolder(${f.id})">
             <i class="fas ${f.icon || 'fa-folder'}" style="color: ${f.color || '#3b82f6'}"></i>
-            <span class="flex-1 truncate">${this.escapeHtml(f.name)}</span>
-            <span class="text-xs text-gray-400">${f.client_count || 0}</span>
-            <button onclick="event.stopPropagation(); App.editFolder(${f.id})" class="text-gray-400 hover:text-white ml-1"><i class="fas fa-pen text-xs"></i></button>
-          </div>
-          <div>${clientsHtml}</div>
-          ${isExpanded ? `
-            <button onclick="App.showAddClient(${f.id})" class="text-blue-400 hover:text-blue-300 text-xs ml-9 mt-1 mb-2">
-              <i class="fas fa-plus"></i> Add Entry
-            </button>` : ''}
+            <span style="flex:1; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${this.escapeHtml(f.name)}</span>
+            <span class="text-xs text-gray-400 ml-1">${f.client_count || 0}</span>
+            <span class="ml-1 nav-edit" onclick="event.stopPropagation(); App.editFolder(${f.id})" title="Edit Section"><i class="fas fa-pen text-xs"></i></span>
+          </button>
         </div>`;
     }).join('');
   },
@@ -304,13 +295,18 @@ const App = {
       list.innerHTML = '<p class="text-gray-500 text-xs px-3 py-2">No custom sections.</p>';
       return;
     }
-    list.innerHTML = this.state.customSections.map(s => `
-      <div class="folder-item ${this.state.currentCustomSectionId === s.id ? 'active' : ''}" onclick="App.openCustomSection(${s.id})">
-        <i class="fas ${s.icon || 'fa-folder'}" style="color: ${s.color || '#3b82f6'}"></i>
-        <span class="flex-1 truncate">${this.escapeHtml(s.name)}</span>
-        <span class="text-xs text-gray-400">${s.row_count || 0}</span>
-        <button onclick="event.stopPropagation(); App.editCustomSection(${s.id})" class="text-gray-400 hover:text-white ml-1"><i class="fas fa-pen text-xs"></i></button>
-      </div>`).join('');
+    list.innerHTML = this.state.customSections.map(s => {
+      const isActive = this.state.currentCustomSectionId === s.id;
+      return `
+        <div class="nav-btn-wrap" style="position:relative;">
+          <button class="nav-btn ${isActive ? 'active' : ''}" onclick="App.openCustomSection(${s.id})">
+            <i class="fas ${s.icon || 'fa-folder'}" style="color: ${s.color || '#3b82f6'}"></i>
+            <span style="flex:1; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${this.escapeHtml(s.name)}</span>
+            <span class="text-xs text-gray-400 ml-1">${s.row_count || 0}</span>
+            <span class="ml-1 nav-edit" onclick="event.stopPropagation(); App.editCustomSection(${s.id})" title="Edit"><i class="fas fa-pen text-xs"></i></span>
+          </button>
+        </div>`;
+    }).join('');
   },
 
   showAddFolder() {
@@ -472,7 +468,7 @@ const App = {
         <div><label class="block text-sm font-medium mb-1">Phone</label><input id="c-phone" type="text" class="input-field"></div>
         <div><label class="block text-sm font-medium mb-1">Email</label><input id="c-email" type="email" class="input-field"></div>
         <div><label class="block text-sm font-medium mb-1">Address</label><input id="c-address" type="text" class="input-field"></div>
-        <div><label class="block text-sm font-medium mb-1">Opening Balance</label><input id="c-balance" type="number" step="0.01" value="0" class="input-field"></div>
+        <div><label class="block text-sm font-medium mb-1">Opening Balance</label><input id="c-balance" type="number" step="1" value="0" class="input-field"></div>
         <div><label class="block text-sm font-medium mb-1">Notes</label><textarea id="c-notes" class="input-field" rows="2"></textarea></div>
         <div class="flex gap-2 justify-end pt-2">
           <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
@@ -559,10 +555,10 @@ const App = {
         <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
           <div class="stat-card"><p class="text-xs text-gray-500">Opening Balance</p>
             <p class="text-xl font-bold text-gray-800 mt-1">PKR ${this.fmt(opening)}</p></div>
-          <div class="stat-card"><p class="text-xs text-gray-500">${this.escapeHtml(this.getColLabel('amount_received'))}</p>
-            <p class="text-xl font-bold mt-1 amount-received">PKR ${this.fmt(totalReceived)}</p></div>
           <div class="stat-card"><p class="text-xs text-gray-500">${this.escapeHtml(this.getColLabel('amount_pending'))}</p>
             <p class="text-xl font-bold mt-1 amount-pending">PKR ${this.fmt(totalPending)}</p></div>
+          <div class="stat-card"><p class="text-xs text-gray-500">${this.escapeHtml(this.getColLabel('amount_received'))}</p>
+            <p class="text-xl font-bold mt-1 amount-received">PKR ${this.fmt(totalReceived)}</p></div>
           <div class="balance-box"><p class="text-xs opacity-90">Net Balance Due</p>
             <p class="text-2xl font-bold mt-1">PKR ${this.fmt(netBalance)}</p>
             <p class="text-xs opacity-80 mt-1">${netBalance > 0 ? 'Owes you' : netBalance < 0 ? 'You owe' : 'Settled'}</p></div>
@@ -579,8 +575,8 @@ const App = {
                 <th style="width:40px;">${colHeader('sno')}</th>
                 <th style="width:120px;">${colHeader('date')}</th>
                 <th style="width:110px;">${colHeader('bill_no')}</th>
-                <th style="width:130px;">${colHeader('amount_received')}</th>
                 <th style="width:130px;">${colHeader('amount_pending')}</th>
+                <th style="width:130px;">${colHeader('amount_received')}</th>
                 <th style="width:120px;">${colHeader('status')}</th>
                 <th>${colHeader('description')}</th>
                 ${this.state.customColumns.map((col, i) => `<th>${this.escapeHtml(col.name)}<i class="fas fa-pen col-rename" onclick="App.renameCustomCol(${i})"></i></th>`).join('')}
@@ -591,8 +587,8 @@ const App = {
               <tfoot>
                 <tr class="bg-gray-100 font-bold">
                   <td colspan="3" class="text-right">TOTALS:</td>
-                  <td class="amount-received">PKR ${this.fmt(totalReceived)}</td>
                   <td class="amount-pending">PKR ${this.fmt(totalPending)}</td>
+                  <td class="amount-received">PKR ${this.fmt(totalReceived)}</td>
                   <td colspan="${2 + this.state.customColumns.length}"></td>
                   <td class="text-right amount-running">PKR ${this.fmt(netBalance)}</td>
                   <td></td>
@@ -622,8 +618,8 @@ const App = {
           <td class="text-gray-500">${i + 1}${lockIcon}</td>
           <td class="cell-display">${t.entry_date || ''}</td>
           <td class="cell-display">${this.escapeHtml(t.bill_no || '')}</td>
-          <td class="amount-received cell-display">PKR ${this.fmt(rec)}</td>
           <td class="amount-pending cell-display">PKR ${this.fmt(pen)}</td>
+          <td class="amount-received cell-display">PKR ${this.fmt(rec)}</td>
           <td><span class="status-badge status-${(t.status||'').toLowerCase()}">${this.escapeHtml(t.status || '')}</span></td>
           <td class="cell-display">${this.escapeHtml(t.description || '')}</td>
           ${this.state.customColumns.map(col => `<td class="cell-display">${this.escapeHtml(customData[col.key] || '')}</td>`).join('')}
@@ -660,10 +656,10 @@ const App = {
           <input id="er-date" type="date" class="input-field" value="${t.entry_date || ''}"></div>
         <div><label class="block text-sm font-medium mb-1">${this.escapeHtml(this.getColLabel('bill_no'))}</label>
           <input id="er-bill" type="text" class="input-field" value="${this.escapeAttr(t.bill_no || '')}"></div>
-        <div><label class="block text-sm font-medium mb-1">${this.escapeHtml(this.getColLabel('amount_received'))} (PKR)</label>
-          <input id="er-rec" type="number" step="0.01" class="input-field" value="${parseFloat(t.amount_received) || 0}"></div>
         <div><label class="block text-sm font-medium mb-1">${this.escapeHtml(this.getColLabel('amount_pending'))} (PKR)</label>
-          <input id="er-pen" type="number" step="0.01" class="input-field" value="${parseFloat(t.amount_pending) || 0}"></div>
+          <input id="er-pen" type="number" step="1" min="0" class="input-field" value="${parseInt(t.amount_pending) || 0}"></div>
+        <div><label class="block text-sm font-medium mb-1">${this.escapeHtml(this.getColLabel('amount_received'))} (PKR)</label>
+          <input id="er-rec" type="number" step="1" min="0" class="input-field" value="${parseInt(t.amount_received) || 0}"></div>
         <div><label class="block text-sm font-medium mb-1">${this.escapeHtml(this.getColLabel('status'))}</label>
           <select id="er-status" class="input-field">
             ${['Pending','Received','Partial','Overdue','Cancelled'].map(s => `<option value="${s}" ${t.status === s ? 'selected' : ''}>${s}</option>`).join('')}
@@ -685,21 +681,42 @@ const App = {
       document.querySelectorAll('#ledger-edit-form [id^="er-cd-"]').forEach(el => {
         newCustom[el.dataset.key] = el.value;
       });
+      const billNo = (document.getElementById('er-bill').value || '').trim();
+      if (billNo && !this.validateBillNo(billNo)) return;
       try {
-        await this.api.put(`/api/transactions/${id}`, {
-          entry_date: document.getElementById('er-date').value,
-          bill_no: document.getElementById('er-bill').value,
-          amount_received: parseFloat(document.getElementById('er-rec').value) || 0,
-          amount_pending: parseFloat(document.getElementById('er-pen').value) || 0,
-          status: document.getElementById('er-status').value,
-          description: document.getElementById('er-desc').value,
-          custom_data: newCustom
+        const res = await fetch(`/api/transactions/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            entry_date: document.getElementById('er-date').value,
+            bill_no: billNo,
+            amount_received: parseInt(document.getElementById('er-rec').value) || 0,
+            amount_pending: parseInt(document.getElementById('er-pen').value) || 0,
+            status: document.getElementById('er-status').value,
+            description: document.getElementById('er-desc').value,
+            custom_data: newCustom
+          })
         });
+        const data = await res.json();
+        if (!res.ok || data.error) { this.toast(data.error || 'Update failed', 'error'); return; }
+        App._cache = {};
         this.closeModal();
         await this.refreshLedger();
         this.toast('Row updated', 'success');
       } catch (err) { this.toast('Update failed', 'error'); }
     });
+  },
+
+  validateBillNo(billNo) {
+    const t = (billNo || '').trim();
+    if (!t) return true;
+    const digits = (t.match(/\d/g) || []).length;
+    if (digits < 3) {
+      this.toast('Bill No must contain at least 3 digits', 'error');
+      return false;
+    }
+    return true;
   },
 
   async renameBuiltInCol(key) {
@@ -741,6 +758,7 @@ const App = {
         bill_no: '', amount_received: 0, amount_pending: 0,
         status: 'Pending', description: ''
       });
+      if (res?.error) { this.toast(res.error, 'error'); return; }
       await this.refreshLedger();
       this.toast('Row added', 'success');
       // Open editor on the new row
@@ -773,7 +791,7 @@ const App = {
         <div><label class="block text-sm font-medium mb-1">Phone</label><input id="c-phone" type="text" class="input-field" value="${this.escapeAttr(c.phone || '')}"></div>
         <div><label class="block text-sm font-medium mb-1">Email</label><input id="c-email" type="email" class="input-field" value="${this.escapeAttr(c.email || '')}"></div>
         <div><label class="block text-sm font-medium mb-1">Address</label><input id="c-address" type="text" class="input-field" value="${this.escapeAttr(c.address || '')}"></div>
-        <div><label class="block text-sm font-medium mb-1">Opening Balance</label><input id="c-balance" type="number" step="0.01" class="input-field" value="${c.opening_balance || 0}"></div>
+        <div><label class="block text-sm font-medium mb-1">Opening Balance</label><input id="c-balance" type="number" step="1" class="input-field" value="${c.opening_balance || 0}"></div>
         <div><label class="block text-sm font-medium mb-1">Notes</label><textarea id="c-notes" class="input-field" rows="2">${this.escapeHtml(c.notes || '')}</textarea></div>
         <div class="flex gap-2 justify-end pt-2">
           <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
@@ -1132,8 +1150,8 @@ const App = {
           <div><label class="block text-sm font-medium mb-1">Unit</label><input id="i-unit" type="text" class="input-field" value="${this.escapeAttr(it.unit || 'pcs')}"></div>
         </div>
         <div class="grid grid-cols-2 gap-3">
-          <div><label class="block text-sm font-medium mb-1">Rate (PKR)</label><input id="i-rate" type="number" step="0.01" class="input-field" value="${it.rate || 0}"></div>
-          <div><label class="block text-sm font-medium mb-1">Quantity</label><input id="i-qty" type="number" step="0.01" class="input-field" value="${it.quantity || 0}"></div>
+          <div><label class="block text-sm font-medium mb-1">Rate (PKR)</label><input id="i-rate" type="number" step="1" class="input-field" value="${it.rate || 0}"></div>
+          <div><label class="block text-sm font-medium mb-1">Quantity</label><input id="i-qty" type="number" step="1" class="input-field" value="${it.quantity || 0}"></div>
         </div>
         <div><label class="block text-sm font-medium mb-1">Category</label><input id="i-cat" type="text" class="input-field" value="${this.escapeAttr(it.category || '')}"></div>
         <div><label class="block text-sm font-medium mb-1">Notes</label><textarea id="i-notes" class="input-field" rows="2">${this.escapeHtml(it.notes || '')}</textarea></div>
@@ -1262,9 +1280,9 @@ const App = {
         <div><label class="block text-sm font-medium mb-1">Category</label>
           <input id="r-cat" type="text" class="input-field" value="${this.escapeAttr(it.category || '')}"></div>
         <div><label class="block text-sm font-medium mb-1">Quantity Available</label>
-          <input id="r-qty" type="number" step="0.01" class="input-field" value="${it.quantity || 0}" oninput="App._calcRawTotal()"></div>
+          <input id="r-qty" type="number" step="1" class="input-field" value="${it.quantity || 0}" oninput="App._calcRawTotal()"></div>
         <div><label class="block text-sm font-medium mb-1">Rate per Unit (PKR)</label>
-          <input id="r-rate" type="number" step="0.01" class="input-field" value="${it.rate || 0}" oninput="App._calcRawTotal()"></div>
+          <input id="r-rate" type="number" step="1" class="input-field" value="${it.rate || 0}" oninput="App._calcRawTotal()"></div>
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Total Value</label>
           <div id="r-total" class="input-field" style="background:#f8fafc; font-weight:bold;">PKR 0.00</div></div>
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Supplier (link to client)</label>
@@ -1369,28 +1387,42 @@ const App = {
             </tr></thead><tbody>
               ${emps.length === 0 ? `<tr><td colspan="9" class="text-center py-8 text-gray-500">
                 <i class="fas fa-user-tie text-3xl mb-2 block"></i>No employees yet.</td></tr>` :
-                emps.map((e, i) => `
+                emps.map((e, i) => {
+                  const isPiece = e.salary_type === 'per_piece';
+                  return `
                   <tr class="cursor-pointer hover:bg-gray-50" onclick="App.openEmployee(${e.id})">
                     <td>${i + 1}</td>
-                    <td class="font-semibold">${this.escapeHtml(e.name)}</td>
+                    <td class="font-semibold">${this.escapeHtml(e.name)}${isPiece ? ' <i class="fas fa-cubes text-orange-500 ml-1" title="Per Piece"></i>' : ''}</td>
                     <td>${this.escapeHtml(e.designation || '-')}</td>
                     <td>${this.escapeHtml(e.phone || '-')}</td>
-                    <td class="text-right">PKR ${this.fmt(e.monthly_salary)}</td>
+                    <td class="text-right">${isPiece ? '<span class="text-xs text-orange-600">Per Piece</span>' : 'PKR ' + this.fmt(e.monthly_salary)}</td>
                     <td class="text-right amount-received">PKR ${this.fmt(e.total_paid)}</td>
                     <td class="text-right amount-pending">PKR ${this.fmt(e.total_advance)}</td>
                     <td><span class="status-badge ${e.active ? 'status-received' : 'status-cancelled'}">${e.active ? 'Active' : 'Inactive'}</span></td>
                     <td onclick="event.stopPropagation()">
                       <button onclick="App.showEmployeeEditor(${e.id})" class="btn btn-secondary btn-sm"><i class="fas fa-edit"></i></button>
                     </td>
-                  </tr>`).join('')}
+                  </tr>`}).join('')}
             </tbody></table></div>
         </div>
       </div>`;
   },
 
-  showEmployeeEditor(id = null) {
-    const e = id ? this.state.employees.find(x => x.id === id) : { name:'', phone:'', cnic:'', address:'', designation:'', joining_date:'', monthly_salary:0, notes:'', active:1 };
+  async showEmployeeEditor(id = null) {
+    let e = id ? this.state.employees.find(x => x.id === id) : { name:'', phone:'', cnic:'', address:'', designation:'', joining_date:'', monthly_salary:0, notes:'', active:1, salary_type:'monthly' };
     if (id && !e) return;
+    let items = [];
+    if (id) {
+      try {
+        const det = await this.api.get(`/api/employees/${id}`);
+        e = det.employee || e;
+        items = det.items || [];
+      } catch {}
+    }
+    this._tempEmpItems = items.map(it => ({ item_name: it.item_name || '', rate: it.rate || 0 }));
+    if (this._tempEmpItems.length === 0) this._tempEmpItems = [{ item_name: '', rate: 0 }];
+    const sType = e.salary_type === 'per_piece' ? 'per_piece' : 'monthly';
+
     this.openModal(`
       <h2 class="text-xl font-bold mb-4"><i class="fas fa-user-tie text-blue-500 mr-2"></i>${id ? 'Edit' : 'Add'} Employee</h2>
       <form id="emp-form" class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1400,7 +1432,23 @@ const App = {
         <div><label class="block text-sm font-medium mb-1">CNIC</label><input id="e-cnic" type="text" class="input-field" value="${this.escapeAttr(e.cnic || '')}"></div>
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Address</label><input id="e-addr" type="text" class="input-field" value="${this.escapeAttr(e.address || '')}"></div>
         <div><label class="block text-sm font-medium mb-1">Joining Date</label><input id="e-join" type="date" class="input-field" value="${e.joining_date || ''}"></div>
-        <div><label class="block text-sm font-medium mb-1">Monthly Salary (PKR)</label><input id="e-sal" type="number" step="0.01" class="input-field" value="${e.monthly_salary || 0}"></div>
+        <div><label class="block text-sm font-medium mb-1">Salary Type</label>
+          <select id="e-stype" class="input-field" onchange="App._toggleSalaryType()">
+            <option value="monthly" ${sType === 'monthly' ? 'selected' : ''}>Monthly Salary</option>
+            <option value="per_piece" ${sType === 'per_piece' ? 'selected' : ''}>Per Piece</option>
+          </select></div>
+
+        <div id="e-monthly-wrap" class="md:col-span-2" style="${sType === 'monthly' ? '' : 'display:none;'}">
+          <label class="block text-sm font-medium mb-1">Monthly Salary (PKR)</label>
+          <input id="e-sal" type="number" step="1" min="0" class="input-field" value="${parseInt(e.monthly_salary) || 0}">
+        </div>
+
+        <div id="e-piece-wrap" class="md:col-span-2" style="${sType === 'per_piece' ? '' : 'display:none;'}">
+          <label class="block text-sm font-medium mb-2"><i class="fas fa-cubes text-orange-500 mr-1"></i>Items (Per Piece Rate)</label>
+          <div id="emp-items-list"></div>
+          <button type="button" class="btn btn-secondary btn-sm mt-1" onclick="App._addEmpItemRow()"><i class="fas fa-plus"></i> Add Item</button>
+        </div>
+
         <div><label class="block text-sm font-medium mb-1">Status</label>
           <select id="e-active" class="input-field">
             <option value="1" ${e.active ? 'selected' : ''}>Active</option>
@@ -1413,8 +1461,16 @@ const App = {
           <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save</button>
         </div>
       </form>`, 'modal-lg');
+    this._renderEmpItems();
     document.getElementById('emp-form').addEventListener('submit', async (ev) => {
       ev.preventDefault();
+      const sType = document.getElementById('e-stype').value;
+      // Capture items from DOM
+      this._captureEmpItems();
+      const cleanItems = (this._tempEmpItems || []).filter(i => (i.item_name || '').trim().length > 0);
+      if (sType === 'per_piece' && cleanItems.length === 0) {
+        this.toast('Add at least 1 item with name & rate for Per Piece', 'error'); return;
+      }
       const payload = {
         name: document.getElementById('e-name').value,
         designation: document.getElementById('e-desig').value,
@@ -1422,9 +1478,11 @@ const App = {
         cnic: document.getElementById('e-cnic').value,
         address: document.getElementById('e-addr').value,
         joining_date: document.getElementById('e-join').value,
-        monthly_salary: parseFloat(document.getElementById('e-sal').value) || 0,
+        monthly_salary: sType === 'monthly' ? (parseInt(document.getElementById('e-sal').value) || 0) : 0,
         notes: document.getElementById('e-notes').value,
-        active: parseInt(document.getElementById('e-active').value)
+        active: parseInt(document.getElementById('e-active').value),
+        salary_type: sType,
+        items: cleanItems
       };
       try {
         if (id) await this.api.put(`/api/employees/${id}`, payload);
@@ -1434,6 +1492,47 @@ const App = {
         this.toast('Saved', 'success');
       } catch (err) { this.toast('Failed', 'error'); }
     });
+  },
+
+  _toggleSalaryType() {
+    const t = document.getElementById('e-stype').value;
+    document.getElementById('e-monthly-wrap').style.display = t === 'monthly' ? '' : 'none';
+    document.getElementById('e-piece-wrap').style.display = t === 'per_piece' ? '' : 'none';
+  },
+
+  _renderEmpItems() {
+    const list = document.getElementById('emp-items-list');
+    if (!list) return;
+    list.innerHTML = this._tempEmpItems.map((it, i) => `
+      <div class="flex gap-2 items-center bg-gray-50 p-2 rounded mb-2" data-emp-item="${i}">
+        <input type="text" class="input-field flex-1" data-ei-name="${i}" value="${this.escapeAttr(it.item_name || '')}" placeholder="Item name (e.g., Shirt, Trouser)">
+        <input type="number" step="1" min="0" class="input-field" style="width:120px;" data-ei-rate="${i}" value="${parseInt(it.rate) || 0}" placeholder="Rate (PKR)">
+        <button type="button" class="btn btn-danger btn-sm" onclick="App._removeEmpItemRow(${i})"><i class="fas fa-times"></i></button>
+      </div>`).join('');
+  },
+
+  _captureEmpItems() {
+    document.querySelectorAll('#emp-items-list [data-ei-name]').forEach(el => {
+      const i = parseInt(el.dataset.eiName);
+      if (this._tempEmpItems[i]) this._tempEmpItems[i].item_name = el.value;
+    });
+    document.querySelectorAll('#emp-items-list [data-ei-rate]').forEach(el => {
+      const i = parseInt(el.dataset.eiRate);
+      if (this._tempEmpItems[i]) this._tempEmpItems[i].rate = parseInt(el.value) || 0;
+    });
+  },
+
+  _addEmpItemRow() {
+    this._captureEmpItems();
+    this._tempEmpItems.push({ item_name: '', rate: 0 });
+    this._renderEmpItems();
+  },
+
+  _removeEmpItemRow(i) {
+    this._captureEmpItems();
+    this._tempEmpItems.splice(i, 1);
+    if (this._tempEmpItems.length === 0) this._tempEmpItems.push({ item_name: '', rate: 0 });
+    this._renderEmpItems();
   },
 
   async deleteEmployee(id) {
@@ -1451,6 +1550,7 @@ const App = {
       const data = await this.api.get(`/api/employees/${id}`);
       this.state.currentEmployee = data.employee;
       this.state.employeeTransactions = data.transactions || [];
+      this.state.currentEmployeeItems = data.items || [];
       this.renderEmployeeDetail();
     } catch (e) {}
   },
@@ -1489,29 +1589,43 @@ const App = {
           <div class="overflow-x-auto"><table class="ledger-table">
             <thead><tr>
               <th style="width:40px;">#</th><th>Date</th><th>Type</th>
-              <th class="text-right">Amount</th><th>Description</th>
+              <th>Item / Description</th><th class="text-right">Qty</th>
+              <th class="text-right">Rate</th><th class="text-right">Amount</th>
               <th style="width:100px;">Action</th>
             </tr></thead><tbody>
-              ${tx.length === 0 ? `<tr><td colspan="6" class="text-center py-8 text-gray-500"><i class="fas fa-inbox text-3xl mb-2 block"></i>No records yet.</td></tr>` :
-                tx.map((t, i) => `<tr>
+              ${tx.length === 0 ? `<tr><td colspan="8" class="text-center py-8 text-gray-500"><i class="fas fa-inbox text-3xl mb-2 block"></i>No records yet.</td></tr>` :
+                tx.map((t, i) => {
+                  const isPiece = t.entry_type === 'per_piece';
+                  return `<tr>
                   <td>${i + 1}</td>
                   <td>${t.entry_date}</td>
-                  <td><span class="status-badge ${t.type === 'salary' ? 'status-received' : t.type === 'advance' ? 'status-pending' : t.type === 'bonus' ? 'status-paid' : 'status-overdue'}">${this.escapeHtml(t.type)}</span></td>
+                  <td><span class="status-badge ${t.type === 'salary' ? 'status-received' : t.type === 'advance' ? 'status-pending' : t.type === 'bonus' ? 'status-paid' : 'status-overdue'}">${this.escapeHtml(t.type)}</span>${isPiece ? ' <i class="fas fa-cubes text-orange-500 ml-1" title="Per Piece"></i>' : ''}</td>
+                  <td>${isPiece ? `<strong>${this.escapeHtml(t.item_name || '')}</strong>${t.description ? `<div class="text-xs text-gray-500">${this.escapeHtml(t.description)}</div>` : ''}` : this.escapeHtml(t.description || '')}</td>
+                  <td class="text-right">${isPiece ? this.fmt(t.quantity) : '-'}</td>
+                  <td class="text-right">${isPiece ? 'PKR ' + this.fmt(t.rate) : '-'}</td>
                   <td class="text-right font-bold">PKR ${this.fmt(t.amount)}</td>
-                  <td>${this.escapeHtml(t.description || '')}</td>
                   <td>
                     <button onclick="App.showEmployeeTxEditor(${e.id}, ${t.id})" class="btn btn-secondary btn-sm"><i class="fas fa-edit"></i></button>
                     <button onclick="App.deleteEmployeeTx(${t.id})" class="text-red-500 ml-1"><i class="fas fa-trash text-sm"></i></button>
                   </td>
-                </tr>`).join('')}
+                </tr>`}).join('')}
             </tbody></table></div>
         </div>
       </div>`;
   },
 
   showEmployeeTxEditor(empId, txId = null) {
-    const tx = txId ? this.state.employeeTransactions.find(t => t.id === txId) : { entry_date: new Date().toISOString().slice(0,10), type:'salary', amount:0, description:'' };
+    const tx = txId ? this.state.employeeTransactions.find(t => t.id === txId) : { entry_date: new Date().toISOString().slice(0,10), type:'salary', amount:0, description:'', entry_type:'cash', item_id:null, item_name:'', quantity:0, rate:0 };
     if (txId && !tx) return;
+    const emp = this.state.currentEmployee || {};
+    const empItems = this.state.currentEmployeeItems || [];
+    const isPerPieceEmp = emp.salary_type === 'per_piece';
+    const initEntryType = tx.entry_type || (isPerPieceEmp ? 'per_piece' : 'cash');
+
+    const itemOptionsHtml = empItems.map(it =>
+      `<option value="${it.id}" data-rate="${it.rate}" ${tx.item_id == it.id ? 'selected' : ''}>${this.escapeHtml(it.item_name)} — PKR ${this.fmt(it.rate)}</option>`
+    ).join('');
+
     this.openModal(`
       <h2 class="text-xl font-bold mb-4"><i class="fas fa-money-check-alt text-green-500 mr-2"></i>${txId ? 'Edit' : 'New'} Salary Entry</h2>
       <form id="etx-form" class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1521,8 +1635,39 @@ const App = {
           <select id="etx-type" class="input-field">
             ${['salary','advance','bonus','deduction'].map(t => `<option value="${t}" ${tx.type === t ? 'selected' : ''}>${t.charAt(0).toUpperCase()+t.slice(1)}</option>`).join('')}
           </select></div>
-        <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Amount (PKR)</label>
-          <input id="etx-amount" type="number" step="0.01" class="input-field" value="${tx.amount || 0}"></div>
+
+        ${isPerPieceEmp ? `
+          <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Entry Type</label>
+            <select id="etx-etype" class="input-field" onchange="App._toggleEtxEntryType()">
+              <option value="cash" ${initEntryType === 'cash' ? 'selected' : ''}>Cash (Direct Amount)</option>
+              <option value="per_piece" ${initEntryType === 'per_piece' ? 'selected' : ''}>Per Piece (Item × Quantity)</option>
+            </select></div>
+        ` : `<input type="hidden" id="etx-etype" value="cash">`}
+
+        <div id="etx-piece-wrap" class="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-3" style="${initEntryType === 'per_piece' ? '' : 'display:none;'}">
+          <div><label class="block text-sm font-medium mb-1">Item</label>
+            <select id="etx-item" class="input-field" onchange="App._etxItemChanged()">
+              <option value="">-- Select --</option>
+              ${itemOptionsHtml}
+            </select></div>
+          <div><label class="block text-sm font-medium mb-1">Rate (PKR)</label>
+            <input id="etx-rate" type="number" step="1" min="0" class="input-field" value="${parseInt(tx.rate) || 0}" oninput="App._etxRecalc()"></div>
+          <div><label class="block text-sm font-medium mb-1">Quantity</label>
+            <input id="etx-qty" type="number" step="1" min="0" class="input-field" value="${parseInt(tx.quantity) || 0}" oninput="App._etxRecalc()"></div>
+        </div>
+
+        <div id="etx-amount-wrap" class="md:col-span-2" style="${initEntryType === 'cash' ? '' : 'display:none;'}">
+          <label class="block text-sm font-medium mb-1">Amount (PKR)</label>
+          <input id="etx-amount" type="number" step="1" min="0" class="input-field" value="${parseInt(tx.amount) || 0}">
+        </div>
+
+        <div id="etx-piece-total" class="md:col-span-2" style="${initEntryType === 'per_piece' ? '' : 'display:none;'}">
+          <div class="bg-blue-50 border border-blue-200 rounded p-3 flex justify-between items-center">
+            <span class="text-sm font-medium">Total (Quantity × Rate):</span>
+            <span id="etx-total-display" class="font-bold text-lg amount-running">PKR 0.00</span>
+          </div>
+        </div>
+
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Description</label>
           <textarea id="etx-desc" class="input-field" rows="2">${this.escapeHtml(tx.description || '')}</textarea></div>
         <div class="md:col-span-2 flex gap-2 justify-end pt-2 border-t">
@@ -1530,16 +1675,35 @@ const App = {
           <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
           <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save</button>
         </div>
-      </form>`);
+      </form>`, 'modal-lg');
+
+    if (isPerPieceEmp && initEntryType === 'per_piece') this._etxRecalc();
+
     document.getElementById('etx-form').addEventListener('submit', async (e) => {
       e.preventDefault();
-      const payload = {
+      const eType = document.getElementById('etx-etype').value;
+      let payload = {
         employee_id: empId,
         entry_date: document.getElementById('etx-date').value,
         type: document.getElementById('etx-type').value,
-        amount: parseFloat(document.getElementById('etx-amount').value) || 0,
-        description: document.getElementById('etx-desc').value
+        description: document.getElementById('etx-desc').value,
+        entry_type: eType
       };
+      if (eType === 'per_piece') {
+        const itemSel = document.getElementById('etx-item');
+        const itemId = itemSel.value ? parseInt(itemSel.value) : null;
+        const itemName = itemSel.value ? itemSel.options[itemSel.selectedIndex].text.split(' — ')[0] : '';
+        const qty = parseInt(document.getElementById('etx-qty').value) || 0;
+        const rate = parseInt(document.getElementById('etx-rate').value) || 0;
+        if (qty <= 0) { this.toast('Quantity required', 'error'); return; }
+        payload.item_id = itemId;
+        payload.item_name = itemName;
+        payload.quantity = qty;
+        payload.rate = rate;
+        payload.amount = qty * rate;
+      } else {
+        payload.amount = parseInt(document.getElementById('etx-amount').value) || 0;
+      }
       try {
         if (txId) await this.api.put(`/api/employee-transactions/${txId}`, payload);
         else await this.api.post('/api/employee-transactions', payload);
@@ -1548,6 +1712,30 @@ const App = {
         this.toast('Saved', 'success');
       } catch (err) { this.toast('Failed', 'error'); }
     });
+  },
+
+  _toggleEtxEntryType() {
+    const t = document.getElementById('etx-etype').value;
+    document.getElementById('etx-piece-wrap').style.display = t === 'per_piece' ? '' : 'none';
+    document.getElementById('etx-amount-wrap').style.display = t === 'cash' ? '' : 'none';
+    document.getElementById('etx-piece-total').style.display = t === 'per_piece' ? '' : 'none';
+    if (t === 'per_piece') this._etxRecalc();
+  },
+
+  _etxItemChanged() {
+    const sel = document.getElementById('etx-item');
+    const opt = sel.options[sel.selectedIndex];
+    const rate = opt ? (parseInt(opt.dataset.rate) || 0) : 0;
+    document.getElementById('etx-rate').value = rate;
+    this._etxRecalc();
+  },
+
+  _etxRecalc() {
+    const qty = parseInt(document.getElementById('etx-qty')?.value) || 0;
+    const rate = parseInt(document.getElementById('etx-rate')?.value) || 0;
+    const total = qty * rate;
+    const disp = document.getElementById('etx-total-display');
+    if (disp) disp.textContent = 'PKR ' + this.fmt(total);
   },
 
   async deleteEmployeeTx(id) {
@@ -1633,7 +1821,7 @@ const App = {
             <option value="Workers Food"><option value="Travel"><option value="Repairs"><option value="Utility"><option value="Stationary"><option value="Tea/Snacks"><option value="Misc">
           </datalist></div>
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Description</label><input id="se-desc" type="text" class="input-field" value="${this.escapeAttr(it.description || '')}"></div>
-        <div><label class="block text-sm font-medium mb-1">Amount (PKR)</label><input id="se-amt" type="number" step="0.01" class="input-field" value="${it.amount || 0}"></div>
+        <div><label class="block text-sm font-medium mb-1">Amount (PKR)</label><input id="se-amt" type="number" step="1" class="input-field" value="${it.amount || 0}"></div>
         <div><label class="block text-sm font-medium mb-1">Paid To</label><input id="se-to" type="text" class="input-field" value="${this.escapeAttr(it.paid_to || '')}"></div>
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Notes</label><textarea id="se-notes" class="input-field" rows="2">${this.escapeHtml(it.notes || '')}</textarea></div>
         <div class="md:col-span-2 flex gap-2 justify-end pt-2 border-t">
@@ -1845,7 +2033,7 @@ const App = {
       <div class="${cols.length > 4 ? 'md:col-span-1' : 'md:col-span-2'}">
         <label class="block text-sm font-medium mb-1">${this.escapeHtml(c.name)}</label>
         <input id="cr-${i}" data-key="${this.escapeAttr(c.key)}" type="${c.type === 'number' ? 'number' : c.type === 'date' ? 'date' : 'text'}" 
-               class="input-field" value="${this.escapeAttr(data[c.key] || '')}" ${c.type === 'number' ? 'step="0.01"' : ''}>
+               class="input-field" value="${this.escapeAttr(data[c.key] || '')}" ${c.type === 'number' ? 'step="1"' : ''}>
       </div>`).join('');
     this.openModal(`
       <h2 class="text-xl font-bold mb-4"><i class="fas ${sec.icon} mr-2" style="color:${sec.color}"></i>${rowId ? 'Edit' : 'Add'} Row · ${this.escapeHtml(sec.name)}</h2>
@@ -1970,7 +2158,13 @@ const App = {
     } else items = [{ product_id: null, product_name: '', quantity: 1, rate: 0, total: 0 }];
     this._billItems = items;
     this._billEditing = editing;
-    const billNoVal = editing ? editing.bill_no : ('BILL-' + new Date().toISOString().slice(2,10).replace(/-/g,'') + '-' + Math.floor(Math.random()*900+100));
+    // Bill No: 4-digit-based, unique. e.g. timestamp tail + 4 random.
+    const genBillNo = () => {
+      const t = Date.now().toString().slice(-4);
+      const r = Math.floor(Math.random() * 9000 + 1000);
+      return `${t}${r}`;
+    };
+    const billNoVal = editing ? editing.bill_no : genBillNo();
     const billDateVal = editing ? editing.bill_date : new Date().toISOString().slice(0,10);
 
     this.openModal(`
@@ -2003,12 +2197,12 @@ const App = {
         <div class="space-y-2">
           <div class="flex justify-between items-center"><label class="text-sm">Subtotal:</label><span id="b-subtotal" class="font-bold">PKR 0.00</span></div>
           <div class="flex justify-between items-center"><label class="text-sm">Discount:</label>
-            <input id="b-discount" type="number" step="0.01" class="input-field" style="width:140px;" value="${editing ? editing.discount : 0}" oninput="App._calcBill()"></div>
+            <input id="b-discount" type="number" step="1" min="0" class="input-field" style="width:140px;" value="${editing ? parseInt(editing.discount) || 0 : 0}" oninput="App._calcBill()"></div>
           <div class="flex justify-between items-center"><label class="text-sm">Tax %:</label>
-            <input id="b-tax" type="number" step="0.01" class="input-field" style="width:140px;" value="${editing ? editing.tax : 0}" oninput="App._calcBill()"></div>
+            <input id="b-tax" type="number" step="1" min="0" class="input-field" style="width:140px;" value="${editing ? parseInt(editing.tax) || 0 : 0}" oninput="App._calcBill()"></div>
           <div class="flex justify-between items-center pt-2 border-t"><label class="text-sm font-bold">Total:</label><span id="b-total" class="font-bold text-lg amount-running">PKR 0.00</span></div>
           <div class="flex justify-between items-center"><label class="text-sm">Paid:</label>
-            <input id="b-paid" type="number" step="0.01" class="input-field" style="width:140px;" value="${editing ? editing.paid : 0}" oninput="App._calcBill()"></div>
+            <input id="b-paid" type="number" step="1" min="0" class="input-field" style="width:140px;" value="${editing ? parseInt(editing.paid) || 0 : 0}" oninput="App._calcBill()"></div>
           <div class="flex justify-between items-center"><label class="text-sm">Due:</label><span id="b-due" class="font-bold amount-pending">PKR 0.00</span></div>
           <div class="flex justify-between items-center"><label class="text-sm">Status:</label>
             <select id="b-status" class="input-field" style="width:140px;">
@@ -2047,11 +2241,11 @@ const App = {
     } else document.getElementById('bill-product-list').innerHTML = productOpts;
     tbody.innerHTML = this._billItems.map((it, i) => `
       <tr data-row="${i}">
-        <td><input type="number" step="0.01" value="${it.quantity || 0}" oninput="App._updateBillRow(${i}, 'quantity', parseFloat(this.value)||0)"></td>
+        <td><input type="number" step="1" min="0" value="${parseInt(it.quantity) || 0}" oninput="App._updateBillRow(${i}, 'quantity', parseInt(this.value)||0)"></td>
         <td><input type="text" list="bill-product-list" value="${this.escapeAttr(it.product_name || '')}"
                  oninput="App._updateBillProductName(${i}, this.value)" onchange="App._matchBillProduct(${i}, this.value)" placeholder="Type or pick product"></td>
-        <td><input type="number" step="0.01" value="${it.rate || 0}" oninput="App._updateBillRow(${i}, 'rate', parseFloat(this.value)||0)"></td>
-        <td class="text-right font-bold amount-running">PKR ${this.fmt((parseFloat(it.quantity)||0) * (parseFloat(it.rate)||0))}</td>
+        <td><input type="number" step="1" min="0" value="${parseInt(it.rate) || 0}" oninput="App._updateBillRow(${i}, 'rate', parseInt(this.value)||0)"></td>
+        <td class="text-right font-bold amount-running">PKR ${this.fmt((parseInt(it.quantity)||0) * (parseInt(it.rate)||0))}</td>
         <td class="text-center"><button type="button" onclick="App._removeBillRow(${i})" class="text-red-500 hover:text-red-700"><i class="fas fa-trash text-sm"></i></button></td>
       </tr>`).join('');
   },
@@ -2100,21 +2294,23 @@ const App = {
   },
 
   async _saveBill(billId, alsoPrint) {
-    const billNo = document.getElementById('b-no').value.trim() || ('BILL-' + Date.now());
+    const billNo = document.getElementById('b-no').value.trim();
+    if (!billNo) { this.toast('Bill No required', 'error'); return; }
+    if (!this.validateBillNo(billNo)) return;
     const billDate = document.getElementById('b-date').value;
     const customerName = document.getElementById('b-cname').value.trim();
     const phone = document.getElementById('b-cphone').value.trim();
     const address = document.getElementById('b-caddr').value.trim();
-    const discount = parseFloat(document.getElementById('b-discount').value) || 0;
-    const taxPct = parseFloat(document.getElementById('b-tax').value) || 0;
-    const paid = parseFloat(document.getElementById('b-paid').value) || 0;
+    const discount = parseInt(document.getElementById('b-discount').value) || 0;
+    const taxPct = parseInt(document.getElementById('b-tax').value) || 0;
+    const paid = parseInt(document.getElementById('b-paid').value) || 0;
     const status = document.getElementById('b-status').value;
     const notes = document.getElementById('b-notes').value;
     if (!customerName) { this.toast('Customer name required', 'error'); return; }
     if (this._billItems.length === 0) { this.toast('At least one item required', 'error'); return; }
-    const subtotal = this._billItems.reduce((s, it) => s + ((parseFloat(it.quantity) || 0) * (parseFloat(it.rate) || 0)), 0);
+    const subtotal = this._billItems.reduce((s, it) => s + ((parseInt(it.quantity) || 0) * (parseInt(it.rate) || 0)), 0);
     const taxable = subtotal - discount;
-    const taxAmt = taxable * (taxPct / 100);
+    const taxAmt = Math.round(taxable * (taxPct / 100));
     const total = taxable + taxAmt;
     const matched = this.state.allClients.find(c => c.name === customerName);
     const payload = {
@@ -2124,14 +2320,16 @@ const App = {
       subtotal, discount, tax: taxPct, total, paid, notes, status,
       items: this._billItems.map(it => ({
         product_id: it.product_id || null, product_name: it.product_name || '',
-        quantity: parseFloat(it.quantity) || 0, rate: parseFloat(it.rate) || 0,
-        total: (parseFloat(it.quantity) || 0) * (parseFloat(it.rate) || 0)
+        quantity: parseInt(it.quantity) || 0, rate: parseInt(it.rate) || 0,
+        total: (parseInt(it.quantity) || 0) * (parseInt(it.rate) || 0)
       }))
     };
     try {
       let savedId = billId;
-      if (billId) await this.api.put(`/api/bills/${billId}`, payload);
-      else { const res = await this.api.post('/api/bills', payload); savedId = res.id; }
+      let res;
+      if (billId) res = await this.api.put(`/api/bills/${billId}`, payload);
+      else { res = await this.api.post('/api/bills', payload); savedId = res?.id; }
+      if (res?.error) { this.toast(res.error, 'error'); return; }
       this.closeModal();
       this.toast(matched ? 'Bill saved & ledger auto-updated' : 'Bill saved', 'success');
       await this.showBills();

@@ -6,5 +6,4 @@ INSERT OR IGNORE INTO users (id, username, password_hash) VALUES
 -- Insert default folders
 INSERT OR IGNORE INTO folders (id, name, icon, color, sort_order) VALUES
   (1, 'Customers', 'fa-users', '#3b82f6', 1),
-  (2, 'Suppliers', 'fa-truck', '#10b981', 2),
-  (3, 'Expenses', 'fa-money-bill-wave', '#ef4444', 3);
+  (2, 'Suppliers', 'fa-truck', '#10b981', 2);

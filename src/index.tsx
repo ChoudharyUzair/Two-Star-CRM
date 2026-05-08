@@ -21,6 +21,12 @@ function generateSessionId(): string {
   crypto.getRandomValues(arr)
   return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('')
 }
+function generateUniqueBillNo(): string {
+  // 4-digit unique-ish: epoch tail + random
+  const t = Date.now().toString().slice(-4)
+  const r = Math.floor(Math.random() * 9000 + 1000)
+  return `${t}${r}`
+}
 
 // ============ Auth Middleware ============
 async function requireAuth(c: any, next: any) {
@@ -250,6 +256,41 @@ app.put('/api/clients/:id/column-labels', requireAuth, async (c) => {
   return c.json({ success: true })
 })
 
+// ============ BILL NO VALIDATION ============
+// Bill numbers must be at least 3 digits and globally unique across bills + transactions.
+async function isBillNoTaken(env: any, billNo: string, excludeBillId?: number, excludeTxId?: number): Promise<boolean> {
+  if (!billNo || !billNo.trim()) return false
+  const trimmed = billNo.trim()
+  let q = 'SELECT id FROM bills WHERE bill_no = ? COLLATE NOCASE'
+  const args: any[] = [trimmed]
+  if (excludeBillId) { q += ' AND id != ?'; args.push(excludeBillId) }
+  const billHit = await env.DB.prepare(q).bind(...args).first()
+  if (billHit) return true
+  let q2 = 'SELECT id FROM transactions WHERE bill_no = ? COLLATE NOCASE'
+  const args2: any[] = [trimmed]
+  if (excludeTxId) { q2 += ' AND id != ?'; args2.push(excludeTxId) }
+  const txHit = await env.DB.prepare(q2).bind(...args2).first()
+  return !!txHit
+}
+
+function billNoValid(billNo: string): boolean {
+  if (!billNo) return true // empty allowed (will be auto-generated)
+  const t = billNo.trim()
+  if (!t) return true
+  // Must contain at least 3 consecutive digits and start with a digit OR have at least 3 digits total
+  const digits = (t.match(/\d/g) || []).length
+  return digits >= 3
+}
+
+app.get('/api/bill-no/check', requireAuth, async (c) => {
+  const billNo = c.req.query('bill_no') || ''
+  const excludeBill = c.req.query('exclude_bill')
+  const excludeTx = c.req.query('exclude_tx')
+  if (!billNoValid(billNo)) return c.json({ valid: false, error: 'Bill No must contain at least 3 digits' })
+  const taken = await isBillNoTaken(c.env, billNo, excludeBill ? parseInt(excludeBill) : undefined, excludeTx ? parseInt(excludeTx) : undefined)
+  return c.json({ valid: !taken, error: taken ? 'Bill No already exists' : null })
+})
+
 // ============ TRANSACTIONS (LEDGER) ============
 app.get('/api/clients/:id/transactions', requireAuth, async (c) => {
   const id = c.req.param('id')
@@ -262,12 +303,17 @@ app.get('/api/clients/:id/transactions', requireAuth, async (c) => {
 app.post('/api/transactions', requireAuth, async (c) => {
   const { client_id, entry_date, bill_no, amount_received, amount_pending, status, description, custom_data } = await c.req.json()
   if (!client_id) return c.json({ error: 'client_id required' }, 400)
+  const billNoT = (bill_no || '').trim()
+  if (billNoT) {
+    if (!billNoValid(billNoT)) return c.json({ error: 'Bill No must contain at least 3 digits' }, 400)
+    if (await isBillNoTaken(c.env, billNoT)) return c.json({ error: `Bill No "${billNoT}" already exists` }, 400)
+  }
   const result = await c.env.DB.prepare(
     'INSERT INTO transactions (client_id, entry_date, bill_no, amount_received, amount_pending, status, description, custom_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   ).bind(
     client_id,
     entry_date || new Date().toISOString().slice(0, 10),
-    bill_no || '',
+    billNoT,
     amount_received || 0,
     amount_pending || 0,
     status || 'Pending',
@@ -278,12 +324,17 @@ app.post('/api/transactions', requireAuth, async (c) => {
 })
 
 app.put('/api/transactions/:id', requireAuth, async (c) => {
-  const id = c.req.param('id')
+  const id = parseInt(c.req.param('id'))
   const { entry_date, bill_no, amount_received, amount_pending, status, description, custom_data } = await c.req.json()
+  const billNoT = (bill_no || '').trim()
+  if (billNoT) {
+    if (!billNoValid(billNoT)) return c.json({ error: 'Bill No must contain at least 3 digits' }, 400)
+    if (await isBillNoTaken(c.env, billNoT, undefined, id)) return c.json({ error: `Bill No "${billNoT}" already exists` }, 400)
+  }
   await c.env.DB.prepare(
     'UPDATE transactions SET entry_date = ?, bill_no = ?, amount_received = ?, amount_pending = ?, status = ?, description = ?, custom_data = ? WHERE id = ?'
   ).bind(
-    entry_date, bill_no || '',
+    entry_date, billNoT,
     amount_received || 0, amount_pending || 0,
     status || 'Pending', description || '',
     JSON.stringify(custom_data || {}), id
@@ -386,8 +437,10 @@ app.get('/api/bills/:id', requireAuth, async (c) => {
 
 app.post('/api/bills', requireAuth, async (c) => {
   const b = await c.req.json()
-  const billNo = b.bill_no || ('BILL-' + Date.now())
+  const billNo = (b.bill_no || '').trim() || generateUniqueBillNo()
   const billDate = b.bill_date || new Date().toISOString().slice(0, 10)
+  if (!billNoValid(billNo)) return c.json({ error: 'Bill No must contain at least 3 digits' }, 400)
+  if (await isBillNoTaken(c.env, billNo)) return c.json({ error: `Bill No "${billNo}" already exists` }, 400)
   const result = await c.env.DB.prepare(`
     INSERT INTO bills (bill_no, bill_date, client_id, customer_name, customer_phone, customer_address,
       subtotal, discount, tax, total, paid, notes, status)
@@ -424,6 +477,11 @@ app.post('/api/bills', requireAuth, async (c) => {
 app.put('/api/bills/:id', requireAuth, async (c) => {
   const id = parseInt(c.req.param('id'))
   const b = await c.req.json()
+  const billNoT = (b.bill_no || '').trim()
+  if (billNoT) {
+    if (!billNoValid(billNoT)) return c.json({ error: 'Bill No must contain at least 3 digits' }, 400)
+    if (await isBillNoTaken(c.env, billNoT, id)) return c.json({ error: `Bill No "${billNoT}" already exists` }, 400)
+  }
 
   const oldItems = await c.env.DB.prepare('SELECT product_id, quantity FROM bill_items WHERE bill_id = ?').bind(id).all()
   for (const oi of (oldItems.results as any[])) {
@@ -438,7 +496,7 @@ app.put('/api/bills/:id', requireAuth, async (c) => {
       total = ?, paid = ?, notes = ?, status = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).bind(
-    b.bill_no || '', b.bill_date || new Date().toISOString().slice(0, 10),
+    billNoT, b.bill_date || new Date().toISOString().slice(0, 10),
     b.client_id || null, b.customer_name || '', b.customer_phone || '', b.customer_address || '',
     parseFloat(b.subtotal) || 0, parseFloat(b.discount) || 0, parseFloat(b.tax) || 0,
     parseFloat(b.total) || 0, parseFloat(b.paid) || 0, b.notes || '', b.status || 'Unpaid', id
@@ -460,7 +518,7 @@ app.put('/api/bills/:id', requireAuth, async (c) => {
     }
   }
 
-  await syncBillLedger(c.env, id, b)
+  await syncBillLedger(c.env, id, { ...b, bill_no: billNoT || b.bill_no })
 
   return c.json({ success: true })
 })
@@ -539,25 +597,46 @@ app.get('/api/employees/:id', requireAuth, async (c) => {
   const tx = await c.env.DB.prepare(
     'SELECT * FROM employee_transactions WHERE employee_id = ? ORDER BY entry_date DESC, id DESC'
   ).bind(id).all()
-  return c.json({ employee: emp, transactions: tx.results })
+  const items = await c.env.DB.prepare(
+    'SELECT * FROM employee_items WHERE employee_id = ? ORDER BY sort_order ASC, id ASC'
+  ).bind(id).all()
+  return c.json({ employee: emp, transactions: tx.results, items: items.results })
 })
 
+async function syncEmployeeItems(env: any, empId: number, items: any[]) {
+  await env.DB.prepare('DELETE FROM employee_items WHERE employee_id = ?').bind(empId).run()
+  if (!Array.isArray(items)) return
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i]
+    if (!it || !it.item_name) continue
+    await env.DB.prepare(
+      'INSERT INTO employee_items (employee_id, item_name, rate, sort_order) VALUES (?, ?, ?, ?)'
+    ).bind(empId, it.item_name, parseFloat(it.rate) || 0, i).run()
+  }
+}
+
 app.post('/api/employees', requireAuth, async (c) => {
-  const { name, phone, cnic, address, designation, joining_date, monthly_salary, notes } = await c.req.json()
+  const { name, phone, cnic, address, designation, joining_date, monthly_salary, notes, salary_type, items } = await c.req.json()
   if (!name) return c.json({ error: 'Name required' }, 400)
+  const sType = salary_type === 'per_piece' ? 'per_piece' : 'monthly'
   const result = await c.env.DB.prepare(
-    `INSERT INTO employees (name, phone, cnic, address, designation, joining_date, monthly_salary, notes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(name, phone || '', cnic || '', address || '', designation || '', joining_date || '', parseFloat(monthly_salary) || 0, notes || '').run()
-  return c.json({ id: result.meta.last_row_id })
+    `INSERT INTO employees (name, phone, cnic, address, designation, joining_date, monthly_salary, notes, salary_type)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(name, phone || '', cnic || '', address || '', designation || '', joining_date || '', parseFloat(monthly_salary) || 0, notes || '', sType).run()
+  const empId = result.meta.last_row_id as number
+  if (sType === 'per_piece') await syncEmployeeItems(c.env, empId, items || [])
+  return c.json({ id: empId })
 })
 
 app.put('/api/employees/:id', requireAuth, async (c) => {
-  const id = c.req.param('id')
-  const { name, phone, cnic, address, designation, joining_date, monthly_salary, notes, active } = await c.req.json()
+  const id = parseInt(c.req.param('id'))
+  const { name, phone, cnic, address, designation, joining_date, monthly_salary, notes, active, salary_type, items } = await c.req.json()
+  const sType = salary_type === 'per_piece' ? 'per_piece' : 'monthly'
   await c.env.DB.prepare(
-    `UPDATE employees SET name=?, phone=?, cnic=?, address=?, designation=?, joining_date=?, monthly_salary=?, notes=?, active=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
-  ).bind(name, phone || '', cnic || '', address || '', designation || '', joining_date || '', parseFloat(monthly_salary) || 0, notes || '', active === 0 ? 0 : 1, id).run()
+    `UPDATE employees SET name=?, phone=?, cnic=?, address=?, designation=?, joining_date=?, monthly_salary=?, notes=?, active=?, salary_type=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
+  ).bind(name, phone || '', cnic || '', address || '', designation || '', joining_date || '', parseFloat(monthly_salary) || 0, notes || '', active === 0 ? 0 : 1, sType, id).run()
+  if (sType === 'per_piece') await syncEmployeeItems(c.env, id, items || [])
+  else await c.env.DB.prepare('DELETE FROM employee_items WHERE employee_id = ?').bind(id).run()
   return c.json({ success: true })
 })
 
@@ -568,20 +647,35 @@ app.delete('/api/employees/:id', requireAuth, async (c) => {
 })
 
 app.post('/api/employee-transactions', requireAuth, async (c) => {
-  const { employee_id, entry_date, type, amount, description } = await c.req.json()
+  const { employee_id, entry_date, type, amount, description, entry_type, item_id, item_name, quantity, rate } = await c.req.json()
   if (!employee_id || !type) return c.json({ error: 'employee_id & type required' }, 400)
+  const eType = entry_type === 'per_piece' ? 'per_piece' : 'cash'
+  let amt = parseFloat(amount) || 0
+  const qty = parseInt(quantity) || 0
+  const r = parseFloat(rate) || 0
+  if (eType === 'per_piece') amt = qty * r
   const result = await c.env.DB.prepare(
-    'INSERT INTO employee_transactions (employee_id, entry_date, type, amount, description) VALUES (?, ?, ?, ?, ?)'
-  ).bind(employee_id, entry_date || new Date().toISOString().slice(0, 10), type, parseFloat(amount) || 0, description || '').run()
+    `INSERT INTO employee_transactions (employee_id, entry_date, type, amount, description, entry_type, item_id, item_name, quantity, rate) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    employee_id, entry_date || new Date().toISOString().slice(0, 10), type, amt, description || '',
+    eType, item_id || null, item_name || '', qty, r
+  ).run()
   return c.json({ id: result.meta.last_row_id })
 })
 
 app.put('/api/employee-transactions/:id', requireAuth, async (c) => {
   const id = c.req.param('id')
-  const { entry_date, type, amount, description } = await c.req.json()
+  const { entry_date, type, amount, description, entry_type, item_id, item_name, quantity, rate } = await c.req.json()
+  const eType = entry_type === 'per_piece' ? 'per_piece' : 'cash'
+  let amt = parseFloat(amount) || 0
+  const qty = parseInt(quantity) || 0
+  const r = parseFloat(rate) || 0
+  if (eType === 'per_piece') amt = qty * r
   await c.env.DB.prepare(
-    'UPDATE employee_transactions SET entry_date=?, type=?, amount=?, description=? WHERE id=?'
-  ).bind(entry_date, type, parseFloat(amount) || 0, description || '', id).run()
+    `UPDATE employee_transactions SET entry_date=?, type=?, amount=?, description=?, 
+     entry_type=?, item_id=?, item_name=?, quantity=?, rate=? WHERE id=?`
+  ).bind(entry_date, type, amt, description || '', eType, item_id || null, item_name || '', qty, r, id).run()
   return c.json({ success: true })
 })
 

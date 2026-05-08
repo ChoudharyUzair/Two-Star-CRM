@@ -4,12 +4,12 @@
 - **Name**: Two Star CRM
 - **Company**: Two Star Industries
 - **Author**: Muhammad Uzair
-- **Goal**: A complete, secure, password-protected CRM for managing clients, ledgers, inventory, and bills/invoices for Two Star Industries.
+- **Goal**: A complete, secure, password-protected CRM for managing clients, ledgers, inventory, bills, raw materials, employees, side expenses, and unlimited custom sections.
 - **Tech Stack**: Hono (TypeScript) + Cloudflare Pages + Cloudflare D1 (SQLite) + TailwindCSS + Chart.js + FontAwesome
 
 ## URLs
 - **Production**: https://two-star-crm.pages.dev
-- **GitHub**: https://github.com/ChoudharyUzair/two-star-crm
+- **GitHub**: https://github.com/ChoudharyUzair/Two-Star-CRM
 
 ## Default Login
 - **Username**: `admin`
@@ -19,163 +19,157 @@
 ## Completed Features ✅
 
 ### 🌟 Branding & White-Labeling
-- **Branding section** — fully customizable: company name, CRM display name, logo URL
-- **Custom theme colors** — primary, accent, received, pending, running balance
-- **Bill template settings** — company address, phone, footer text printed on invoices
-- Live preview while editing
-- All colors apply globally via CSS variables
+- Customizable: company name, CRM display name, logo URL
+- Custom theme colors (primary, accent, received, pending, running balance)
+- Bill template settings (address, phone, footer)
 
-### 🎨 New Color Scheme (per user request)
-- **Received Amount**: 🔴 Red
-- **Pending Amount**: 🔵 Blue
-- **Running Balance**: 🟢 Green
-- (All three are also customizable in the Branding section)
-
-### 📒 Ledger / Khata Sheet
-- All previous features (per-client ledger, auto-running total, custom columns)
-- **NEW: Rename existing built-in columns** — click the pen icon on any column header (#, Date, Bill No, Amount Received, Amount Pending, Status, Description, Running Balance) or use the "Columns" modal
-- Inline editing with auto-save (debounced)
+### 📒 Ledger / Khata Sheet (Updated)
+- **Column order: # | Date | Bill No | Amount Pending (col 4) | Amount Received (col 5) | Status | Description | Custom Cols | Running Total | Action**
+- Per-client running balance, custom columns, rename built-in columns
+- Bill No validation: must contain at least 3 digits and be globally unique across bills + ledger
+- All quantity/amount inputs are **integer-only** (step="1", whole numbers only)
 
 ### 📄 Bills / Invoices Section
-- Create, edit, print, and delete bills
-- 4-column line items: **Quantity / Product Name / Rate / Total**
-- Header automatically shows: **Customer Name**, **Date**, **"Two Star Industries"**, **Logo on right side**
-- Auto-fills phone & address when picking an existing client
-- Linked to inventory — pick from product dropdown, auto-fills rate
-- Auto-decrements inventory when a bill is saved (and restores on delete/edit)
-- Calculations: Subtotal, Discount, Tax %, Total, Paid, Due
-- **Print button** — clean, professional invoice ready for print/PDF (uses `window.print()`)
+- Create, edit, print, delete bills (auto-syncs to client ledger)
+- Items: Quantity / Product Name / Rate / Total
+- Auto-decrements inventory; restores on delete
+- **Bill No** must be 3+ digits and unique (validated server-side); auto-generated if blank
+- Subtotal, Discount, Tax, Total, Paid, Due — all whole-number inputs
 
 ### 📦 Inventory Section
-- Add, edit, delete products
-- Fields: name, SKU, unit, rate, quantity, category, notes
-- Inline editable (every field)
-- Stock value auto-calculated
-- Low-stock indicator (≤5 units)
-- Search bar
-- **Linked to Bill section** — products appear in bill creation dropdown
+- Add/edit/delete products (whole-number qty & rate)
+- Linked into Bill creation dropdown
+- Low-stock indicator
+
+### 🏗️ Raw Material Section (NEW — Bill/Inventory style)
+- Track raw materials with name, unit, qty, rate, total value, supplier link
+- Whole-number inputs
+
+### 👷 Employees Section (Major Update)
+- Add/edit/delete employees with full profile (phone, CNIC, address, designation, joining date)
+- **NEW: Salary Type Dropdown**
+  - **Monthly Salary** — simple monthly amount field
+  - **Per Pcs** (per-piece) — define multiple items, each with its own rate
+- **NEW: Per-piece Ledger Entries**
+  - When adding an employee transaction (employee with `Per Pcs` salary type), the form shows:
+    - Dropdown of all the employee's items
+    - Auto-fills rate when item picked
+    - Quantity box (whole numbers)
+    - Live calculated **Total = Rate × Quantity**
+- Track salary, advance, bonus, deduction transactions
+- Active/Inactive toggle
+
+### 💰 Side Expenses Section
+- Date, category, description, amount, paid_to, notes
+- (Replaces the older inline "Expenses" folder; default Expenses folder removed.)
+
+### 🗂️ Custom Sections (Unlimited)
+- Define your own sections with custom columns (text/number/date)
+- Rows are stored as JSON, fully editable
 
 ### 📊 Dashboard
-- Top stats: Received, Pending, Net Balance, Clients/Folders, Bills count
-- Per-folder summary table
-- Status doughnut + folder comparison bar chart
-- Top pending clients
-- Recent transactions
-- All queries run in **parallel** for speed
-
-### ⚡ Speed Optimization
-- All dashboard queries run in `Promise.all()` (parallelized)
-- API GET response caching (cleared on writes)
-- Debounced inputs (350ms) for inline editing
-- `requestAnimationFrame` for chart rendering
-- Lazy `<script defer>` loading for Chart.js & app.js
-- `<link rel="preconnect">` for CDNs
-- Boot loader to mask any delay
-- Local in-place re-render (no full reload) on row updates
-
-### 🎨 UI / UX Improvements
-- Modern flat design with consistent spacing
-- Sticky page headers
-- Mobile-responsive sidebar with toggle button
-- ESC key closes modals
-- Toast animations
-- Status badges with proper colors
-- Smooth modal transitions (fadeIn / slideUp)
-- Better empty states with icons
+- Stats: Received, Pending, Net Balance, Clients/Folders, Bills, Employees, Side Expenses, Raw Material totals
+- Per-folder summary, top pending, recent transactions, status breakdown
+- All queries parallelized with `Promise.all()`
 
 ### 🔐 Authentication & Security
-- SHA-256 hashed password
-- Session-based auth (HttpOnly cookies, 7-day expiry)
-- Logout & change password
+- SHA-256 hashed passwords, HttpOnly cookies, 7-day session expiry
+- Change password from sidebar
 
-### 📁 Folders, Clients, Custom Columns
-- All previous features intact
+### ⚡ Speed Optimization
+- Parallel D1 queries, GET caching, debounced inputs, RAF chart rendering, deferred scripts
 
 ## API Endpoints
 
 ### Auth
-- `POST /api/auth/login`
-- `POST /api/auth/logout`
-- `GET  /api/auth/check`
-- `POST /api/auth/change-password`
+- `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/check`, `POST /api/auth/change-password`
 
 ### Branding
-- `GET  /api/branding`
-- `PUT  /api/branding`
+- `GET /api/branding`, `PUT /api/branding`
 
-### Folders
-- `GET    /api/folders`
-- `POST   /api/folders`
-- `PUT    /api/folders/:id`
-- `DELETE /api/folders/:id`
+### Folders / Sections (Customers, Suppliers, …)
+- `GET /api/folders`, `POST /api/folders`, `PUT /api/folders/:id`, `DELETE /api/folders/:id`
 
 ### Clients
-- `GET    /api/folders/:id/clients`
-- `GET    /api/clients` (all clients — used by bill module)
-- `POST   /api/clients`
-- `GET    /api/clients/:id`
-- `PUT    /api/clients/:id`
-- `DELETE /api/clients/:id`
-- `PUT    /api/clients/:id/columns`        — custom columns
-- `PUT    /api/clients/:id/column-labels`  — rename built-in columns
+- `GET /api/folders/:id/clients`
+- `GET /api/clients`, `POST /api/clients`
+- `GET /api/clients/:id`, `PUT /api/clients/:id`, `DELETE /api/clients/:id`
+- `PUT /api/clients/:id/columns`, `PUT /api/clients/:id/column-labels`
 
-### Transactions
-- `GET    /api/clients/:id/transactions`
-- `POST   /api/transactions`
-- `PUT    /api/transactions/:id`
-- `DELETE /api/transactions/:id`
+### Transactions (Ledger)
+- `GET /api/clients/:id/transactions`
+- `POST /api/transactions`, `PUT /api/transactions/:id`, `DELETE /api/transactions/:id`
+
+### Bill No Validation
+- `GET /api/bill-no/check?bill_no=…&exclude_bill=…&exclude_tx=…` → `{valid, error}`
 
 ### Inventory
-- `GET    /api/inventory`
-- `POST   /api/inventory`
-- `PUT    /api/inventory/:id`
-- `DELETE /api/inventory/:id`
+- `GET /api/inventory`, `POST /api/inventory`, `PUT /api/inventory/:id`, `DELETE /api/inventory/:id`
 
 ### Bills
-- `GET    /api/bills`
-- `GET    /api/bills/:id`
-- `POST   /api/bills`
-- `PUT    /api/bills/:id`
-- `DELETE /api/bills/:id`
+- `GET /api/bills`, `GET /api/bills/:id`, `POST /api/bills`, `PUT /api/bills/:id`, `DELETE /api/bills/:id`
+
+### Raw Materials
+- `GET /api/raw-materials`, `POST /api/raw-materials`, `PUT /api/raw-materials/:id`, `DELETE /api/raw-materials/:id`
+
+### Employees & Employee Transactions
+- `GET /api/employees`, `GET /api/employees/:id` (returns employee + transactions + items)
+- `POST /api/employees`, `PUT /api/employees/:id`, `DELETE /api/employees/:id`
+  - Body includes `salary_type` (`monthly` | `per_piece`) and `items[]` for per-piece
+- `POST /api/employee-transactions`, `PUT /api/employee-transactions/:id`, `DELETE /api/employee-transactions/:id`
+  - Body includes `entry_type` (`cash` | `per_piece`), `item_id`, `item_name`, `quantity`, `rate`
+  - Server auto-computes `amount = quantity × rate` when entry_type=`per_piece`
+
+### Side Expenses
+- `GET /api/side-expenses`, `POST /api/side-expenses`, `PUT /api/side-expenses/:id`, `DELETE /api/side-expenses/:id`
+
+### Custom Sections
+- `GET /api/custom-sections`, `GET /api/custom-sections/:id`
+- `POST /api/custom-sections`, `PUT /api/custom-sections/:id`, `DELETE /api/custom-sections/:id`
+- `POST /api/custom-sections/:id/rows`, `PUT /api/custom-sections/rows/:rowId`, `DELETE /api/custom-sections/rows/:rowId`
 
 ### Dashboard
-- `GET    /api/dashboard`
+- `GET /api/dashboard`
 
 ## Data Architecture
 
 ### Tables (Cloudflare D1 / SQLite)
-- **users** — admin credentials
-- **sessions** — auth sessions
-- **folders** — sidebar categories
-- **clients** — client records per folder
-- **client_columns** — per-client custom column config
-- **column_labels** — per-client rename overrides for built-in columns
-- **transactions** — ledger / khata rows
-- **branding** — single-row company branding settings
-- **inventory** — product catalog
-- **bills** — invoice headers
-- **bill_items** — invoice line items (linked to inventory)
+- **users**, **sessions**, **branding**
+- **folders** (`section_type`), **clients**, **client_columns**, **column_labels**
+- **transactions** (with `bill_id`, `auto_generated`)
+- **inventory**
+- **bills**, **bill_items** (with `ledger_transaction_id`)
+- **raw_materials**
+- **employees** (with `salary_type`)
+- **employee_items** (per-piece rate book) — NEW
+- **employee_transactions** (with `entry_type`, `item_id`, `quantity`, `rate`) — extended
+- **side_expenses**
+- **custom_sections**, **custom_section_rows**
 
 ### Storage
 - **Cloudflare D1** (`webapp-production`)
 
 ## User Guide
-
 1. Login with `admin / admin123` (change immediately)
-2. **Branding** — open from sidebar to set company name, logo, and colors
-3. **Inventory** — add all your products (linked into bills automatically)
-4. **Bills** — click "New Bill", pick customer, add items (auto-fills from inventory), print
-5. **Folders** — create categories (Customers / Suppliers / etc.)
-6. **Clients** — open a folder → add clients
-7. **Ledger** — open any client → track received/pending; rename columns by clicking the pen icon
-8. **Dashboard** — overall view of money in / out, top pending clients
+2. **Branding** — set company name, logo, colors
+3. **Inventory** — add products (used in bills)
+4. **Raw Material** — track input stocks
+5. **Bills** — create invoices; bill numbers must be 3+ digits and unique
+6. **Sections** (Customers/Suppliers) — manage clients & per-client ledgers
+7. **Employees** — pick **Monthly Salary** or **Per Pcs**; for Per Pcs, define items & rates, then log per-piece work in the employee ledger
+8. **Side Expenses** — log miscellaneous costs
+9. **Custom Sections** — create your own data tables
+10. **Dashboard** — see overall summary
 
-## Features Not Yet Implemented
-- Multi-user support (currently single admin)
-- Export to PDF/Excel (workaround: use browser print to PDF)
-- Search in ledger
-- Date-range filtering on dashboard
-- File attachments per transaction
+## Recent Changes (2026-05-08)
+- Renamed repository to **Two Star CRM** (GitHub: `ChoudharyUzair/Two-Star-CRM`)
+- Pushed under author **Muhammad Uzair**
+- Removed default **Expenses** folder (use Side Expenses module instead)
+- Sections (`Customers` / `Suppliers`) shown in sidebar; Bill / Inventory / Raw Material / Employees / Side Expenses behave as full top-level modules
+- Ledger column order updated → Amount Pending = column 4, Amount Received = column 5
+- Employees now support **Monthly Salary** vs **Per Pcs** salary types with per-item rates and live qty×rate computation in ledger entries
+- All quantity & amount inputs locked to whole-number increments (`step="1"`)
+- Bill numbers must be 3+ digits, validated and **globally unique** across bills + transactions
 
 ## Deployment
 - **Platform**: Cloudflare Pages
