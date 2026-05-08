@@ -461,7 +461,7 @@ const App = {
         <div><label class="block text-sm font-medium mb-1">Phone</label><input id="c-phone" type="text" class="input-field"></div>
         <div><label class="block text-sm font-medium mb-1">Email</label><input id="c-email" type="email" class="input-field"></div>
         <div><label class="block text-sm font-medium mb-1">Address</label><input id="c-address" type="text" class="input-field"></div>
-        <div><label class="block text-sm font-medium mb-1">Opening Balance</label><input id="c-balance" type="number" step="1" value="0" class="input-field"></div>
+        <div><label class="block text-sm font-medium mb-1">Opening Balance</label><input id="c-balance" type="number" step="any" value="0" class="input-field"></div>
         <div><label class="block text-sm font-medium mb-1">Notes</label><textarea id="c-notes" class="input-field" rows="2"></textarea></div>
         <div class="flex gap-2 justify-end pt-2">
           <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
@@ -650,9 +650,9 @@ const App = {
         <div><label class="block text-sm font-medium mb-1">${this.escapeHtml(this.getColLabel('bill_no'))}</label>
           <input id="er-bill" type="text" class="input-field" value="${this.escapeAttr(t.bill_no || '')}"></div>
         <div><label class="block text-sm font-medium mb-1">${this.escapeHtml(this.getColLabel('amount_pending'))} (PKR)</label>
-          <input id="er-pen" type="number" step="1" min="0" class="input-field" value="${parseInt(t.amount_pending) || 0}"></div>
+          <input id="er-pen" type="number" step="any" min="0" class="input-field" value="${parseFloat(t.amount_pending) || 0}"></div>
         <div><label class="block text-sm font-medium mb-1">${this.escapeHtml(this.getColLabel('amount_received'))} (PKR)</label>
-          <input id="er-rec" type="number" step="1" min="0" class="input-field" value="${parseInt(t.amount_received) || 0}"></div>
+          <input id="er-rec" type="number" step="any" min="0" class="input-field" value="${parseFloat(t.amount_received) || 0}"></div>
         <div><label class="block text-sm font-medium mb-1">${this.escapeHtml(this.getColLabel('status'))}</label>
           <select id="er-status" class="input-field">
             ${['Pending','Received','Partial','Overdue','Cancelled'].map(s => `<option value="${s}" ${t.status === s ? 'selected' : ''}>${s}</option>`).join('')}
@@ -684,8 +684,8 @@ const App = {
           body: JSON.stringify({
             entry_date: document.getElementById('er-date').value,
             bill_no: billNo,
-            amount_received: parseInt(document.getElementById('er-rec').value) || 0,
-            amount_pending: parseInt(document.getElementById('er-pen').value) || 0,
+            amount_received: parseFloat(document.getElementById('er-rec').value) || 0,
+            amount_pending: parseFloat(document.getElementById('er-pen').value) || 0,
             status: document.getElementById('er-status').value,
             description: document.getElementById('er-desc').value,
             custom_data: newCustom
@@ -784,7 +784,7 @@ const App = {
         <div><label class="block text-sm font-medium mb-1">Phone</label><input id="c-phone" type="text" class="input-field" value="${this.escapeAttr(c.phone || '')}"></div>
         <div><label class="block text-sm font-medium mb-1">Email</label><input id="c-email" type="email" class="input-field" value="${this.escapeAttr(c.email || '')}"></div>
         <div><label class="block text-sm font-medium mb-1">Address</label><input id="c-address" type="text" class="input-field" value="${this.escapeAttr(c.address || '')}"></div>
-        <div><label class="block text-sm font-medium mb-1">Opening Balance</label><input id="c-balance" type="number" step="1" class="input-field" value="${c.opening_balance || 0}"></div>
+        <div><label class="block text-sm font-medium mb-1">Opening Balance</label><input id="c-balance" type="number" step="any" class="input-field" value="${c.opening_balance || 0}"></div>
         <div><label class="block text-sm font-medium mb-1">Notes</label><textarea id="c-notes" class="input-field" rows="2">${this.escapeHtml(c.notes || '')}</textarea></div>
         <div class="flex gap-2 justify-end pt-2">
           <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
@@ -933,7 +933,7 @@ const App = {
       </div>
 
       <div class="p-4 md:p-6 space-y-5">
-        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
           <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-arrow-down mr-1"></i>Total Received</p>
             <p class="text-xl font-bold mt-1 amount-received">PKR ${this.fmt(totals.total_received)}</p></div>
           <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-clock mr-1"></i>Total Pending</p>
@@ -1141,8 +1141,8 @@ const App = {
           <div><label class="block text-sm font-medium mb-1">Unit</label><input id="i-unit" type="text" class="input-field" value="${this.escapeAttr(it.unit || 'pcs')}"></div>
         </div>
         <div class="grid grid-cols-2 gap-3">
-          <div><label class="block text-sm font-medium mb-1">Rate (PKR)</label><input id="i-rate" type="number" step="1" class="input-field" value="${it.rate || 0}"></div>
-          <div><label class="block text-sm font-medium mb-1">Quantity</label><input id="i-qty" type="number" step="1" class="input-field" value="${it.quantity || 0}"></div>
+          <div><label class="block text-sm font-medium mb-1">Rate (PKR)</label><input id="i-rate" type="number" step="any" class="input-field" value="${it.rate || 0}"></div>
+          <div><label class="block text-sm font-medium mb-1">Quantity</label><input id="i-qty" type="number" step="any" class="input-field" value="${it.quantity || 0}"></div>
         </div>
         <div><label class="block text-sm font-medium mb-1">Category</label><input id="i-cat" type="text" class="input-field" value="${this.escapeAttr(it.category || '')}"></div>
         <div><label class="block text-sm font-medium mb-1">Notes</label><textarea id="i-notes" class="input-field" rows="2">${this.escapeHtml(it.notes || '')}</textarea></div>
@@ -1273,9 +1273,9 @@ const App = {
         <div><label class="block text-sm font-medium mb-1">Category</label>
           <input id="r-cat" type="text" class="input-field" value="${this.escapeAttr(it.category || '')}"></div>
         <div><label class="block text-sm font-medium mb-1">Quantity Available</label>
-          <input id="r-qty" type="number" step="1" class="input-field" value="${it.quantity || 0}" oninput="App._calcRawTotal()"></div>
+          <input id="r-qty" type="number" step="any" class="input-field" value="${it.quantity || 0}" oninput="App._calcRawTotal()"></div>
         <div><label class="block text-sm font-medium mb-1">Rate per Unit (PKR)</label>
-          <input id="r-rate" type="number" step="1" class="input-field" value="${it.rate || 0}" oninput="App._calcRawTotal()"></div>
+          <input id="r-rate" type="number" step="any" class="input-field" value="${it.rate || 0}" oninput="App._calcRawTotal()"></div>
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Total Value</label>
           <div id="r-total" class="input-field" style="background:#f8fafc; font-weight:bold;">PKR 0.00</div></div>
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Supplier (link to client)</label>
@@ -1433,7 +1433,7 @@ const App = {
 
         <div id="e-monthly-wrap" class="md:col-span-2" style="${sType === 'monthly' ? '' : 'display:none;'}">
           <label class="block text-sm font-medium mb-1">Monthly Salary (PKR)</label>
-          <input id="e-sal" type="number" step="1" min="0" class="input-field" value="${parseInt(e.monthly_salary) || 0}">
+          <input id="e-sal" type="number" step="any" min="0" class="input-field" value="${parseFloat(e.monthly_salary) || 0}">
         </div>
 
         <div id="e-piece-wrap" class="md:col-span-2" style="${sType === 'per_piece' ? '' : 'display:none;'}">
@@ -1471,7 +1471,7 @@ const App = {
         cnic: document.getElementById('e-cnic').value,
         address: document.getElementById('e-addr').value,
         joining_date: document.getElementById('e-join').value,
-        monthly_salary: sType === 'monthly' ? (parseInt(document.getElementById('e-sal').value) || 0) : 0,
+        monthly_salary: sType === 'monthly' ? (parseFloat(document.getElementById('e-sal').value) || 0) : 0,
         notes: document.getElementById('e-notes').value,
         active: parseInt(document.getElementById('e-active').value),
         salary_type: sType,
@@ -1499,7 +1499,7 @@ const App = {
     list.innerHTML = this._tempEmpItems.map((it, i) => `
       <div class="flex gap-2 items-center bg-gray-50 p-2 rounded mb-2" data-emp-item="${i}">
         <input type="text" class="input-field flex-1" data-ei-name="${i}" value="${this.escapeAttr(it.item_name || '')}" placeholder="Item name (e.g., Shirt, Trouser)">
-        <input type="number" step="1" min="0" class="input-field" style="width:120px;" data-ei-rate="${i}" value="${parseInt(it.rate) || 0}" placeholder="Rate (PKR)">
+        <input type="number" step="any" min="0" class="input-field" style="width:120px;" data-ei-rate="${i}" value="${parseFloat(it.rate) || 0}" placeholder="Rate (PKR)">
         <button type="button" class="btn btn-danger btn-sm" onclick="App._removeEmpItemRow(${i})"><i class="fas fa-times"></i></button>
       </div>`).join('');
   },
@@ -1511,7 +1511,7 @@ const App = {
     });
     document.querySelectorAll('#emp-items-list [data-ei-rate]').forEach(el => {
       const i = parseInt(el.dataset.eiRate);
-      if (this._tempEmpItems[i]) this._tempEmpItems[i].rate = parseInt(el.value) || 0;
+      if (this._tempEmpItems[i]) this._tempEmpItems[i].rate = parseFloat(el.value) || 0;
     });
   },
 
@@ -1644,14 +1644,14 @@ const App = {
               ${itemOptionsHtml}
             </select></div>
           <div><label class="block text-sm font-medium mb-1">Rate (PKR)</label>
-            <input id="etx-rate" type="number" step="1" min="0" class="input-field" value="${parseInt(tx.rate) || 0}" oninput="App._etxRecalc()"></div>
+            <input id="etx-rate" type="number" step="any" min="0" class="input-field" value="${parseFloat(tx.rate) || 0}" oninput="App._etxRecalc()"></div>
           <div><label class="block text-sm font-medium mb-1">Quantity</label>
-            <input id="etx-qty" type="number" step="1" min="0" class="input-field" value="${parseInt(tx.quantity) || 0}" oninput="App._etxRecalc()"></div>
+            <input id="etx-qty" type="number" step="any" min="0" class="input-field" value="${parseFloat(tx.quantity) || 0}" oninput="App._etxRecalc()"></div>
         </div>
 
         <div id="etx-amount-wrap" class="md:col-span-2" style="${initEntryType === 'cash' ? '' : 'display:none;'}">
           <label class="block text-sm font-medium mb-1">Amount (PKR)</label>
-          <input id="etx-amount" type="number" step="1" min="0" class="input-field" value="${parseInt(tx.amount) || 0}">
+          <input id="etx-amount" type="number" step="any" min="0" class="input-field" value="${parseFloat(tx.amount) || 0}">
         </div>
 
         <div id="etx-piece-total" class="md:col-span-2" style="${initEntryType === 'per_piece' ? '' : 'display:none;'}">
@@ -1686,8 +1686,8 @@ const App = {
         const itemSel = document.getElementById('etx-item');
         const itemId = itemSel.value ? parseInt(itemSel.value) : null;
         const itemName = itemSel.value ? itemSel.options[itemSel.selectedIndex].text.split(' — ')[0] : '';
-        const qty = parseInt(document.getElementById('etx-qty').value) || 0;
-        const rate = parseInt(document.getElementById('etx-rate').value) || 0;
+        const qty = parseFloat(document.getElementById('etx-qty').value) || 0;
+        const rate = parseFloat(document.getElementById('etx-rate').value) || 0;
         if (qty <= 0) { this.toast('Quantity required', 'error'); return; }
         payload.item_id = itemId;
         payload.item_name = itemName;
@@ -1695,7 +1695,7 @@ const App = {
         payload.rate = rate;
         payload.amount = qty * rate;
       } else {
-        payload.amount = parseInt(document.getElementById('etx-amount').value) || 0;
+        payload.amount = parseFloat(document.getElementById('etx-amount').value) || 0;
       }
       try {
         if (txId) await this.api.put(`/api/employee-transactions/${txId}`, payload);
@@ -1724,8 +1724,8 @@ const App = {
   },
 
   _etxRecalc() {
-    const qty = parseInt(document.getElementById('etx-qty')?.value) || 0;
-    const rate = parseInt(document.getElementById('etx-rate')?.value) || 0;
+    const qty = parseFloat(document.getElementById('etx-qty')?.value) || 0;
+    const rate = parseFloat(document.getElementById('etx-rate')?.value) || 0;
     const total = qty * rate;
     const disp = document.getElementById('etx-total-display');
     if (disp) disp.textContent = 'PKR ' + this.fmt(total);
@@ -1814,7 +1814,7 @@ const App = {
             <option value="Workers Food"><option value="Travel"><option value="Repairs"><option value="Utility"><option value="Stationary"><option value="Tea/Snacks"><option value="Misc">
           </datalist></div>
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Description</label><input id="se-desc" type="text" class="input-field" value="${this.escapeAttr(it.description || '')}"></div>
-        <div><label class="block text-sm font-medium mb-1">Amount (PKR)</label><input id="se-amt" type="number" step="1" class="input-field" value="${it.amount || 0}"></div>
+        <div><label class="block text-sm font-medium mb-1">Amount (PKR)</label><input id="se-amt" type="number" step="any" class="input-field" value="${it.amount || 0}"></div>
         <div><label class="block text-sm font-medium mb-1">Paid To</label><input id="se-to" type="text" class="input-field" value="${this.escapeAttr(it.paid_to || '')}"></div>
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Notes</label><textarea id="se-notes" class="input-field" rows="2">${this.escapeHtml(it.notes || '')}</textarea></div>
         <div class="md:col-span-2 flex gap-2 justify-end pt-2 border-t">
@@ -2026,7 +2026,7 @@ const App = {
       <div class="${cols.length > 4 ? 'md:col-span-1' : 'md:col-span-2'}">
         <label class="block text-sm font-medium mb-1">${this.escapeHtml(c.name)}</label>
         <input id="cr-${i}" data-key="${this.escapeAttr(c.key)}" type="${c.type === 'number' ? 'number' : c.type === 'date' ? 'date' : 'text'}" 
-               class="input-field" value="${this.escapeAttr(data[c.key] || '')}" ${c.type === 'number' ? 'step="1"' : ''}>
+               class="input-field" value="${this.escapeAttr(data[c.key] || '')}" ${c.type === 'number' ? 'step="any"' : ''}>
       </div>`).join('');
     this.openModal(`
       <h2 class="text-xl font-bold mb-4"><i class="fas ${sec.icon} mr-2" style="color:${sec.color}"></i>${rowId ? 'Edit' : 'Add'} Row · ${this.escapeHtml(sec.name)}</h2>
@@ -2190,12 +2190,12 @@ const App = {
         <div class="space-y-2">
           <div class="flex justify-between items-center"><label class="text-sm">Subtotal:</label><span id="b-subtotal" class="font-bold">PKR 0.00</span></div>
           <div class="flex justify-between items-center"><label class="text-sm">Discount:</label>
-            <input id="b-discount" type="number" step="1" min="0" class="input-field" style="width:140px;" value="${editing ? parseInt(editing.discount) || 0 : 0}" oninput="App._calcBill()"></div>
+            <input id="b-discount" type="number" step="any" min="0" class="input-field" style="width:140px;" value="${editing ? parseFloat(editing.discount) || 0 : 0}" oninput="App._calcBill()"></div>
           <div class="flex justify-between items-center"><label class="text-sm">Tax %:</label>
-            <input id="b-tax" type="number" step="1" min="0" class="input-field" style="width:140px;" value="${editing ? parseInt(editing.tax) || 0 : 0}" oninput="App._calcBill()"></div>
+            <input id="b-tax" type="number" step="any" min="0" class="input-field" style="width:140px;" value="${editing ? parseFloat(editing.tax) || 0 : 0}" oninput="App._calcBill()"></div>
           <div class="flex justify-between items-center pt-2 border-t"><label class="text-sm font-bold">Total:</label><span id="b-total" class="font-bold text-lg amount-running">PKR 0.00</span></div>
           <div class="flex justify-between items-center"><label class="text-sm">Paid:</label>
-            <input id="b-paid" type="number" step="1" min="0" class="input-field" style="width:140px;" value="${editing ? parseInt(editing.paid) || 0 : 0}" oninput="App._calcBill()"></div>
+            <input id="b-paid" type="number" step="any" min="0" class="input-field" style="width:140px;" value="${editing ? parseFloat(editing.paid) || 0 : 0}" oninput="App._calcBill()"></div>
           <div class="flex justify-between items-center"><label class="text-sm">Due:</label><span id="b-due" class="font-bold amount-pending">PKR 0.00</span></div>
           <div class="flex justify-between items-center"><label class="text-sm">Status:</label>
             <select id="b-status" class="input-field" style="width:140px;">
@@ -2234,11 +2234,11 @@ const App = {
     } else document.getElementById('bill-product-list').innerHTML = productOpts;
     tbody.innerHTML = this._billItems.map((it, i) => `
       <tr data-row="${i}">
-        <td><input type="number" step="1" min="0" value="${parseInt(it.quantity) || 0}" oninput="App._updateBillRow(${i}, 'quantity', parseInt(this.value)||0)"></td>
+        <td><input type="number" step="any" min="0" value="${parseFloat(it.quantity) || 0}" oninput="App._updateBillRow(${i}, 'quantity', parseFloat(this.value)||0)"></td>
         <td><input type="text" list="bill-product-list" value="${this.escapeAttr(it.product_name || '')}"
                  oninput="App._updateBillProductName(${i}, this.value)" onchange="App._matchBillProduct(${i}, this.value)" placeholder="Type or pick product"></td>
-        <td><input type="number" step="1" min="0" value="${parseInt(it.rate) || 0}" oninput="App._updateBillRow(${i}, 'rate', parseInt(this.value)||0)"></td>
-        <td class="text-right font-bold amount-running">PKR ${this.fmt((parseInt(it.quantity)||0) * (parseInt(it.rate)||0))}</td>
+        <td><input type="number" step="any" min="0" value="${parseFloat(it.rate) || 0}" oninput="App._updateBillRow(${i}, 'rate', parseFloat(this.value)||0)"></td>
+        <td class="text-right font-bold amount-running">PKR ${this.fmt((parseFloat(it.quantity)||0) * (parseFloat(it.rate)||0))}</td>
         <td class="text-center"><button type="button" onclick="App._removeBillRow(${i})" class="text-red-500 hover:text-red-700"><i class="fas fa-trash text-sm"></i></button></td>
       </tr>`).join('');
   },
@@ -2294,14 +2294,14 @@ const App = {
     const customerName = document.getElementById('b-cname').value.trim();
     const phone = document.getElementById('b-cphone').value.trim();
     const address = document.getElementById('b-caddr').value.trim();
-    const discount = parseInt(document.getElementById('b-discount').value) || 0;
-    const taxPct = parseInt(document.getElementById('b-tax').value) || 0;
-    const paid = parseInt(document.getElementById('b-paid').value) || 0;
+    const discount = parseFloat(document.getElementById('b-discount').value) || 0;
+    const taxPct = parseFloat(document.getElementById('b-tax').value) || 0;
+    const paid = parseFloat(document.getElementById('b-paid').value) || 0;
     const status = document.getElementById('b-status').value;
     const notes = document.getElementById('b-notes').value;
     if (!customerName) { this.toast('Customer name required', 'error'); return; }
     if (this._billItems.length === 0) { this.toast('At least one item required', 'error'); return; }
-    const subtotal = this._billItems.reduce((s, it) => s + ((parseInt(it.quantity) || 0) * (parseInt(it.rate) || 0)), 0);
+    const subtotal = this._billItems.reduce((s, it) => s + ((parseFloat(it.quantity) || 0) * (parseFloat(it.rate) || 0)), 0);
     const taxable = subtotal - discount;
     const taxAmt = Math.round(taxable * (taxPct / 100));
     const total = taxable + taxAmt;
@@ -2313,8 +2313,8 @@ const App = {
       subtotal, discount, tax: taxPct, total, paid, notes, status,
       items: this._billItems.map(it => ({
         product_id: it.product_id || null, product_name: it.product_name || '',
-        quantity: parseInt(it.quantity) || 0, rate: parseInt(it.rate) || 0,
-        total: (parseInt(it.quantity) || 0) * (parseInt(it.rate) || 0)
+        quantity: parseFloat(it.quantity) || 0, rate: parseFloat(it.rate) || 0,
+        total: (parseFloat(it.quantity) || 0) * (parseFloat(it.rate) || 0)
       }))
     };
     try {
