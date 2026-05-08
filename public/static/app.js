@@ -921,7 +921,11 @@ const App = {
 
   renderDashboard(data) {
     const { totals, perFolder, topPending, recent, statuses, clientCount, folderCount, billStats,
-            empCount, empPaid, empAdvance, expenseStats, rawStats, customSecCount } = data;
+            empCount, empPaid, empAdvance, expenseStats, rawStats, customSecCount,
+            rawList, empList, expenseList, empPaidStats } = data;
+    const empTotalAmount = (empPaidStats && empPaidStats.total_amount) || 0;
+    const empTotalPaid = (empPaidStats && empPaidStats.total_paid) || (typeof empPaid === 'number' ? empPaid : 0);
+    const empTotalRemaining = (empPaidStats && empPaidStats.total_remaining) || 0;
     const area = document.getElementById('content-area');
     area.innerHTML = `
       <div class="page-header">
@@ -956,7 +960,7 @@ const App = {
           <div class="stat-card cursor-pointer" onclick="App.showEmployees()">
             <p class="text-xs text-gray-500"><i class="fas fa-user-tie mr-1"></i>Employees</p>
             <p class="text-xl font-bold text-blue-600 mt-1">${empCount}</p>
-            <p class="text-xs text-gray-400 mt-1">Paid: PKR ${this.fmt(empPaid)} | Advance: PKR ${this.fmt(empAdvance)}</p>
+            <p class="text-xs text-gray-400 mt-1">Paid: PKR ${this.fmt(empTotalPaid)} | Remaining Amount: PKR ${this.fmt(empTotalRemaining)}</p>
           </div>
           <div class="stat-card cursor-pointer" onclick="App.showSideExpenses()">
             <p class="text-xs text-gray-500"><i class="fas fa-money-bill-wave mr-1"></i>Side Expenses</p>
@@ -982,6 +986,107 @@ const App = {
                     <td class="text-right p-3 amount-running">PKR ${this.fmt(f.total_pending - f.total_received)}</td>
                   </tr>`).join('')}
               </tbody></table></div>`}
+        </div>
+
+        <!-- Raw Material Summary -->
+        <div class="bg-white rounded-xl shadow-sm p-5">
+          <h2 class="font-bold text-gray-800 mb-3 flex items-center justify-between">
+            <span><i class="fas fa-cubes text-orange-500 mr-2"></i>Raw Material Summary</span>
+            <button onclick="App.showRawMaterials()" class="text-xs text-blue-600 hover:underline font-normal">View All <i class="fas fa-arrow-right ml-1"></i></button>
+          </h2>
+          ${(!rawList || rawList.length === 0) ? '<p class="text-gray-500 text-center py-4">No raw materials yet</p>' : `
+            <div class="overflow-x-auto"><table class="w-full text-sm">
+              <thead class="bg-gray-50"><tr>
+                <th class="text-left p-3">Material</th>
+                <th class="text-left p-3">Supplier</th>
+                <th class="text-right p-3">Quantity</th>
+                <th class="text-right p-3">Rate</th>
+                <th class="text-right p-3">Total Value</th>
+              </tr></thead><tbody>
+                ${rawList.map(r => `
+                  <tr class="border-t hover:bg-gray-50 cursor-pointer" onclick="App.showRawMaterials()">
+                    <td class="p-3"><i class="fas fa-cube text-orange-500 mr-2"></i>${this.escapeHtml(r.name)}</td>
+                    <td class="p-3 text-gray-600">${this.escapeHtml(r.supplier_name || '-')}</td>
+                    <td class="text-right p-3">${this.fmt(r.quantity)} <span class="text-xs text-gray-400">${this.escapeHtml(r.unit || '')}</span></td>
+                    <td class="text-right p-3">PKR ${this.fmt(r.rate)}</td>
+                    <td class="text-right p-3 amount-running font-semibold">PKR ${this.fmt(r.total_value)}</td>
+                  </tr>`).join('')}
+                <tr class="border-t-2 bg-gray-50 font-bold">
+                  <td class="p-3" colspan="4">Total Stock Value</td>
+                  <td class="text-right p-3 amount-running">PKR ${this.fmt(rawStats?.total || 0)}</td>
+                </tr>
+              </tbody></table></div>`}
+        </div>
+
+        <!-- Employees Summary -->
+        <div class="bg-white rounded-xl shadow-sm p-5">
+          <h2 class="font-bold text-gray-800 mb-3 flex items-center justify-between">
+            <span><i class="fas fa-user-tie text-blue-500 mr-2"></i>Employees Summary</span>
+            <button onclick="App.showEmployees()" class="text-xs text-blue-600 hover:underline font-normal">View All <i class="fas fa-arrow-right ml-1"></i></button>
+          </h2>
+          ${(!empList || empList.length === 0) ? '<p class="text-gray-500 text-center py-4">No employees yet</p>' : `
+            <div class="overflow-x-auto"><table class="w-full text-sm">
+              <thead class="bg-gray-50"><tr>
+                <th class="text-left p-3">Employee</th>
+                <th class="text-left p-3">Designation</th>
+                <th class="text-right p-3">Total Salary</th>
+                <th class="text-right p-3">Paid</th>
+                <th class="text-right p-3">Remaining</th>
+                <th class="text-center p-3">Status</th>
+              </tr></thead><tbody>
+                ${empList.map(em => {
+                  const tAmt = parseFloat(em.total_amount) || 0;
+                  const tPaid = parseFloat(em.total_paid) || 0;
+                  const tRemain = Math.max(0, tAmt - tPaid);
+                  return `
+                  <tr class="border-t hover:bg-gray-50 cursor-pointer" onclick="App.openEmployee(${em.id})">
+                    <td class="p-3"><i class="fas fa-user text-blue-500 mr-2"></i>${this.escapeHtml(em.name)}${em.salary_type === 'per_piece' ? ' <i class="fas fa-cubes text-orange-500 ml-1" title="Per Piece"></i>' : ''}</td>
+                    <td class="p-3 text-gray-600">${this.escapeHtml(em.designation || '-')}</td>
+                    <td class="text-right p-3">PKR ${this.fmt(tAmt)}</td>
+                    <td class="text-right p-3 amount-received">PKR ${this.fmt(tPaid)}</td>
+                    <td class="text-right p-3 amount-pending font-semibold">PKR ${this.fmt(tRemain)}</td>
+                    <td class="text-center p-3"><span class="status-badge ${em.active ? 'status-received' : 'status-cancelled'}">${em.active ? 'Active' : 'Inactive'}</span></td>
+                  </tr>`}).join('')}
+                <tr class="border-t-2 bg-gray-50 font-bold">
+                  <td class="p-3" colspan="2">Totals</td>
+                  <td class="text-right p-3">PKR ${this.fmt(empTotalAmount)}</td>
+                  <td class="text-right p-3 amount-received">PKR ${this.fmt(empTotalPaid)}</td>
+                  <td class="text-right p-3 amount-pending">PKR ${this.fmt(empTotalRemaining)}</td>
+                  <td></td>
+                </tr>
+              </tbody></table></div>`}
+        </div>
+
+        <!-- Side Expenses Summary -->
+        <div class="bg-white rounded-xl shadow-sm p-5">
+          <h2 class="font-bold text-gray-800 mb-3 flex items-center justify-between">
+            <span><i class="fas fa-money-bill-wave text-red-500 mr-2"></i>Side Expenses Summary</span>
+            <button onclick="App.showSideExpenses()" class="text-xs text-blue-600 hover:underline font-normal">View All <i class="fas fa-arrow-right ml-1"></i></button>
+          </h2>
+          ${(!expenseList || expenseList.length === 0) ? '<p class="text-gray-500 text-center py-4">No side expenses yet</p>' : `
+            <div class="overflow-x-auto"><table class="w-full text-sm">
+              <thead class="bg-gray-50"><tr>
+                <th class="text-left p-3">Date</th>
+                <th class="text-left p-3">Category</th>
+                <th class="text-left p-3">Description</th>
+                <th class="text-left p-3">Paid To</th>
+                <th class="text-right p-3">Amount</th>
+              </tr></thead><tbody>
+                ${expenseList.slice(0, 10).map(ex => `
+                  <tr class="border-t hover:bg-gray-50 cursor-pointer" onclick="App.showSideExpenses()">
+                    <td class="p-3">${this.escapeHtml(ex.entry_date || '')}</td>
+                    <td class="p-3"><span class="status-badge status-pending">${this.escapeHtml(ex.category || '-')}</span></td>
+                    <td class="p-3 text-gray-700">${this.escapeHtml(ex.description || '-')}</td>
+                    <td class="p-3 text-gray-600">${this.escapeHtml(ex.paid_to || '-')}</td>
+                    <td class="text-right p-3 amount-received font-semibold">PKR ${this.fmt(ex.amount)}</td>
+                  </tr>`).join('')}
+                <tr class="border-t-2 bg-gray-50 font-bold">
+                  <td class="p-3" colspan="4">Total Side Expenses (${expenseStats?.count || 0} entries)</td>
+                  <td class="text-right p-3 amount-received">PKR ${this.fmt(expenseStats?.total || 0)}</td>
+                </tr>
+              </tbody></table></div>
+            ${expenseList.length > 10 ? `<p class="text-xs text-gray-400 text-center mt-2">Showing latest 10 of ${expenseList.length} entries</p>` : ''}
+          `}
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -1355,7 +1460,11 @@ const App = {
     const emps = this.state.employees;
     const totalSalary = emps.reduce((s, e) => s + (parseFloat(e.monthly_salary) || 0), 0);
     const totalPaid = emps.reduce((s, e) => s + (parseFloat(e.total_paid) || 0), 0);
-    const totalAdvance = emps.reduce((s, e) => s + (parseFloat(e.total_advance) || 0), 0);
+    const totalRemaining = emps.reduce((s, e) => {
+      const tAmt = parseFloat(e.total_amount) || 0;
+      const tPaid = parseFloat(e.total_paid) || 0;
+      return s + Math.max(0, tAmt - tPaid);
+    }, 0);
     const area = document.getElementById('content-area');
     area.innerHTML = `
       <div class="page-header">
@@ -1368,20 +1477,23 @@ const App = {
           <div class="stat-card"><p class="text-xs text-gray-500">Active Employees</p><p class="text-xl font-bold text-blue-600">${emps.filter(e => e.active).length}</p></div>
           <div class="stat-card"><p class="text-xs text-gray-500">Monthly Salaries</p><p class="text-xl font-bold text-purple-600">PKR ${this.fmt(totalSalary)}</p></div>
           <div class="stat-card"><p class="text-xs text-gray-500">Total Paid (all-time)</p><p class="text-xl font-bold amount-received">PKR ${this.fmt(totalPaid)}</p></div>
-          <div class="stat-card"><p class="text-xs text-gray-500">Total Advance</p><p class="text-xl font-bold amount-pending">PKR ${this.fmt(totalAdvance)}</p></div>
+          <div class="stat-card"><p class="text-xs text-gray-500">Remaining Amount</p><p class="text-xl font-bold amount-pending">PKR ${this.fmt(totalRemaining)}</p></div>
         </div>
         <div class="bg-white rounded-xl shadow-sm overflow-hidden">
           <div class="overflow-x-auto"><table class="ledger-table">
             <thead><tr>
               <th style="width:40px;">#</th><th>Name</th><th>Designation</th>
               <th>Phone</th><th class="text-right">Salary</th>
-              <th class="text-right">Paid</th><th class="text-right">Advance</th>
+              <th class="text-right">Paid</th><th class="text-right">Remaining Amount</th>
               <th>Status</th><th style="width:100px;">Action</th>
             </tr></thead><tbody>
               ${emps.length === 0 ? `<tr><td colspan="9" class="text-center py-8 text-gray-500">
                 <i class="fas fa-user-tie text-3xl mb-2 block"></i>No employees yet.</td></tr>` :
                 emps.map((e, i) => {
                   const isPiece = e.salary_type === 'per_piece';
+                  const tAmt = parseFloat(e.total_amount) || 0;
+                  const tPaid = parseFloat(e.total_paid) || 0;
+                  const tRemain = Math.max(0, tAmt - tPaid);
                   return `
                   <tr class="cursor-pointer hover:bg-gray-50" onclick="App.openEmployee(${e.id})">
                     <td>${i + 1}</td>
@@ -1389,8 +1501,8 @@ const App = {
                     <td>${this.escapeHtml(e.designation || '-')}</td>
                     <td>${this.escapeHtml(e.phone || '-')}</td>
                     <td class="text-right">${isPiece ? '<span class="text-xs text-orange-600">Per Piece</span>' : 'PKR ' + this.fmt(e.monthly_salary)}</td>
-                    <td class="text-right amount-received">PKR ${this.fmt(e.total_paid)}</td>
-                    <td class="text-right amount-pending">PKR ${this.fmt(e.total_advance)}</td>
+                    <td class="text-right amount-received">PKR ${this.fmt(tPaid)}</td>
+                    <td class="text-right amount-pending">PKR ${this.fmt(tRemain)}</td>
                     <td><span class="status-badge ${e.active ? 'status-received' : 'status-cancelled'}">${e.active ? 'Active' : 'Inactive'}</span></td>
                     <td onclick="event.stopPropagation()">
                       <button onclick="App.showEmployeeEditor(${e.id})" class="btn btn-secondary btn-sm"><i class="fas fa-edit"></i></button>
@@ -1552,8 +1664,15 @@ const App = {
     const e = this.state.currentEmployee;
     const tx = this.state.employeeTransactions;
     const sumByType = (t) => tx.filter(x => x.type === t).reduce((s, x) => s + (parseFloat(x.amount) || 0), 0);
-    const paid = sumByType('salary'), advance = sumByType('advance'), bonus = sumByType('bonus'), deduction = sumByType('deduction');
-    const net = paid + bonus - advance - deduction;
+    // For salary entries: actual paid amount (paid_amount if set, else full amount)
+    const salaryPaidActual = tx.filter(x => x.type === 'salary').reduce((s, x) => {
+      const amt = parseFloat(x.amount) || 0;
+      const pa = (x.paid_amount === null || x.paid_amount === undefined || x.paid_amount === '') ? amt : (parseFloat(x.paid_amount) || 0);
+      return s + pa;
+    }, 0);
+    const salaryTotalAmount = sumByType('salary');
+    const salaryRemaining = Math.max(0, salaryTotalAmount - salaryPaidActual);
+    const advance = sumByType('advance'), bonus = sumByType('bonus'), deduction = sumByType('deduction');
     const area = document.getElementById('content-area');
     area.innerHTML = `
       <div class="page-header">
@@ -1569,11 +1688,11 @@ const App = {
       </div>
       <div class="p-4 md:p-6 space-y-5">
         <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <div class="stat-card"><p class="text-xs text-gray-500">Salary Paid</p><p class="text-xl font-bold amount-received">PKR ${this.fmt(paid)}</p></div>
+          <div class="stat-card"><p class="text-xs text-gray-500">Salary Paid</p><p class="text-xl font-bold amount-received">PKR ${this.fmt(salaryPaidActual)}</p>${salaryTotalAmount > 0 ? `<p class="text-xs text-gray-400 mt-1">of PKR ${this.fmt(salaryTotalAmount)}</p>` : ''}</div>
           <div class="stat-card"><p class="text-xs text-gray-500">Advance</p><p class="text-xl font-bold amount-pending">PKR ${this.fmt(advance)}</p></div>
           <div class="stat-card"><p class="text-xs text-gray-500">Bonus</p><p class="text-xl font-bold text-green-600">PKR ${this.fmt(bonus)}</p></div>
           <div class="stat-card"><p class="text-xs text-gray-500">Deduction</p><p class="text-xl font-bold text-red-600">PKR ${this.fmt(deduction)}</p></div>
-          <div class="balance-box"><p class="text-xs opacity-90">Net Settled</p><p class="text-2xl font-bold mt-1">PKR ${this.fmt(net)}</p></div>
+          <div class="balance-box"><p class="text-xs opacity-90">Remaining</p><p class="text-2xl font-bold mt-1">PKR ${this.fmt(salaryRemaining)}</p></div>
         </div>
         <div class="bg-white rounded-xl shadow-sm overflow-hidden">
           <div class="px-4 py-3 border-b flex items-center justify-between">
@@ -1583,12 +1702,17 @@ const App = {
             <thead><tr>
               <th style="width:40px;">#</th><th>Date</th><th>Type</th>
               <th>Item / Description</th><th class="text-right">Qty</th>
-              <th class="text-right">Rate</th><th class="text-right">Amount</th>
+              <th class="text-right">Rate</th><th class="text-right">Total</th>
+              <th class="text-right">Paid</th><th class="text-right">Remaining</th>
               <th style="width:100px;">Action</th>
             </tr></thead><tbody>
-              ${tx.length === 0 ? `<tr><td colspan="8" class="text-center py-8 text-gray-500"><i class="fas fa-inbox text-3xl mb-2 block"></i>No records yet.</td></tr>` :
+              ${tx.length === 0 ? `<tr><td colspan="10" class="text-center py-8 text-gray-500"><i class="fas fa-inbox text-3xl mb-2 block"></i>No records yet.</td></tr>` :
                 tx.map((t, i) => {
                   const isPiece = t.entry_type === 'per_piece';
+                  const isSalary = t.type === 'salary';
+                  const totalAmt = parseFloat(t.amount) || 0;
+                  const paidA = (t.paid_amount === null || t.paid_amount === undefined || t.paid_amount === '') ? totalAmt : (parseFloat(t.paid_amount) || 0);
+                  const remainingA = Math.max(0, totalAmt - paidA);
                   return `<tr>
                   <td>${i + 1}</td>
                   <td>${t.entry_date}</td>
@@ -1596,7 +1720,9 @@ const App = {
                   <td>${isPiece ? `<strong>${this.escapeHtml(t.item_name || '')}</strong>${t.description ? `<div class="text-xs text-gray-500">${this.escapeHtml(t.description)}</div>` : ''}` : this.escapeHtml(t.description || '')}</td>
                   <td class="text-right">${isPiece ? this.fmt(t.quantity) : '-'}</td>
                   <td class="text-right">${isPiece ? 'PKR ' + this.fmt(t.rate) : '-'}</td>
-                  <td class="text-right font-bold">PKR ${this.fmt(t.amount)}</td>
+                  <td class="text-right font-bold">PKR ${this.fmt(totalAmt)}</td>
+                  <td class="text-right amount-received">${isSalary ? 'PKR ' + this.fmt(paidA) : '-'}</td>
+                  <td class="text-right amount-pending font-semibold">${isSalary ? 'PKR ' + this.fmt(remainingA) : '-'}</td>
                   <td>
                     <button onclick="App.showEmployeeTxEditor(${e.id}, ${t.id})" class="btn btn-secondary btn-sm"><i class="fas fa-edit"></i></button>
                     <button onclick="App.deleteEmployeeTx(${t.id})" class="text-red-500 ml-1"><i class="fas fa-trash text-sm"></i></button>
@@ -1608,12 +1734,17 @@ const App = {
   },
 
   showEmployeeTxEditor(empId, txId = null) {
-    const tx = txId ? this.state.employeeTransactions.find(t => t.id === txId) : { entry_date: new Date().toISOString().slice(0,10), type:'salary', amount:0, description:'', entry_type:'cash', item_id:null, item_name:'', quantity:0, rate:0 };
+    const tx = txId ? this.state.employeeTransactions.find(t => t.id === txId) : { entry_date: new Date().toISOString().slice(0,10), type:'salary', amount:0, description:'', entry_type:'cash', item_id:null, item_name:'', quantity:0, rate:0, paid_amount:null };
     if (txId && !tx) return;
     const emp = this.state.currentEmployee || {};
     const empItems = this.state.currentEmployeeItems || [];
     const isPerPieceEmp = emp.salary_type === 'per_piece';
     const initEntryType = tx.entry_type || (isPerPieceEmp ? 'per_piece' : 'cash');
+    const initType = tx.type || 'salary';
+    // Default paid_amount: if existing record has explicit paid_amount, use it; otherwise default to full total
+    const initialTotal = parseFloat(tx.amount) || 0;
+    const hasPaidAmount = !(tx.paid_amount === null || tx.paid_amount === undefined || tx.paid_amount === '');
+    const initialPaid = hasPaidAmount ? (parseFloat(tx.paid_amount) || 0) : initialTotal;
 
     const itemOptionsHtml = empItems.map(it =>
       `<option value="${it.id}" data-rate="${it.rate}" ${tx.item_id == it.id ? 'selected' : ''}>${this.escapeHtml(it.item_name)} — PKR ${this.fmt(it.rate)}</option>`
@@ -1625,7 +1756,7 @@ const App = {
         <div><label class="block text-sm font-medium mb-1">Date</label>
           <input id="etx-date" type="date" class="input-field" value="${tx.entry_date || ''}"></div>
         <div><label class="block text-sm font-medium mb-1">Type</label>
-          <select id="etx-type" class="input-field">
+          <select id="etx-type" class="input-field" onchange="App._toggleEtxTypeChanged()">
             ${['salary','advance','bonus','deduction'].map(t => `<option value="${t}" ${tx.type === t ? 'selected' : ''}>${t.charAt(0).toUpperCase()+t.slice(1)}</option>`).join('')}
           </select></div>
 
@@ -1651,13 +1782,30 @@ const App = {
 
         <div id="etx-amount-wrap" class="md:col-span-2" style="${initEntryType === 'cash' ? '' : 'display:none;'}">
           <label class="block text-sm font-medium mb-1">Amount (PKR)</label>
-          <input id="etx-amount" type="number" step="any" min="0" class="input-field" value="${parseFloat(tx.amount) || 0}">
+          <input id="etx-amount" type="number" step="any" min="0" class="input-field" value="${parseFloat(tx.amount) || 0}" oninput="App._etxAmountChanged()">
         </div>
 
         <div id="etx-piece-total" class="md:col-span-2" style="${initEntryType === 'per_piece' ? '' : 'display:none;'}">
           <div class="bg-blue-50 border border-blue-200 rounded p-3 flex justify-between items-center">
             <span class="text-sm font-medium">Total (Quantity × Rate):</span>
             <span id="etx-total-display" class="font-bold text-lg amount-running">PKR 0.00</span>
+          </div>
+        </div>
+
+        <!-- Paid / Remaining section (only for salary type) -->
+        <div id="etx-paid-wrap" class="md:col-span-2" style="${initType === 'salary' ? '' : 'display:none;'}">
+          <div class="bg-green-50 border border-green-200 rounded-lg p-3 space-y-2">
+            <div class="flex items-center justify-between gap-3">
+              <label class="block text-sm font-medium" for="etx-paid">
+                <i class="fas fa-hand-holding-usd text-green-600 mr-1"></i>Paid Amount (PKR)
+              </label>
+              <input id="etx-paid" type="number" step="any" min="0" class="input-field" style="max-width:200px;" value="${initialPaid}" oninput="this.dataset.userTouched='1'; App._etxRecalcPaid()" placeholder="How much you paid">
+            </div>
+            <div class="flex items-center justify-between text-sm pt-1 border-t border-green-200">
+              <span class="text-gray-600">Remaining:</span>
+              <span id="etx-remaining-display" class="font-bold amount-pending">PKR 0.00</span>
+            </div>
+            <p class="text-xs text-gray-500"><i class="fas fa-info-circle mr-1"></i>Enter how much you actually paid out of the total. The difference will be tracked as remaining.</p>
           </div>
         </div>
 
@@ -1671,14 +1819,23 @@ const App = {
       </form>`, 'modal-lg');
 
     if (isPerPieceEmp && initEntryType === 'per_piece') this._etxRecalc();
+    this._etxRecalcPaid();
+
+    // Toggle Paid section based on type (only show for 'salary')
+    document.getElementById('etx-type').addEventListener('change', () => {
+      const tEl = document.getElementById('etx-type').value;
+      const wrap = document.getElementById('etx-paid-wrap');
+      if (wrap) wrap.style.display = tEl === 'salary' ? '' : 'none';
+    });
 
     document.getElementById('etx-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const eType = document.getElementById('etx-etype').value;
+      const tType = document.getElementById('etx-type').value;
       let payload = {
         employee_id: empId,
         entry_date: document.getElementById('etx-date').value,
-        type: document.getElementById('etx-type').value,
+        type: tType,
         description: document.getElementById('etx-desc').value,
         entry_type: eType
       };
@@ -1697,6 +1854,18 @@ const App = {
       } else {
         payload.amount = parseFloat(document.getElementById('etx-amount').value) || 0;
       }
+      // Paid amount only for salary type
+      if (tType === 'salary') {
+        const paidEl = document.getElementById('etx-paid');
+        const paidVal = paidEl ? paidEl.value : '';
+        if (paidVal !== '' && paidVal !== null && !isNaN(parseFloat(paidVal))) {
+          payload.paid_amount = parseFloat(paidVal);
+        } else {
+          payload.paid_amount = payload.amount; // default fully paid
+        }
+      } else {
+        payload.paid_amount = null;
+      }
       try {
         if (txId) await this.api.put(`/api/employee-transactions/${txId}`, payload);
         else await this.api.post('/api/employee-transactions', payload);
@@ -1713,6 +1882,33 @@ const App = {
     document.getElementById('etx-amount-wrap').style.display = t === 'cash' ? '' : 'none';
     document.getElementById('etx-piece-total').style.display = t === 'per_piece' ? '' : 'none';
     if (t === 'per_piece') this._etxRecalc();
+    this._etxRecalcPaid();
+  },
+
+  _etxRecalcPaid() {
+    const eType = document.getElementById('etx-etype')?.value || 'cash';
+    let total = 0;
+    if (eType === 'per_piece') {
+      const qty = parseFloat(document.getElementById('etx-qty')?.value) || 0;
+      const rate = parseFloat(document.getElementById('etx-rate')?.value) || 0;
+      total = qty * rate;
+    } else {
+      total = parseFloat(document.getElementById('etx-amount')?.value) || 0;
+    }
+    const paid = parseFloat(document.getElementById('etx-paid')?.value) || 0;
+    const remaining = Math.max(0, total - paid);
+    const disp = document.getElementById('etx-remaining-display');
+    if (disp) disp.textContent = 'PKR ' + this.fmt(remaining);
+  },
+
+  _etxAmountChanged() {
+    const amt = parseFloat(document.getElementById('etx-amount')?.value) || 0;
+    // Auto-fill paid amount default if user hasn't manually set it
+    const paidEl = document.getElementById('etx-paid');
+    if (paidEl && !paidEl.dataset.userTouched) {
+      paidEl.value = amt;
+    }
+    this._etxRecalcPaid();
   },
 
   _etxItemChanged() {
@@ -1729,6 +1925,12 @@ const App = {
     const total = qty * rate;
     const disp = document.getElementById('etx-total-display');
     if (disp) disp.textContent = 'PKR ' + this.fmt(total);
+    // Auto-update paid amount default to match new total when user hasn't manually changed it
+    const paidEl = document.getElementById('etx-paid');
+    if (paidEl && !paidEl.dataset.userTouched) {
+      paidEl.value = total;
+    }
+    this._etxRecalcPaid();
   },
 
   async deleteEmployeeTx(id) {

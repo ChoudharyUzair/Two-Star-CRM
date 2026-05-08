@@ -162,6 +162,22 @@
 10. **Dashboard** — see overall summary
 
 ## Recent Changes (2026-05-08)
+
+### v4 — Dashboard Per-Section Summaries + Partial Salary Payments
+- **Dashboard**: Added 3 new dedicated summary tables — exactly like Per-Section Summary:
+  - 🟧 **Raw Material Summary** — full list with material, supplier, qty, rate, total value, and grand total
+  - 👷 **Employees Summary** — full list with total salary, paid, remaining, status, and grand totals
+  - 💰 **Side Expenses Summary** — latest 10 entries with date, category, description, paid-to, amount + grand total
+- **Employees List page**: Replaced *Advance* column with **Remaining Amount** (= Total Salary − Actually Paid). Stat-card row also now shows Remaining Amount instead of Total Advance.
+- **Salary Entry modal**: Below the *Total (Quantity × Rate)* line a new **Paid Amount** field is shown for `salary` type entries. Enter how much was actually paid out of the total — the remaining amount is calculated and tracked automatically. Auto-defaults to the full total (so existing behaviour is preserved if you don't change it).
+- **Employee Profile**: 
+  - "Salary Paid" stat now shows **actual paid amount** (with "of PKR X" subtotal)
+  - **Net Settled** stat replaced with **Remaining** (highlighted purple gradient card)
+  - Records table now shows three columns for salary entries: **Total | Paid | Remaining**
+- **Backend**: Added `paid_amount REAL` column to `employee_transactions` (migration `0006_paid_amount.sql`). When `paid_amount IS NULL`, the row is treated as fully paid for legacy compatibility.
+- **API**: `/api/dashboard` now returns `rawList`, `empList`, `expenseList`, and `empPaidStats` (`total_amount`, `total_paid`, `total_remaining`).
+
+### v3 — Two Star Rebrand & Per-Piece Salaries
 - Renamed repository to **Two Star CRM** (GitHub: `ChoudharyUzair/Two-Star-CRM`)
 - Pushed under author **Muhammad Uzair**
 - Removed default **Expenses** folder (use Side Expenses module instead)

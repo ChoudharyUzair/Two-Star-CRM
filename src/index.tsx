@@ -581,7 +581,9 @@ app.delete('/api/raw-materials/:id', requireAuth, async (c) => {
 app.get('/api/employees', requireAuth, async (c) => {
   const result = await c.env.DB.prepare(
     `SELECT e.*,
-       (SELECT COALESCE(SUM(amount),0) FROM employee_transactions WHERE employee_id = e.id AND type='salary') as total_paid,
+       (SELECT COALESCE(SUM(amount),0) FROM employee_transactions WHERE employee_id = e.id AND type='salary') as total_amount,
+       (SELECT COALESCE(SUM(CASE WHEN paid_amount IS NULL THEN amount ELSE paid_amount END),0)
+          FROM employee_transactions WHERE employee_id = e.id AND type='salary') as total_paid,
        (SELECT COALESCE(SUM(amount),0) FROM employee_transactions WHERE employee_id = e.id AND type='advance') as total_advance,
        (SELECT COALESCE(SUM(amount),0) FROM employee_transactions WHERE employee_id = e.id AND type='bonus') as total_bonus,
        (SELECT COALESCE(SUM(amount),0) FROM employee_transactions WHERE employee_id = e.id AND type='deduction') as total_deduction
@@ -647,35 +649,49 @@ app.delete('/api/employees/:id', requireAuth, async (c) => {
 })
 
 app.post('/api/employee-transactions', requireAuth, async (c) => {
-  const { employee_id, entry_date, type, amount, description, entry_type, item_id, item_name, quantity, rate } = await c.req.json()
+  const body = await c.req.json()
+  const { employee_id, entry_date, type, amount, description, entry_type, item_id, item_name, quantity, rate, paid_amount } = body
   if (!employee_id || !type) return c.json({ error: 'employee_id & type required' }, 400)
   const eType = entry_type === 'per_piece' ? 'per_piece' : 'cash'
   let amt = parseFloat(amount) || 0
   const qty = parseInt(quantity) || 0
   const r = parseFloat(rate) || 0
   if (eType === 'per_piece') amt = qty * r
+  // paid_amount: how much was actually paid out of the total amount.
+  // Only meaningful for type='salary'. NULL means "fully paid" (legacy behaviour).
+  let paid: number | null = null
+  if (type === 'salary' && paid_amount !== undefined && paid_amount !== null && paid_amount !== '') {
+    paid = parseFloat(paid_amount)
+    if (isNaN(paid)) paid = null
+  }
   const result = await c.env.DB.prepare(
-    `INSERT INTO employee_transactions (employee_id, entry_date, type, amount, description, entry_type, item_id, item_name, quantity, rate) 
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO employee_transactions (employee_id, entry_date, type, amount, description, entry_type, item_id, item_name, quantity, rate, paid_amount) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     employee_id, entry_date || new Date().toISOString().slice(0, 10), type, amt, description || '',
-    eType, item_id || null, item_name || '', qty, r
+    eType, item_id || null, item_name || '', qty, r, paid
   ).run()
   return c.json({ id: result.meta.last_row_id })
 })
 
 app.put('/api/employee-transactions/:id', requireAuth, async (c) => {
   const id = c.req.param('id')
-  const { entry_date, type, amount, description, entry_type, item_id, item_name, quantity, rate } = await c.req.json()
+  const body = await c.req.json()
+  const { entry_date, type, amount, description, entry_type, item_id, item_name, quantity, rate, paid_amount } = body
   const eType = entry_type === 'per_piece' ? 'per_piece' : 'cash'
   let amt = parseFloat(amount) || 0
   const qty = parseInt(quantity) || 0
   const r = parseFloat(rate) || 0
   if (eType === 'per_piece') amt = qty * r
+  let paid: number | null = null
+  if (type === 'salary' && paid_amount !== undefined && paid_amount !== null && paid_amount !== '') {
+    paid = parseFloat(paid_amount)
+    if (isNaN(paid)) paid = null
+  }
   await c.env.DB.prepare(
     `UPDATE employee_transactions SET entry_date=?, type=?, amount=?, description=?, 
-     entry_type=?, item_id=?, item_name=?, quantity=?, rate=? WHERE id=?`
-  ).bind(entry_date, type, amt, description || '', eType, item_id || null, item_name || '', qty, r, id).run()
+     entry_type=?, item_id=?, item_name=?, quantity=?, rate=?, paid_amount=? WHERE id=?`
+  ).bind(entry_date, type, amt, description || '', eType, item_id || null, item_name || '', qty, r, paid, id).run()
   return c.json({ success: true })
 })
 
@@ -782,7 +798,8 @@ app.delete('/api/custom-sections/rows/:rowId', requireAuth, async (c) => {
 // ============ DASHBOARD ============
 app.get('/api/dashboard', requireAuth, async (c) => {
   const [totals, perFolder, topPending, recent, statuses, clientCount, folderCount, billStats,
-         empCount, empPaid, empAdvance, expenseStats, rawStats, customSecCount] = await Promise.all([
+         empCount, empPaid, empAdvance, expenseStats, rawStats, customSecCount,
+         rawList, empList, expenseList] = await Promise.all([
     c.env.DB.prepare(`
       SELECT COALESCE(SUM(amount_received),0) as total_received,
              COALESCE(SUM(amount_pending),0) as total_pending,
@@ -820,11 +837,34 @@ app.get('/api/dashboard', requireAuth, async (c) => {
     c.env.DB.prepare('SELECT COUNT(*) as c FROM folders').first(),
     c.env.DB.prepare(`SELECT COUNT(*) as count, COALESCE(SUM(total),0) as total_amount, COALESCE(SUM(paid),0) as total_paid FROM bills`).first(),
     c.env.DB.prepare(`SELECT COUNT(*) as c FROM employees WHERE active = 1`).first(),
-    c.env.DB.prepare(`SELECT COALESCE(SUM(amount),0) as a FROM employee_transactions WHERE type='salary'`).first(),
+    c.env.DB.prepare(`SELECT 
+       COALESCE(SUM(amount),0) as total_amount,
+       COALESCE(SUM(CASE WHEN paid_amount IS NULL THEN amount ELSE paid_amount END),0) as total_paid,
+       COALESCE(SUM(CASE WHEN paid_amount IS NULL THEN 0 ELSE (amount - paid_amount) END),0) as total_remaining
+       FROM employee_transactions WHERE type='salary'`).first(),
     c.env.DB.prepare(`SELECT COALESCE(SUM(amount),0) as a FROM employee_transactions WHERE type='advance'`).first(),
     c.env.DB.prepare(`SELECT COUNT(*) as count, COALESCE(SUM(amount),0) as total FROM side_expenses`).first(),
     c.env.DB.prepare(`SELECT COUNT(*) as count, COALESCE(SUM(total_value),0) as total, COALESCE(SUM(quantity),0) as qty FROM raw_materials`).first(),
-    c.env.DB.prepare(`SELECT COUNT(*) as c FROM custom_sections`).first()
+    c.env.DB.prepare(`SELECT COUNT(*) as c FROM custom_sections`).first(),
+    // Per-section breakdowns
+    c.env.DB.prepare(`
+      SELECT id, name, unit, quantity, rate, total_value, supplier_name
+      FROM raw_materials ORDER BY name ASC
+    `).all(),
+    c.env.DB.prepare(`
+      SELECT e.id, e.name, e.designation, e.monthly_salary, e.salary_type, e.active,
+        (SELECT COALESCE(SUM(amount),0) FROM employee_transactions WHERE employee_id = e.id AND type='salary') as total_amount,
+        (SELECT COALESCE(SUM(CASE WHEN paid_amount IS NULL THEN amount ELSE paid_amount END),0)
+           FROM employee_transactions WHERE employee_id = e.id AND type='salary') as total_paid,
+        (SELECT COALESCE(SUM(amount),0) FROM employee_transactions WHERE employee_id = e.id AND type='advance') as total_advance,
+        (SELECT COALESCE(SUM(amount),0) FROM employee_transactions WHERE employee_id = e.id AND type='bonus') as total_bonus,
+        (SELECT COALESCE(SUM(amount),0) FROM employee_transactions WHERE employee_id = e.id AND type='deduction') as total_deduction
+      FROM employees e ORDER BY e.name
+    `).all(),
+    c.env.DB.prepare(`
+      SELECT id, entry_date, category, description, amount, paid_to
+      FROM side_expenses ORDER BY entry_date DESC, id DESC LIMIT 50
+    `).all()
   ])
 
   return c.json({
@@ -841,7 +881,11 @@ app.get('/api/dashboard', requireAuth, async (c) => {
     empAdvance: empAdvance?.a || 0,
     expenseStats,
     rawStats,
-    customSecCount: customSecCount?.c || 0
+    customSecCount: customSecCount?.c || 0,
+    rawList: rawList.results,
+    empList: empList.results,
+    expenseList: expenseList.results,
+    empPaidStats: empPaid
   })
 })
 
