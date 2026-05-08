@@ -223,13 +223,6 @@ const App = {
           <div id="folders-list" style="display:none;"></div>
         </div>
 
-        <div class="nav-section">
-          <div class="nav-section-title">
-            <span>Custom Sections</span>
-            <button onclick="App.showAddCustomSection()" class="text-blue-400 hover:text-blue-300" title="Add Custom Section"><i class="fas fa-plus-circle"></i></button>
-          </div>
-          <div id="custom-sections-list"></div>
-        </div>
       </aside>
 
       <main class="main-content">
@@ -952,8 +945,6 @@ const App = {
             <p class="text-xs text-gray-400 mt-1">PKR ${this.fmt(billStats?.total_amount || 0)}</p></div>
           <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-users mr-1"></i>Clients/Sections</p>
             <p class="text-xl font-bold text-blue-600 mt-1">${clientCount} / ${folderCount}</p></div>
-          <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-folder mr-1"></i>Custom Sections</p>
-            <p class="text-xl font-bold text-blue-600 mt-1">${customSecCount}</p></div>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -1276,7 +1267,9 @@ const App = {
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Material Name *</label>
           <input id="r-name" type="text" required class="input-field" value="${this.escapeAttr(it.name || '')}"></div>
         <div><label class="block text-sm font-medium mb-1">Unit</label>
-          <input id="r-unit" type="text" class="input-field" value="${this.escapeAttr(it.unit || 'pcs')}" placeholder="pcs/kg/m"></div>
+          <select id="r-unit" class="input-field">
+            ${['pcs','kg','gram','ton','litre','ml','meter','cm','foot','inch','yard','box','dozen','pack','roll','bag','bottle','bundle','sheet','set','pair','carton'].map(u => `<option value="${u}" ${ (it.unit || 'pcs') === u ? 'selected' : ''}>${u}</option>`).join('')}
+          </select></div>
         <div><label class="block text-sm font-medium mb-1">Category</label>
           <input id="r-cat" type="text" class="input-field" value="${this.escapeAttr(it.category || '')}"></div>
         <div><label class="block text-sm font-medium mb-1">Quantity Available</label>
