@@ -69,8 +69,9 @@
 - Rows are stored as JSON, fully editable
 
 ### 📊 Dashboard
-- Stats: Received, Pending, Net Balance, Clients/Folders, Bills, Employees, Side Expenses, Raw Material totals
-- Per-folder summary, top pending, recent transactions, status breakdown
+- Stats: Received, **Remaining Balance**, Clients/Folders, Bills, Employees, Side Expenses, Raw Material totals
+- Per-folder summary, recent transactions, status breakdown
+- **Calendar widget** — see daily Received / Bills / Salary / Advance / Expenses
 - All queries parallelized with `Promise.all()`
 
 ### 🔐 Authentication & Security
@@ -163,6 +164,19 @@
 10. **Dashboard** — see overall summary
 
 ## Recent Changes (2026-05-08)
+
+### v5 — Bug Fixes, Remaining Balance Rebrand, Calendar Module
+- **Fix**: Editing a bill or ledger row no longer throws *"Bill No '...' already exists"*. The duplicate check now ignores the auto-generated mirror transaction that is created by `syncBillLedger()` when a bill is linked to a client.
+- **Fix**: Employee remaining now correctly accounts for **Advance, Bonus & Deduction**:
+  `Remaining = (Total Salary − Paid) − Advance − Deduction + Bonus`
+  Result can be negative (employee owes employer). Applied across Employee Detail, Employees List, and Dashboard summary.
+- **Rebrand**: All occurrences of *Net Balance / Net* on the Dashboard and customer ledger renamed to **Remaining Balance**.
+- **Removed**: All *Pending Amount* UI from Dashboard and Customer/Supplier ledgers — Pending stat-card, Pending column, Top Pending Clients section, and Pending series in Section Comparison chart.
+- **NEW: Calendar Module** — Added a per-month calendar widget on:
+  - **Dashboard** → daily totals for Received, Bills, Salary Paid, Advance, Side Expenses
+  - **Employee Profile** → daily totals for Salary Paid, Advance, Bonus, Deduction
+  - Click a day to open a popup with a per-transaction breakdown.
+  - New endpoint: `GET /api/calendar?month=YYYY-MM[&employee_id=N]`
 
 ### v4 — Dashboard Per-Section Summaries + Partial Salary Payments
 - **Dashboard**: Added 3 new dedicated summary tables — exactly like Per-Section Summary:

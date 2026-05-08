@@ -258,17 +258,28 @@ app.put('/api/clients/:id/column-labels', requireAuth, async (c) => {
 
 // ============ BILL NO VALIDATION ============
 // Bill numbers must be at least 3 digits and globally unique across bills + transactions.
+// IMPORTANT: When checking, ignore auto-linked ledger rows that mirror the same bill (auto_generated=1 + matching bill_id),
+// otherwise editing a bill/ledger row falsely reports its OWN linked twin as duplicate.
 async function isBillNoTaken(env: any, billNo: string, excludeBillId?: number, excludeTxId?: number): Promise<boolean> {
   if (!billNo || !billNo.trim()) return false
   const trimmed = billNo.trim()
+
+  // Check bills table
   let q = 'SELECT id FROM bills WHERE bill_no = ? COLLATE NOCASE'
   const args: any[] = [trimmed]
   if (excludeBillId) { q += ' AND id != ?'; args.push(excludeBillId) }
   const billHit = await env.DB.prepare(q).bind(...args).first()
   if (billHit) return true
-  let q2 = 'SELECT id FROM transactions WHERE bill_no = ? COLLATE NOCASE'
-  const args2: any[] = [trimmed]
-  if (excludeTxId) { q2 += ' AND id != ?'; args2.push(excludeTxId) }
+
+  // Check transactions table BUT exclude auto-linked rows that belong to a bill we're editing,
+  // or any auto-linked row whose parent bill has the same bill_no (those are mirrors, not duplicates)
+  let q2 = `SELECT t.id FROM transactions t
+            LEFT JOIN bills b ON b.id = t.bill_id
+            WHERE t.bill_no = ? COLLATE NOCASE
+              AND NOT (t.auto_generated = 1 AND b.bill_no = ? COLLATE NOCASE)`
+  const args2: any[] = [trimmed, trimmed]
+  if (excludeTxId) { q2 += ' AND t.id != ?'; args2.push(excludeTxId) }
+  if (excludeBillId) { q2 += ' AND (t.bill_id IS NULL OR t.bill_id != ?)'; args2.push(excludeBillId) }
   const txHit = await env.DB.prepare(q2).bind(...args2).first()
   return !!txHit
 }
@@ -327,9 +338,12 @@ app.put('/api/transactions/:id', requireAuth, async (c) => {
   const id = parseInt(c.req.param('id'))
   const { entry_date, bill_no, amount_received, amount_pending, status, description, custom_data } = await c.req.json()
   const billNoT = (bill_no || '').trim()
+  // Look up if this transaction is linked to a bill — if so we must allow that bill's bill_no
+  const existingTx = await c.env.DB.prepare('SELECT bill_id FROM transactions WHERE id = ?').bind(id).first() as any
+  const linkedBillId = existingTx?.bill_id ? parseInt(existingTx.bill_id) : undefined
   if (billNoT) {
     if (!billNoValid(billNoT)) return c.json({ error: 'Bill No must contain at least 3 digits' }, 400)
-    if (await isBillNoTaken(c.env, billNoT, undefined, id)) return c.json({ error: `Bill No "${billNoT}" already exists` }, 400)
+    if (await isBillNoTaken(c.env, billNoT, linkedBillId, id)) return c.json({ error: `Bill No "${billNoT}" already exists` }, 400)
   }
   await c.env.DB.prepare(
     'UPDATE transactions SET entry_date = ?, bill_no = ?, amount_received = ?, amount_pending = ?, status = ?, description = ?, custom_data = ? WHERE id = ?'
@@ -478,9 +492,12 @@ app.put('/api/bills/:id', requireAuth, async (c) => {
   const id = parseInt(c.req.param('id'))
   const b = await c.req.json()
   const billNoT = (b.bill_no || '').trim()
+  // Look up the bill's own linked ledger transaction so we can exclude it from the duplicate check
+  const existingBill = await c.env.DB.prepare('SELECT ledger_transaction_id FROM bills WHERE id = ?').bind(id).first() as any
+  const linkedTxId = existingBill?.ledger_transaction_id ? parseInt(existingBill.ledger_transaction_id) : undefined
   if (billNoT) {
     if (!billNoValid(billNoT)) return c.json({ error: 'Bill No must contain at least 3 digits' }, 400)
-    if (await isBillNoTaken(c.env, billNoT, id)) return c.json({ error: `Bill No "${billNoT}" already exists` }, 400)
+    if (await isBillNoTaken(c.env, billNoT, id, linkedTxId)) return c.json({ error: `Bill No "${billNoT}" already exists` }, 400)
   }
 
   const oldItems = await c.env.DB.prepare('SELECT product_id, quantity FROM bill_items WHERE bill_id = ?').bind(id).all()
@@ -887,6 +904,126 @@ app.get('/api/dashboard', requireAuth, async (c) => {
     expenseList: expenseList.results,
     empPaidStats: empPaid
   })
+})
+
+// ============ CALENDAR ============
+// Returns daily summary for a given month: received, expenses, salary paid, advance, bills count
+// Optionally filter by employee_id for the employee detail calendar
+app.get('/api/calendar', requireAuth, async (c) => {
+  const month = c.req.query('month') || new Date().toISOString().slice(0, 7) // YYYY-MM
+  const employeeId = c.req.query('employee_id')
+  const start = `${month}-01`
+  // Compute end of month
+  const [yStr, mStr] = month.split('-')
+  const y = parseInt(yStr), m = parseInt(mStr)
+  const lastDay = new Date(y, m, 0).getDate()
+  const end = `${month}-${String(lastDay).padStart(2, '0')}`
+
+  if (employeeId) {
+    // Per-employee: salary paid + advance + bonus + deduction by date
+    const empDaily = await c.env.DB.prepare(`
+      SELECT entry_date, type,
+             COALESCE(SUM(amount),0) as total_amount,
+             COALESCE(SUM(CASE WHEN paid_amount IS NULL THEN amount ELSE paid_amount END),0) as total_paid
+      FROM employee_transactions
+      WHERE employee_id = ? AND entry_date >= ? AND entry_date <= ?
+      GROUP BY entry_date, type
+    `).bind(employeeId, start, end).all()
+    // Build daily map
+    const daily: any = {}
+    for (const r of (empDaily.results as any[])) {
+      const d = r.entry_date
+      if (!daily[d]) daily[d] = { date: d, salary_paid: 0, advance: 0, bonus: 0, deduction: 0 }
+      if (r.type === 'salary') daily[d].salary_paid += parseFloat(r.total_paid) || 0
+      else if (r.type === 'advance') daily[d].advance += parseFloat(r.total_amount) || 0
+      else if (r.type === 'bonus') daily[d].bonus += parseFloat(r.total_amount) || 0
+      else if (r.type === 'deduction') daily[d].deduction += parseFloat(r.total_amount) || 0
+    }
+    // Month totals
+    const totals = Object.values(daily).reduce((s: any, d: any) => ({
+      salary_paid: s.salary_paid + d.salary_paid,
+      advance: s.advance + d.advance,
+      bonus: s.bonus + d.bonus,
+      deduction: s.deduction + d.deduction
+    }), { salary_paid: 0, advance: 0, bonus: 0, deduction: 0 })
+    return c.json({ month, daily: Object.values(daily), totals, type: 'employee' })
+  }
+
+  // Global daily: received, billed, expenses, salary paid
+  const [txDaily, billDaily, expenseDaily, empDaily] = await Promise.all([
+    c.env.DB.prepare(`
+      SELECT entry_date,
+             COALESCE(SUM(amount_received),0) as received,
+             COALESCE(SUM(amount_pending),0) as pending,
+             COUNT(*) as tx_count
+      FROM transactions
+      WHERE entry_date >= ? AND entry_date <= ?
+      GROUP BY entry_date
+    `).bind(start, end).all(),
+    c.env.DB.prepare(`
+      SELECT bill_date,
+             COUNT(*) as bills_count,
+             COALESCE(SUM(total),0) as bills_total,
+             COALESCE(SUM(paid),0) as bills_paid
+      FROM bills
+      WHERE bill_date >= ? AND bill_date <= ?
+      GROUP BY bill_date
+    `).bind(start, end).all(),
+    c.env.DB.prepare(`
+      SELECT entry_date,
+             COALESCE(SUM(amount),0) as expenses
+      FROM side_expenses
+      WHERE entry_date >= ? AND entry_date <= ?
+      GROUP BY entry_date
+    `).bind(start, end).all(),
+    c.env.DB.prepare(`
+      SELECT entry_date, type,
+             COALESCE(SUM(amount),0) as total_amount,
+             COALESCE(SUM(CASE WHEN paid_amount IS NULL THEN amount ELSE paid_amount END),0) as total_paid
+      FROM employee_transactions
+      WHERE entry_date >= ? AND entry_date <= ?
+      GROUP BY entry_date, type
+    `).bind(start, end).all()
+  ])
+
+  const daily: any = {}
+  const ensure = (d: string) => {
+    if (!daily[d]) daily[d] = { date: d, received: 0, pending: 0, tx_count: 0,
+                                bills_count: 0, bills_total: 0, bills_paid: 0,
+                                expenses: 0, salary_paid: 0, advance: 0 }
+    return daily[d]
+  }
+  for (const r of (txDaily.results as any[])) {
+    const d = ensure(r.entry_date)
+    d.received = parseFloat(r.received) || 0
+    d.pending = parseFloat(r.pending) || 0
+    d.tx_count = r.tx_count || 0
+  }
+  for (const r of (billDaily.results as any[])) {
+    const d = ensure(r.bill_date)
+    d.bills_count = r.bills_count || 0
+    d.bills_total = parseFloat(r.bills_total) || 0
+    d.bills_paid = parseFloat(r.bills_paid) || 0
+  }
+  for (const r of (expenseDaily.results as any[])) {
+    const d = ensure(r.entry_date)
+    d.expenses = parseFloat(r.expenses) || 0
+  }
+  for (const r of (empDaily.results as any[])) {
+    const d = ensure(r.entry_date)
+    if (r.type === 'salary') d.salary_paid += parseFloat(r.total_paid) || 0
+    else if (r.type === 'advance') d.advance += parseFloat(r.total_amount) || 0
+  }
+  const list: any[] = Object.values(daily)
+  const totals = list.reduce((s: any, d: any) => ({
+    received: s.received + d.received,
+    bills_count: s.bills_count + d.bills_count,
+    bills_total: s.bills_total + d.bills_total,
+    expenses: s.expenses + d.expenses,
+    salary_paid: s.salary_paid + d.salary_paid,
+    advance: s.advance + d.advance
+  }), { received: 0, bills_count: 0, bills_total: 0, expenses: 0, salary_paid: 0, advance: 0 })
+  return c.json({ month, daily: list, totals, type: 'global' })
 })
 
 // ============ ROOT ============

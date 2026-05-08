@@ -545,14 +545,12 @@ const App = {
       </div>
 
       <div class="p-4 md:p-6 space-y-5">
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div class="stat-card"><p class="text-xs text-gray-500">Opening Balance</p>
             <p class="text-xl font-bold text-gray-800 mt-1">PKR ${this.fmt(opening)}</p></div>
-          <div class="stat-card"><p class="text-xs text-gray-500">${this.escapeHtml(this.getColLabel('amount_pending'))}</p>
-            <p class="text-xl font-bold mt-1 amount-pending">PKR ${this.fmt(totalPending)}</p></div>
           <div class="stat-card"><p class="text-xs text-gray-500">${this.escapeHtml(this.getColLabel('amount_received'))}</p>
             <p class="text-xl font-bold mt-1 amount-received">PKR ${this.fmt(totalReceived)}</p></div>
-          <div class="balance-box"><p class="text-xs opacity-90">Net Balance Due</p>
+          <div class="balance-box"><p class="text-xs opacity-90">Remaining Balance</p>
             <p class="text-2xl font-bold mt-1">PKR ${this.fmt(netBalance)}</p>
             <p class="text-xs opacity-80 mt-1">${netBalance > 0 ? 'Owes you' : netBalance < 0 ? 'You owe' : 'Settled'}</p></div>
         </div>
@@ -568,7 +566,6 @@ const App = {
                 <th style="width:40px;">${colHeader('sno')}</th>
                 <th style="width:120px;">${colHeader('date')}</th>
                 <th style="width:110px;">${colHeader('bill_no')}</th>
-                <th style="width:130px;">${colHeader('amount_pending')}</th>
                 <th style="width:130px;">${colHeader('amount_received')}</th>
                 <th style="width:120px;">${colHeader('status')}</th>
                 <th>${colHeader('description')}</th>
@@ -580,7 +577,6 @@ const App = {
               <tfoot>
                 <tr class="bg-gray-100 font-bold">
                   <td colspan="3" class="text-right">TOTALS:</td>
-                  <td class="amount-pending">PKR ${this.fmt(totalPending)}</td>
                   <td class="amount-received">PKR ${this.fmt(totalReceived)}</td>
                   <td colspan="${2 + this.state.customColumns.length}"></td>
                   <td class="text-right amount-running">PKR ${this.fmt(netBalance)}</td>
@@ -595,7 +591,7 @@ const App = {
 
   renderRows(opening) {
     if (this.state.transactions.length === 0) {
-      return `<tr><td colspan="${9 + this.state.customColumns.length}" class="text-center py-8 text-gray-500">
+      return `<tr><td colspan="${8 + this.state.customColumns.length}" class="text-center py-8 text-gray-500">
         <i class="fas fa-inbox text-3xl mb-2 block"></i>No transactions yet. Click "Add Row" to start.</td></tr>`;
     }
     let running = opening;
@@ -611,7 +607,6 @@ const App = {
           <td class="text-gray-500">${i + 1}${lockIcon}</td>
           <td class="cell-display">${t.entry_date || ''}</td>
           <td class="cell-display">${this.escapeHtml(t.bill_no || '')}</td>
-          <td class="amount-pending cell-display">PKR ${this.fmt(pen)}</td>
           <td class="amount-received cell-display">PKR ${this.fmt(rec)}</td>
           <td><span class="status-badge status-${(t.status||'').toLowerCase()}">${this.escapeHtml(t.status || '')}</span></td>
           <td class="cell-display">${this.escapeHtml(t.description || '')}</td>
@@ -925,7 +920,15 @@ const App = {
             rawList, empList, expenseList, empPaidStats } = data;
     const empTotalAmount = (empPaidStats && empPaidStats.total_amount) || 0;
     const empTotalPaid = (empPaidStats && empPaidStats.total_paid) || (typeof empPaid === 'number' ? empPaid : 0);
-    const empTotalRemaining = (empPaidStats && empPaidStats.total_remaining) || 0;
+    // Recompute remaining across all employees: (salary - paid) - advance - deduction + bonus
+    const empTotalRemaining = (empList || []).reduce((s, em) => {
+      const tAmt = parseFloat(em.total_amount) || 0;
+      const tPaid = parseFloat(em.total_paid) || 0;
+      const adv = parseFloat(em.total_advance) || 0;
+      const ded = parseFloat(em.total_deduction) || 0;
+      const bon = parseFloat(em.total_bonus) || 0;
+      return s + ((tAmt - tPaid) - adv - ded + bon);
+    }, 0);
     const area = document.getElementById('content-area');
     area.innerHTML = `
       <div class="page-header">
@@ -937,12 +940,10 @@ const App = {
       </div>
 
       <div class="p-4 md:p-6 space-y-5">
-        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+        <div class="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-3">
           <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-arrow-down mr-1"></i>Total Received</p>
             <p class="text-xl font-bold mt-1 amount-received">PKR ${this.fmt(totals.total_received)}</p></div>
-          <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-clock mr-1"></i>Total Pending</p>
-            <p class="text-xl font-bold mt-1 amount-pending">PKR ${this.fmt(totals.total_pending)}</p></div>
-          <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-balance-scale mr-1"></i>Net Balance</p>
+          <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-balance-scale mr-1"></i>Remaining Balance</p>
             <p class="text-xl font-bold mt-1 amount-running">PKR ${this.fmt((totals.total_pending||0) - (totals.total_received||0))}</p></div>
           <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-file-invoice mr-1"></i>Bills</p>
             <p class="text-xl font-bold text-purple-600 mt-1">${billStats?.count || 0}</p>
@@ -975,14 +976,13 @@ const App = {
             <div class="overflow-x-auto"><table class="w-full text-sm">
               <thead class="bg-gray-50"><tr>
                 <th class="text-left p-3">Section</th><th class="text-right p-3">Entries</th>
-                <th class="text-right p-3">Received</th><th class="text-right p-3">Pending</th><th class="text-right p-3">Net</th>
+                <th class="text-right p-3">Received</th><th class="text-right p-3">Remaining Balance</th>
               </tr></thead><tbody>
                 ${perFolder.map(f => `
                   <tr class="border-t hover:bg-gray-50 cursor-pointer" onclick="App.openFolder(${f.id})">
                     <td class="p-3"><i class="fas ${f.icon} mr-2" style="color:${f.color}"></i>${this.escapeHtml(f.name)}</td>
                     <td class="text-right p-3">${f.client_count}</td>
                     <td class="text-right p-3 amount-received">PKR ${this.fmt(f.total_received)}</td>
-                    <td class="text-right p-3 amount-pending">PKR ${this.fmt(f.total_pending)}</td>
                     <td class="text-right p-3 amount-running">PKR ${this.fmt(f.total_pending - f.total_received)}</td>
                   </tr>`).join('')}
               </tbody></table></div>`}
@@ -1037,14 +1037,17 @@ const App = {
                 ${empList.map(em => {
                   const tAmt = parseFloat(em.total_amount) || 0;
                   const tPaid = parseFloat(em.total_paid) || 0;
-                  const tRemain = Math.max(0, tAmt - tPaid);
+                  const adv = parseFloat(em.total_advance) || 0;
+                  const ded = parseFloat(em.total_deduction) || 0;
+                  const bon = parseFloat(em.total_bonus) || 0;
+                  const tRemain = (tAmt - tPaid) - adv - ded + bon;
                   return `
                   <tr class="border-t hover:bg-gray-50 cursor-pointer" onclick="App.openEmployee(${em.id})">
                     <td class="p-3"><i class="fas fa-user text-blue-500 mr-2"></i>${this.escapeHtml(em.name)}${em.salary_type === 'per_piece' ? ' <i class="fas fa-cubes text-orange-500 ml-1" title="Per Piece"></i>' : ''}</td>
                     <td class="p-3 text-gray-600">${this.escapeHtml(em.designation || '-')}</td>
                     <td class="text-right p-3">PKR ${this.fmt(tAmt)}</td>
                     <td class="text-right p-3 amount-received">PKR ${this.fmt(tPaid)}</td>
-                    <td class="text-right p-3 amount-pending font-semibold">PKR ${this.fmt(tRemain)}</td>
+                    <td class="text-right p-3 ${tRemain < 0 ? 'amount-running' : 'amount-pending'} font-semibold">PKR ${this.fmt(tRemain)}</td>
                     <td class="text-center p-3"><span class="status-badge ${em.active ? 'status-received' : 'status-cancelled'}">${em.active ? 'Active' : 'Inactive'}</span></td>
                   </tr>`}).join('')}
                 <tr class="border-t-2 bg-gray-50 font-bold">
@@ -1089,6 +1092,9 @@ const App = {
           `}
         </div>
 
+        <!-- Activity Calendar -->
+        <div id="dashboard-calendar"></div>
+
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
           <div class="bg-white rounded-xl shadow-sm p-5">
             <h2 class="font-bold text-gray-800 mb-3"><i class="fas fa-chart-pie mr-2"></i>Status Breakdown</h2>
@@ -1101,25 +1107,13 @@ const App = {
         </div>
 
         <div class="bg-white rounded-xl shadow-sm p-5">
-          <h2 class="font-bold text-gray-800 mb-3"><i class="fas fa-exclamation-triangle text-orange-500 mr-2"></i>Top Pending Clients</h2>
-          ${topPending.filter(c => c.pending > 0).length === 0 ? '<p class="text-gray-500 text-center py-4">No pending amounts</p>' : `
-            <div class="space-y-2">${topPending.filter(c => c.pending > 0).map(c => `
-              <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer" onclick="App.openClient(${c.id})">
-                <div><p class="font-medium text-gray-800">${this.escapeHtml(c.name)}</p>
-                  <p class="text-xs text-gray-500">${this.escapeHtml(c.folder_name || '')}</p></div>
-                <div class="text-right"><p class="font-bold amount-pending">PKR ${this.fmt(c.pending)}</p>
-                  <p class="text-xs text-gray-500">Received: PKR ${this.fmt(c.received)}</p></div>
-              </div>`).join('')}</div>`}
-        </div>
-
-        <div class="bg-white rounded-xl shadow-sm p-5">
           <h2 class="font-bold text-gray-800 mb-3"><i class="fas fa-history mr-2"></i>Recent Transactions</h2>
           ${recent.length === 0 ? '<p class="text-gray-500 text-center py-4">No transactions</p>' : `
             <div class="overflow-x-auto"><table class="w-full text-sm">
               <thead class="bg-gray-50"><tr>
                 <th class="text-left p-2">Date</th><th class="text-left p-2">Client</th>
                 <th class="text-left p-2">Bill</th><th class="text-right p-2">Received</th>
-                <th class="text-right p-2">Pending</th><th class="text-left p-2">Status</th>
+                <th class="text-left p-2">Status</th>
               </tr></thead><tbody>
                 ${recent.map(t => `
                   <tr class="border-t hover:bg-gray-50 cursor-pointer" onclick="App.openClient(${t.client_id})">
@@ -1127,12 +1121,14 @@ const App = {
                     <td class="p-2">${this.escapeHtml(t.client_name || '')} <span class="text-xs text-gray-500">/ ${this.escapeHtml(t.folder_name || '')}</span></td>
                     <td class="p-2">${this.escapeHtml(t.bill_no || '-')}</td>
                     <td class="p-2 text-right amount-received">PKR ${this.fmt(t.amount_received)}</td>
-                    <td class="p-2 text-right amount-pending">PKR ${this.fmt(t.amount_pending)}</td>
                     <td class="p-2"><span class="status-badge status-${(t.status||'').toLowerCase()}">${this.escapeHtml(t.status || '')}</span></td>
                   </tr>`).join('')}
               </tbody></table></div>`}
         </div>
       </div>`;
+
+    // Render calendar
+    this.renderCalendar('dashboard-calendar');
 
     requestAnimationFrame(() => {
       if (typeof Chart === 'undefined') return;
@@ -1149,8 +1145,7 @@ const App = {
         if (ctx) new Chart(ctx, {
           type: 'bar',
           data: { labels: perFolder.map(f => f.name), datasets: [
-            { label: 'Received', data: perFolder.map(f => f.total_received), backgroundColor: '#ef4444' },
-            { label: 'Pending', data: perFolder.map(f => f.total_pending), backgroundColor: '#3b82f6' }
+            { label: 'Received', data: perFolder.map(f => f.total_received), backgroundColor: '#ef4444' }
           ] },
           options: { plugins: { legend: { position: 'bottom' } }, scales: { y: { beginAtZero: true } } }
         });
@@ -1460,11 +1455,16 @@ const App = {
     const emps = this.state.employees;
     const totalSalary = emps.reduce((s, e) => s + (parseFloat(e.monthly_salary) || 0), 0);
     const totalPaid = emps.reduce((s, e) => s + (parseFloat(e.total_paid) || 0), 0);
-    const totalRemaining = emps.reduce((s, e) => {
+    // Remaining = (salary - paid) - advance - deduction + bonus
+    const calcEmpRemaining = (e) => {
       const tAmt = parseFloat(e.total_amount) || 0;
       const tPaid = parseFloat(e.total_paid) || 0;
-      return s + Math.max(0, tAmt - tPaid);
-    }, 0);
+      const adv = parseFloat(e.total_advance) || 0;
+      const ded = parseFloat(e.total_deduction) || 0;
+      const bon = parseFloat(e.total_bonus) || 0;
+      return (tAmt - tPaid) - adv - ded + bon;
+    };
+    const totalRemaining = emps.reduce((s, e) => s + calcEmpRemaining(e), 0);
     const area = document.getElementById('content-area');
     area.innerHTML = `
       <div class="page-header">
@@ -1491,9 +1491,8 @@ const App = {
                 <i class="fas fa-user-tie text-3xl mb-2 block"></i>No employees yet.</td></tr>` :
                 emps.map((e, i) => {
                   const isPiece = e.salary_type === 'per_piece';
-                  const tAmt = parseFloat(e.total_amount) || 0;
                   const tPaid = parseFloat(e.total_paid) || 0;
-                  const tRemain = Math.max(0, tAmt - tPaid);
+                  const tRemain = calcEmpRemaining(e);
                   return `
                   <tr class="cursor-pointer hover:bg-gray-50" onclick="App.openEmployee(${e.id})">
                     <td>${i + 1}</td>
@@ -1502,7 +1501,7 @@ const App = {
                     <td>${this.escapeHtml(e.phone || '-')}</td>
                     <td class="text-right">${isPiece ? '<span class="text-xs text-orange-600">Per Piece</span>' : 'PKR ' + this.fmt(e.monthly_salary)}</td>
                     <td class="text-right amount-received">PKR ${this.fmt(tPaid)}</td>
-                    <td class="text-right amount-pending">PKR ${this.fmt(tRemain)}</td>
+                    <td class="text-right ${tRemain < 0 ? 'amount-running' : 'amount-pending'}">PKR ${this.fmt(tRemain)}</td>
                     <td><span class="status-badge ${e.active ? 'status-received' : 'status-cancelled'}">${e.active ? 'Active' : 'Inactive'}</span></td>
                     <td onclick="event.stopPropagation()">
                       <button onclick="App.showEmployeeEditor(${e.id})" class="btn btn-secondary btn-sm"><i class="fas fa-edit"></i></button>
@@ -1671,8 +1670,13 @@ const App = {
       return s + pa;
     }, 0);
     const salaryTotalAmount = sumByType('salary');
-    const salaryRemaining = Math.max(0, salaryTotalAmount - salaryPaidActual);
     const advance = sumByType('advance'), bonus = sumByType('bonus'), deduction = sumByType('deduction');
+    // Remaining = (Salary owed) - advance - deduction + bonus
+    // Salary owed = salary total - salary already paid
+    // Advance is money employee already took out, so it reduces what's still owed.
+    // Deduction reduces too. Bonus increases what employer owes.
+    // Result CAN be negative (employee took more than earned -> employer is in credit).
+    const salaryRemaining = (salaryTotalAmount - salaryPaidActual) - advance - deduction + bonus;
     const area = document.getElementById('content-area');
     area.innerHTML = `
       <div class="page-header">
@@ -1692,8 +1696,12 @@ const App = {
           <div class="stat-card"><p class="text-xs text-gray-500">Advance</p><p class="text-xl font-bold amount-pending">PKR ${this.fmt(advance)}</p></div>
           <div class="stat-card"><p class="text-xs text-gray-500">Bonus</p><p class="text-xl font-bold text-green-600">PKR ${this.fmt(bonus)}</p></div>
           <div class="stat-card"><p class="text-xs text-gray-500">Deduction</p><p class="text-xl font-bold text-red-600">PKR ${this.fmt(deduction)}</p></div>
-          <div class="balance-box"><p class="text-xs opacity-90">Remaining</p><p class="text-2xl font-bold mt-1">PKR ${this.fmt(salaryRemaining)}</p></div>
+          <div class="balance-box"><p class="text-xs opacity-90">Remaining</p><p class="text-2xl font-bold mt-1">PKR ${this.fmt(salaryRemaining)}</p>
+            <p class="text-xs opacity-80 mt-1">${salaryRemaining > 0 ? 'You owe employee' : salaryRemaining < 0 ? 'Employee owes you' : 'Settled'}</p></div>
         </div>
+        <!-- Employee Calendar -->
+        <div id="employee-calendar"></div>
+
         <div class="bg-white rounded-xl shadow-sm overflow-hidden">
           <div class="px-4 py-3 border-b flex items-center justify-between">
             <h2 class="font-bold text-gray-800"><i class="fas fa-history mr-2"></i>Salary / Advance Records</h2>
@@ -1731,6 +1739,8 @@ const App = {
             </tbody></table></div>
         </div>
       </div>`;
+    // Render calendar for this employee
+    this.renderCalendar('employee-calendar', { employeeId: e.id });
   },
 
   showEmployeeTxEditor(empId, txId = null) {
@@ -2844,7 +2854,151 @@ const App = {
   escapeHtml(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
   },
-  escapeAttr(s) { return this.escapeHtml(s); }
+  escapeAttr(s) { return this.escapeHtml(s); },
+
+  // ========= CALENDAR WIDGET =========
+  // Shared monthly calendar state. Key by container id so dashboard & employee can have separate cals.
+  _cal: {},
+
+  async renderCalendar(containerId, opts = {}) {
+    // opts: { employeeId, month (YYYY-MM) }
+    const cur = this._cal[containerId] || {};
+    const month = opts.month || cur.month || new Date().toISOString().slice(0, 7);
+    this._cal[containerId] = { month, employeeId: opts.employeeId || cur.employeeId || null };
+
+    const url = opts.employeeId
+      ? `/api/calendar?month=${month}&employee_id=${opts.employeeId}`
+      : `/api/calendar?month=${month}`;
+    let data;
+    try { data = await this.api.get(url); } catch (e) { return; }
+    this._cal[containerId].data = data;
+
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    const isEmployee = data.type === 'employee';
+    const [yy, mm] = month.split('-').map(Number);
+    const monthName = new Date(yy, mm - 1, 1).toLocaleString('en-US', { month: 'long', year: 'numeric' });
+    const firstDow = new Date(yy, mm - 1, 1).getDay(); // 0=Sun
+    const lastDay = new Date(yy, mm, 0).getDate();
+    const todayStr = new Date().toISOString().slice(0, 10);
+
+    // Index daily by date
+    const byDate = {};
+    (data.daily || []).forEach(d => { byDate[d.date] = d; });
+
+    // Build cells: leading empty + days
+    const cells = [];
+    for (let i = 0; i < firstDow; i++) cells.push(`<div class="cal-cell empty"></div>`);
+    for (let day = 1; day <= lastDay; day++) {
+      const dStr = `${month}-${String(day).padStart(2, '0')}`;
+      const info = byDate[dStr];
+      const isToday = dStr === todayStr;
+      let lines = '';
+      let hasData = false, hasExpense = false;
+      if (info) {
+        if (isEmployee) {
+          if (info.salary_paid > 0) { lines += `<div class="cal-day-line sal" title="Salary Paid">S: ${this.fmtCompact(info.salary_paid)}</div>`; hasData = true; }
+          if (info.advance > 0)     { lines += `<div class="cal-day-line adv" title="Advance">A: ${this.fmtCompact(info.advance)}</div>`; hasData = true; }
+          if (info.bonus > 0)       { lines += `<div class="cal-day-line rec" title="Bonus">B: ${this.fmtCompact(info.bonus)}</div>`; hasData = true; }
+          if (info.deduction > 0)   { lines += `<div class="cal-day-line exp" title="Deduction">D: ${this.fmtCompact(info.deduction)}</div>`; hasData = true; hasExpense = true; }
+        } else {
+          if (info.received > 0)     { lines += `<div class="cal-day-line rec" title="Received">${this.fmtCompact(info.received)}</div>`; hasData = true; }
+          if (info.bills_count > 0)  { lines += `<div class="cal-day-line bills" title="Bills">${info.bills_count} bill${info.bills_count > 1 ? 's' : ''}</div>`; hasData = true; }
+          if (info.salary_paid > 0)  { lines += `<div class="cal-day-line sal" title="Salary Paid">Sal: ${this.fmtCompact(info.salary_paid)}</div>`; hasData = true; }
+          if (info.expenses > 0)     { lines += `<div class="cal-day-line exp" title="Expenses">Exp: ${this.fmtCompact(info.expenses)}</div>`; hasData = true; hasExpense = true; }
+        }
+      }
+      const cls = `cal-cell ${hasData ? 'has-data' : ''} ${hasExpense ? 'has-expense' : ''} ${isToday ? 'today' : ''}`;
+      cells.push(`<div class="${cls}" onclick="App.showCalendarDay('${containerId}','${dStr}')">
+        <div class="cal-day-num">${day}</div>${lines}
+      </div>`);
+    }
+
+    const t = data.totals || {};
+    const totalsHtml = isEmployee
+      ? `<div class="cal-total-card"><div class="lbl">Salary Paid</div><div class="val amount-received">PKR ${this.fmt(t.salary_paid || 0)}</div></div>
+         <div class="cal-total-card"><div class="lbl">Advance</div><div class="val amount-pending">PKR ${this.fmt(t.advance || 0)}</div></div>
+         <div class="cal-total-card"><div class="lbl">Bonus</div><div class="val text-green-600">PKR ${this.fmt(t.bonus || 0)}</div></div>
+         <div class="cal-total-card"><div class="lbl">Deduction</div><div class="val text-red-600">PKR ${this.fmt(t.deduction || 0)}</div></div>`
+      : `<div class="cal-total-card"><div class="lbl">Received</div><div class="val amount-received">PKR ${this.fmt(t.received || 0)}</div></div>
+         <div class="cal-total-card"><div class="lbl">Bills</div><div class="val text-purple-600">${t.bills_count || 0} (PKR ${this.fmt(t.bills_total || 0)})</div></div>
+         <div class="cal-total-card"><div class="lbl">Salary Paid</div><div class="val text-blue-600">PKR ${this.fmt(t.salary_paid || 0)}</div></div>
+         <div class="cal-total-card"><div class="lbl">Side Expenses</div><div class="val text-red-600">PKR ${this.fmt(t.expenses || 0)}</div></div>`;
+
+    container.innerHTML = `
+      <div class="cal-wrap">
+        <div class="cal-header">
+          <h2><i class="fas fa-calendar-days text-blue-500 mr-2"></i>${isEmployee ? 'Employee Calendar' : 'Activity Calendar'}</h2>
+          <div class="cal-nav">
+            <button onclick="App.calMove('${containerId}', -1)" title="Previous Month"><i class="fas fa-chevron-left"></i></button>
+            <span class="cal-month-label">${monthName}</span>
+            <button onclick="App.calMove('${containerId}', 1)" title="Next Month"><i class="fas fa-chevron-right"></i></button>
+            <button onclick="App.calMove('${containerId}', 0)" title="Today">Today</button>
+          </div>
+        </div>
+        <div class="cal-totals">${totalsHtml}</div>
+        <div class="cal-grid">
+          ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => `<div class="cal-dow">${d}</div>`).join('')}
+          ${cells.join('')}
+        </div>
+      </div>`;
+  },
+
+  fmtCompact(n) {
+    n = parseFloat(n) || 0;
+    if (n >= 100000) return (n / 1000).toFixed(0) + 'k';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+    return Math.round(n).toString();
+  },
+
+  async calMove(containerId, dir) {
+    const cur = this._cal[containerId];
+    if (!cur) return;
+    let month = cur.month;
+    if (dir === 0) {
+      month = new Date().toISOString().slice(0, 7);
+    } else {
+      const [y, m] = month.split('-').map(Number);
+      const d = new Date(y, m - 1 + dir, 1);
+      month = d.toISOString().slice(0, 7);
+    }
+    await this.renderCalendar(containerId, { month, employeeId: cur.employeeId });
+  },
+
+  showCalendarDay(containerId, dateStr) {
+    const cur = this._cal[containerId];
+    if (!cur || !cur.data) return;
+    const info = (cur.data.daily || []).find(d => d.date === dateStr);
+    const isEmployee = cur.data.type === 'employee';
+    const friendly = new Date(dateStr).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
+    let body = '<p class="text-gray-500 text-center py-4">No activity on this day.</p>';
+    if (info) {
+      if (isEmployee) {
+        body = `
+          <div class="cal-detail-row"><span class="lbl"><i class="fas fa-money-check-alt text-blue-500 mr-2"></i>Salary Paid</span><span class="val amount-received">PKR ${this.fmt(info.salary_paid || 0)}</span></div>
+          <div class="cal-detail-row"><span class="lbl"><i class="fas fa-hand-holding-usd text-orange-500 mr-2"></i>Advance</span><span class="val amount-pending">PKR ${this.fmt(info.advance || 0)}</span></div>
+          <div class="cal-detail-row"><span class="lbl"><i class="fas fa-gift text-green-500 mr-2"></i>Bonus</span><span class="val text-green-600">PKR ${this.fmt(info.bonus || 0)}</span></div>
+          <div class="cal-detail-row"><span class="lbl"><i class="fas fa-minus-circle text-red-500 mr-2"></i>Deduction</span><span class="val text-red-600">PKR ${this.fmt(info.deduction || 0)}</span></div>`;
+      } else {
+        body = `
+          <div class="cal-detail-row"><span class="lbl"><i class="fas fa-arrow-down text-green-500 mr-2"></i>Total Received</span><span class="val amount-received">PKR ${this.fmt(info.received || 0)}</span></div>
+          <div class="cal-detail-row"><span class="lbl"><i class="fas fa-file-invoice text-purple-500 mr-2"></i>Bills Created</span><span class="val text-purple-600">${info.bills_count || 0} (PKR ${this.fmt(info.bills_total || 0)})</span></div>
+          <div class="cal-detail-row"><span class="lbl"><i class="fas fa-money-check-alt text-blue-500 mr-2"></i>Salary Paid</span><span class="val text-blue-600">PKR ${this.fmt(info.salary_paid || 0)}</span></div>
+          <div class="cal-detail-row"><span class="lbl"><i class="fas fa-hand-holding-usd text-orange-500 mr-2"></i>Advance Paid</span><span class="val text-orange-600">PKR ${this.fmt(info.advance || 0)}</span></div>
+          <div class="cal-detail-row"><span class="lbl"><i class="fas fa-money-bill-wave text-red-500 mr-2"></i>Side Expenses</span><span class="val text-red-600">PKR ${this.fmt(info.expenses || 0)}</span></div>
+          <div class="cal-detail-row"><span class="lbl"><i class="fas fa-list text-gray-500 mr-2"></i>Ledger Entries</span><span class="val">${info.tx_count || 0}</span></div>`;
+      }
+    }
+    this.openModal(`
+      <h2 class="text-xl font-bold mb-3"><i class="fas fa-calendar-day text-blue-500 mr-2"></i>${friendly}</h2>
+      <div class="bg-gray-50 rounded-lg p-2 mb-3">${body}</div>
+      <div class="flex justify-end pt-2 border-t">
+        <button class="btn btn-secondary" onclick="App.closeModal()">Close</button>
+      </div>
+    `);
+  }
 };
 
 document.addEventListener('DOMContentLoaded', () => App.init());
