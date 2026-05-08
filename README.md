@@ -1,167 +1,192 @@
-# Uzair CRM - Company CRM System
+# Two Star CRM
 
 ## Project Overview
-- **Name**: Uzair CRM
+- **Name**: Two Star CRM
+- **Company**: Two Star Industries
 - **Author**: Muhammad Uzair
-- **Goal**: A secure, password-protected CRM for managing company clients/customers/suppliers with a digital ledger (khata) system, automatic balance calculation, and a dashboard overview.
+- **Goal**: A complete, secure, password-protected CRM for managing clients, ledgers, inventory, and bills/invoices for Two Star Industries.
 - **Tech Stack**: Hono (TypeScript) + Cloudflare Pages + Cloudflare D1 (SQLite) + TailwindCSS + Chart.js + FontAwesome
 
 ## URLs
-- **Production**: https://uzair-crm.pages.dev
-- **Latest Deployment**: https://d070639a.uzair-crm.pages.dev
-- **Sandbox Dev**: https://3000-i9tyzlf2wf00e8gj5mqxp-5634da27.sandbox.novita.ai
+- **Production**: https://two-star-crm.pages.dev
+- **GitHub**: https://github.com/ChoudharyUzair/two-star-crm
 
 ## Default Login
 - **Username**: `admin`
 - **Password**: `admin123`
-- ⚠️ **Change the password after first login** (Profile menu → Change Password)
+- ⚠️ **Change the password after first login** (sidebar menu → Change Password)
 
-## Features (Completed ✅)
+## Completed Features ✅
+
+### 🌟 Branding & White-Labeling
+- **Branding section** — fully customizable: company name, CRM display name, logo URL
+- **Custom theme colors** — primary, accent, received, pending, running balance
+- **Bill template settings** — company address, phone, footer text printed on invoices
+- Live preview while editing
+- All colors apply globally via CSS variables
+
+### 🎨 New Color Scheme (per user request)
+- **Received Amount**: 🔴 Red
+- **Pending Amount**: 🔵 Blue
+- **Running Balance**: 🟢 Green
+- (All three are also customizable in the Branding section)
+
+### 📒 Ledger / Khata Sheet
+- All previous features (per-client ledger, auto-running total, custom columns)
+- **NEW: Rename existing built-in columns** — click the pen icon on any column header (#, Date, Bill No, Amount Received, Amount Pending, Status, Description, Running Balance) or use the "Columns" modal
+- Inline editing with auto-save (debounced)
+
+### 📄 Bills / Invoices Section
+- Create, edit, print, and delete bills
+- 4-column line items: **Quantity / Product Name / Rate / Total**
+- Header automatically shows: **Customer Name**, **Date**, **"Two Star Industries"**, **Logo on right side**
+- Auto-fills phone & address when picking an existing client
+- Linked to inventory — pick from product dropdown, auto-fills rate
+- Auto-decrements inventory when a bill is saved (and restores on delete/edit)
+- Calculations: Subtotal, Discount, Tax %, Total, Paid, Due
+- **Print button** — clean, professional invoice ready for print/PDF (uses `window.print()`)
+
+### 📦 Inventory Section
+- Add, edit, delete products
+- Fields: name, SKU, unit, rate, quantity, category, notes
+- Inline editable (every field)
+- Stock value auto-calculated
+- Low-stock indicator (≤5 units)
+- Search bar
+- **Linked to Bill section** — products appear in bill creation dropdown
+
+### 📊 Dashboard
+- Top stats: Received, Pending, Net Balance, Clients/Folders, Bills count
+- Per-folder summary table
+- Status doughnut + folder comparison bar chart
+- Top pending clients
+- Recent transactions
+- All queries run in **parallel** for speed
+
+### ⚡ Speed Optimization
+- All dashboard queries run in `Promise.all()` (parallelized)
+- API GET response caching (cleared on writes)
+- Debounced inputs (350ms) for inline editing
+- `requestAnimationFrame` for chart rendering
+- Lazy `<script defer>` loading for Chart.js & app.js
+- `<link rel="preconnect">` for CDNs
+- Boot loader to mask any delay
+- Local in-place re-render (no full reload) on row updates
+
+### 🎨 UI / UX Improvements
+- Modern flat design with consistent spacing
+- Sticky page headers
+- Mobile-responsive sidebar with toggle button
+- ESC key closes modals
+- Toast animations
+- Status badges with proper colors
+- Smooth modal transitions (fadeIn / slideUp)
+- Better empty states with icons
 
 ### 🔐 Authentication & Security
-- Password-protected login (SHA-256 hashed)
-- Session-based authentication using HttpOnly cookies
-- Logout & Change Password
-- Whole CRM is locked behind login — nothing accessible without auth
+- SHA-256 hashed password
+- Session-based auth (HttpOnly cookies, 7-day expiry)
+- Logout & change password
 
-### 📁 Custom Folders (Sidebar Categories)
-- Pre-seeded folders: Customers, Suppliers, Expenses
-- Add unlimited custom folders (Add new folder type)
-- Customize folder name, icon (10 icons), color picker
-- Edit & delete folders (cascades to clients/transactions)
-- Live client count per folder
+### 📁 Folders, Clients, Custom Columns
+- All previous features intact
 
-### 👥 Clients per Folder
-- Click any folder → see all clients in it
-- Add client with name, phone, email, address, notes, opening balance
-- Edit & delete clients
-- Click any client name from sidebar → opens their khata/ledger sheet
-
-### 📊 Ledger / Khata Sheet (per Client)
-Each client has a full ledger spreadsheet with these columns:
-1. **#** — Row number
-2. **Date** — Transaction date
-3. **Bill No** — Bill/invoice number
-4. **Amount Received** — Cash received (green)
-5. **Amount Pending** — Outstanding amount (orange)
-6. **Status** — Dropdown: Pending / Received / Partial / Overdue / Cancelled
-7. **Description** — Notes
-8. **Custom columns** — User-added columns (text or number)
-9. **Running Total** — Auto-calculated rolling balance (+/- automatic)
-
-- **Auto-calculation**: Running total updates automatically with `+` (pending) and `−` (received) operations
-- **Net Balance Box**: Big highlighted box showing total amount due (separate, prominent)
-- **Inline editing**: Edit any field in the table directly — saves automatically (debounced)
-- Add row / Delete row buttons
-- 4 summary cards on top: Opening Balance, Total Received, Total Pending, **Net Balance Due**
-
-### 🛠️ Customizable Columns (per Client)
-- Click "Columns" button on any client ledger
-- Add/remove/rename custom columns
-- Choose column type: Text or Number
-- Saved per-client in DB
-
-### 📈 Dashboard (Overall View)
-- 4 top stat cards: Total Received, Total Pending, Total Clients, Folders/Transactions
-- **Per-Folder Summary Table**: Each folder's received/pending/net totals
-- **Status Breakdown Doughnut Chart** (Chart.js)
-- **Folder Comparison Bar Chart** (Received vs Pending per folder)
-- **Top Pending Clients** list (sorted by amount owed)
-- **Recent Transactions** table (last 10)
-
-## Functional API Endpoints (Entry URIs)
+## API Endpoints
 
 ### Auth
-- `POST /api/auth/login` — body: `{ username, password }`
+- `POST /api/auth/login`
 - `POST /api/auth/logout`
 - `GET  /api/auth/check`
-- `POST /api/auth/change-password` — body: `{ oldPassword, newPassword }`
+- `POST /api/auth/change-password`
+
+### Branding
+- `GET  /api/branding`
+- `PUT  /api/branding`
 
 ### Folders
 - `GET    /api/folders`
-- `POST   /api/folders` — body: `{ name, icon, color }`
+- `POST   /api/folders`
 - `PUT    /api/folders/:id`
 - `DELETE /api/folders/:id`
 
 ### Clients
 - `GET    /api/folders/:id/clients`
-- `POST   /api/clients` — body: `{ folder_id, name, phone, email, address, notes, opening_balance }`
+- `GET    /api/clients` (all clients — used by bill module)
+- `POST   /api/clients`
 - `GET    /api/clients/:id`
 - `PUT    /api/clients/:id`
 - `DELETE /api/clients/:id`
-- `PUT    /api/clients/:id/columns` — body: `{ columns: [{ name, type, key }] }`
+- `PUT    /api/clients/:id/columns`        — custom columns
+- `PUT    /api/clients/:id/column-labels`  — rename built-in columns
 
-### Transactions (Ledger Rows)
+### Transactions
 - `GET    /api/clients/:id/transactions`
-- `POST   /api/transactions` — body: `{ client_id, entry_date, bill_no, amount_received, amount_pending, status, description, custom_data }`
+- `POST   /api/transactions`
 - `PUT    /api/transactions/:id`
 - `DELETE /api/transactions/:id`
 
-### Dashboard
-- `GET /api/dashboard` — returns totals, per-folder, top pending, recent, status breakdown
+### Inventory
+- `GET    /api/inventory`
+- `POST   /api/inventory`
+- `PUT    /api/inventory/:id`
+- `DELETE /api/inventory/:id`
 
-All endpoints (except `auth/login` and `auth/check`) require an authenticated session cookie.
+### Bills
+- `GET    /api/bills`
+- `GET    /api/bills/:id`
+- `POST   /api/bills`
+- `PUT    /api/bills/:id`
+- `DELETE /api/bills/:id`
+
+### Dashboard
+- `GET    /api/dashboard`
 
 ## Data Architecture
 
 ### Tables (Cloudflare D1 / SQLite)
-- **users** — id, username, password_hash, created_at
-- **sessions** — id, user_id, expires_at
-- **folders** — id, name, icon, color, sort_order
-- **clients** — id, folder_id, name, phone, email, address, notes, opening_balance
-- **client_columns** — client_id, columns_json (custom column config per client)
-- **transactions** — id, client_id, entry_date, bill_no, amount_received, amount_pending, status, description, custom_data
+- **users** — admin credentials
+- **sessions** — auth sessions
+- **folders** — sidebar categories
+- **clients** — client records per folder
+- **client_columns** — per-client custom column config
+- **column_labels** — per-client rename overrides for built-in columns
+- **transactions** — ledger / khata rows
+- **branding** — single-row company branding settings
+- **inventory** — product catalog
+- **bills** — invoice headers
+- **bill_items** — invoice line items (linked to inventory)
 
-### Storage Service
-- **Cloudflare D1** (globally-distributed SQLite) — `webapp-production` database
-- All data is persistent and synced to Cloudflare's edge network
+### Storage
+- **Cloudflare D1** (`webapp-production`)
 
 ## User Guide
 
-1. **Open the site** → https://uzair-crm.pages.dev
-2. **Login** with `admin / admin123` → change password from the menu (top-right ⋮)
-3. **Sidebar** shows Dashboard + all Folders
-4. **Add a folder** — Click `+` next to "Folders" in sidebar, pick name/icon/color
-5. **Add a client** — Click any folder → "Add Client" button, fill details
-6. **Open a client** — Click the client name (sidebar) → ledger sheet opens
-7. **Add ledger rows** — Click "Add Row" → edit cells inline (auto-saves)
-8. **Customize columns** — Click "Columns" on the client page → add custom fields
-9. **Track balance** — Net Balance Due card on top shows total outstanding
-10. **Dashboard** — Click "Dashboard" in sidebar for overall company view
+1. Login with `admin / admin123` (change immediately)
+2. **Branding** — open from sidebar to set company name, logo, and colors
+3. **Inventory** — add all your products (linked into bills automatically)
+4. **Bills** — click "New Bill", pick customer, add items (auto-fills from inventory), print
+5. **Folders** — create categories (Customers / Suppliers / etc.)
+6. **Clients** — open a folder → add clients
+7. **Ledger** — open any client → track received/pending; rename columns by clicking the pen icon
+8. **Dashboard** — overall view of money in / out, top pending clients
 
 ## Features Not Yet Implemented
-- Multi-user support (currently single admin user)
-- Export to PDF / Excel
-- Search / filter inside ledger
-- Date range filtering on dashboard
+- Multi-user support (currently single admin)
+- Export to PDF/Excel (workaround: use browser print to PDF)
+- Search in ledger
+- Date-range filtering on dashboard
 - File attachments per transaction
-- Print invoice from a transaction
-- Audit log of changes
-
-## Recommended Next Steps
-1. Add export-to-PDF for client statements
-2. Add date-range filter to dashboard
-3. Add inline search bar in sidebar for quick client lookup
-4. Add multi-user / role-based access control
-5. Add SMS/Email reminders for overdue payments
 
 ## Deployment
-
 - **Platform**: Cloudflare Pages
-- **Database**: Cloudflare D1 (`webapp-production`, ID `e20fe0c9-62dd-4e55-9c53-75a5c40c48cb`)
+- **Project**: `two-star-crm`
+- **Database**: Cloudflare D1 (`webapp-production`)
 - **Status**: ✅ Active
 - **Last Updated**: 2026-05-08
 
-### Local Development
-```bash
-npm run build
-npx wrangler d1 migrations apply webapp-production --local
-pm2 start ecosystem.config.cjs
-```
-
-### Deploy
+### Build & Deploy
 ```bash
 npm run build
 npx wrangler d1 migrations apply webapp-production --remote
-npx wrangler pages deploy dist --project-name uzair-crm --branch main
+npx wrangler pages deploy dist --project-name two-star-crm --branch main
 ```
