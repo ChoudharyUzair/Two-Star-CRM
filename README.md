@@ -46,6 +46,28 @@
 - Track raw materials with name, unit, qty, rate, total value, supplier link
 - Whole-number inputs
 
+### 🏭 Products / Manufacturing Section (NEW v5)
+A complete manufacturing module that links **finished products** to the **Raw Material** stock. Each product has a recipe describing how much of each raw material is needed to produce **one** finished unit.
+
+**Example**: A "Rack" is built from 3 raw materials (A, B, C):
+- Raw Material A: total stock 100 kg → recipe needs 2 kg per Rack
+- Raw Material B: total stock 200 ft → recipe needs 5 ft per Rack
+- Raw Material C: total stock 200 kg → recipe needs 3 kg per Rack
+- The system computes: **min(100/2, 200/5, 200/3) = 40 Racks** can be built right now.
+
+**Features:**
+- Add a product with name, unit, category, optional sale rate
+- Define a recipe by selecting raw materials from a dropdown (auto-fills unit) and entering qty per 1 unit
+- **Live calculation** in the editor: shows material cost / unit and how many units can be built right now
+- **Per-row colour coding**: green = enough stock, red = not enough
+- **Buildable Now** column in the list shows how many finished products can be made with current raw stock
+- **"Build / Produce"** action — pick how many units to actually build:
+  - Pre-checks stock; rejects if insufficient
+  - Deducts the required raw materials from `raw_materials.quantity` (and recomputes their `total_value`)
+  - Optional: auto-add the finished units to **Inventory** (creates the inventory item if it doesn't exist, otherwise increments quantity)
+- Dashboard card showing total products
+- Edit / Delete recipe at any time
+
 ### 👷 Employees Section (Major Update)
 - Add/edit/delete employees with full profile (phone, CNIC, address, designation, joining date)
 - **NEW: Salary Type Dropdown**
@@ -114,6 +136,14 @@
 ### Raw Materials
 - `GET /api/raw-materials`, `POST /api/raw-materials`, `PUT /api/raw-materials/:id`, `DELETE /api/raw-materials/:id`
 
+### Products / Manufacturing (NEW)
+- `GET /api/products` — list all products + recipe + computed `buildable_units` & `cost_per_unit`
+- `GET /api/products/:id` — single product + recipe details
+- `POST /api/products` — body: `{name, unit, category, notes, sale_rate, ingredients:[{raw_material_id, quantity_required}]}`
+- `PUT /api/products/:id` — same body as POST; replaces the entire recipe
+- `DELETE /api/products/:id`
+- `POST /api/products/:id/build` — body: `{units, add_to_inventory}`; deducts raw materials, optionally adds to Inventory
+
 ### Employees & Employee Transactions
 - `GET /api/employees`, `GET /api/employees/:id` (returns employee + transactions + items)
 - `POST /api/employees`, `PUT /api/employees/:id`, `DELETE /api/employees/:id`
@@ -147,6 +177,8 @@
 - **employee_transactions** (with `entry_type`, `item_id`, `quantity`, `rate`) — extended
 - **side_expenses**
 - **custom_sections**, **custom_section_rows**
+- **products** — manufactured product (recipe header) — NEW v5
+- **product_ingredients** — links products ↔ raw_materials with `quantity_required` per 1 unit — NEW v5
 
 ### Storage
 - **Cloudflare D1** (`webapp-production`)

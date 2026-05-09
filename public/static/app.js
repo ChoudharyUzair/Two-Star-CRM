@@ -17,6 +17,7 @@ const App = {
     bills: [],
     allClients: [],
     rawMaterials: [],
+    products: [],
     employees: [],
     currentEmployee: null,
     employeeTransactions: [],
@@ -203,6 +204,9 @@ const App = {
           <button class="nav-btn ${this.state.view === 'raw' ? 'active' : ''}" id="nav-raw" onclick="App.showRawMaterials()">
             <i class="fas fa-cubes"></i><span>Raw Material</span>
           </button>
+          <button class="nav-btn ${this.state.view === 'products' ? 'active' : ''}" id="nav-products" onclick="App.showProducts()">
+            <i class="fas fa-industry"></i><span>Products / Manufacturing</span>
+          </button>
           <button class="nav-btn ${this.state.view === 'employees' ? 'active' : ''}" id="nav-employees" onclick="App.showEmployees()">
             <i class="fas fa-users-gear"></i><i class="fas fa-user-tie" style="display:none;"></i><span>Employees</span>
           </button>
@@ -238,7 +242,7 @@ const App = {
     if (window.innerWidth <= 768) document.getElementById('sidebar')?.classList.remove('open');
   },
   setActiveNav(name) {
-    ['dashboard','bills','inventory','raw','employees','side-expenses','branding'].forEach(n => {
+    ['dashboard','bills','inventory','raw','products','employees','side-expenses','branding'].forEach(n => {
       const el = document.getElementById('nav-' + n);
       if (el) el.classList.toggle('active', n === name);
     });
@@ -909,7 +913,11 @@ const App = {
       <div class="page-header"><h1 class="page-title"><i class="fas fa-chart-line text-purple-500"></i>Dashboard</h1></div>
       <div class="p-6"><div class="text-gray-400 text-center py-8"><i class="fas fa-spinner fa-spin text-2xl"></i></div></div>`;
     try {
-      const data = await this.api.get('/api/dashboard');
+      const [data, pData] = await Promise.all([
+        this.api.get('/api/dashboard'),
+        this.api.get('/api/products')
+      ]);
+      this.state.products = pData.products || [];
       this.renderDashboard(data);
     } catch (e) {}
   },
@@ -952,11 +960,16 @@ const App = {
             <p class="text-xl font-bold text-blue-600 mt-1">${clientCount} / ${folderCount}</p></div>
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
           <div class="stat-card cursor-pointer" onclick="App.showRawMaterials()">
             <p class="text-xs text-gray-500"><i class="fas fa-cubes mr-1"></i>Raw Materials</p>
             <p class="text-xl font-bold text-orange-600 mt-1">${rawStats?.count || 0} items</p>
             <p class="text-xs text-gray-400 mt-1">Stock Value: PKR ${this.fmt(rawStats?.total || 0)}</p>
+          </div>
+          <div class="stat-card cursor-pointer" onclick="App.showProducts()">
+            <p class="text-xs text-gray-500"><i class="fas fa-industry mr-1"></i>Products / Mfg.</p>
+            <p class="text-xl font-bold text-purple-600 mt-1">${this.state.products.length} product(s)</p>
+            <p class="text-xs text-gray-400 mt-1">Recipes linked to Raw Material</p>
           </div>
           <div class="stat-card cursor-pointer" onclick="App.showEmployees()">
             <p class="text-xs text-gray-500"><i class="fas fa-user-tie mr-1"></i>Employees</p>
@@ -1432,6 +1445,413 @@ const App = {
       await this.showRawMaterials();
       this.toast('Deleted', 'success');
     } catch (e) { this.toast('Failed', 'error'); }
+  },
+
+  // ========= PRODUCTS / MANUFACTURING =========
+  // Each product has a "recipe": list of raw materials and qty needed per 1 finished unit.
+  // Using current Raw Material stock we compute "buildable units" (how many can be made).
+  async showProducts() {
+    this.state.view = 'products';
+    this.state.currentFolderId = null;
+    this.state.currentClientId = null;
+    this.setActiveNav('products');
+    this.closeSidebarOnMobile();
+    this.renderFolders();
+    document.getElementById('content-area').innerHTML = `
+      <div class="page-header"><h1 class="page-title"><i class="fas fa-industry text-purple-600"></i>Products / Manufacturing</h1></div>
+      <div class="p-6"><div class="text-gray-400 text-center py-8"><i class="fas fa-spinner fa-spin text-2xl"></i></div></div>`;
+    try {
+      const [pData, rmData] = await Promise.all([
+        this.api.get('/api/products'),
+        this.api.get('/api/raw-materials')
+      ]);
+      this.state.products = pData.products || [];
+      this.state.rawMaterials = rmData.items || [];
+      this.renderProducts();
+    } catch (e) { this.toast('Failed to load', 'error'); }
+  },
+
+  renderProducts(filter = '') {
+    const f = (filter || '').toLowerCase();
+    const items = f ? this.state.products.filter(p =>
+      (p.name || '').toLowerCase().includes(f) ||
+      (p.category || '').toLowerCase().includes(f)) : this.state.products;
+    const totalBuildable = this.state.products.reduce((s, p) => s + (parseInt(p.buildable_units) || 0), 0);
+    const totalCost = this.state.products.reduce((s, p) => s + (parseFloat(p.cost_per_unit) || 0) * (parseInt(p.buildable_units) || 0), 0);
+    const area = document.getElementById('content-area');
+    area.innerHTML = `
+      <div class="page-header">
+        <div>
+          <h1 class="page-title"><i class="fas fa-industry text-purple-600"></i>Products / Manufacturing</h1>
+          <p class="page-subtitle">${this.state.products.length} product(s) · Recipes linked to Raw Material stock</p>
+        </div>
+        <div class="flex gap-2 flex-wrap">
+          <input type="text" id="prod-search" placeholder="Search products..." class="input-field" style="max-width:240px;" oninput="App.renderProducts(this.value)" value="${this.escapeAttr(filter)}">
+          <button onclick="App.showProductEditor()" class="btn btn-primary"><i class="fas fa-plus"></i> Add Product</button>
+        </div>
+      </div>
+      <div class="p-4 md:p-6 space-y-5">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div class="stat-card"><p class="text-xs text-gray-500">Products</p><p class="text-xl font-bold text-blue-600">${this.state.products.length}</p></div>
+          <div class="stat-card"><p class="text-xs text-gray-500">Buildable Now (sum)</p><p class="text-xl font-bold amount-running">${this.fmt(totalBuildable)}</p></div>
+          <div class="stat-card"><p class="text-xs text-gray-500">Material Cost (Buildable)</p><p class="text-xl font-bold text-purple-600">PKR ${this.fmt(totalCost)}</p></div>
+          <div class="stat-card"><p class="text-xs text-gray-500">Out of Stock</p><p class="text-xl font-bold text-red-600">${this.state.products.filter(p => (parseInt(p.buildable_units)||0) === 0).length}</p></div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+          <div class="overflow-x-auto"><table class="ledger-table">
+            <thead><tr>
+              <th style="width:40px;">#</th>
+              <th>Product</th>
+              <th style="width:80px;">Unit</th>
+              <th style="width:120px;">Category</th>
+              <th>Recipe (Per 1 unit)</th>
+              <th style="width:140px;text-align:right;">Cost / Unit</th>
+              <th style="width:140px;text-align:right;">Sale Rate</th>
+              <th style="width:140px;text-align:center;">Buildable Now</th>
+              <th style="width:160px;">Action</th>
+            </tr></thead><tbody>
+              ${items.length === 0 ? `<tr><td colspan="9" class="text-center py-10 text-gray-500">
+                <i class="fas fa-industry text-4xl mb-2 block opacity-40"></i>
+                ${filter ? 'No matching products.' : 'No products yet. Click "Add Product" to define your first manufactured item and its recipe.'}
+              </td></tr>` :
+              items.map((p, i) => {
+                const ings = p.ingredients || [];
+                const recipeStr = ings.length === 0 ? '<span class="text-gray-400">No recipe</span>' :
+                  ings.map(ing => {
+                    const rmName = ing.raw_name || '(deleted)';
+                    const have = parseFloat(ing.raw_quantity) || 0;
+                    const need = parseFloat(ing.quantity_required) || 0;
+                    const enough = have >= need;
+                    const unit = ing.unit || ing.raw_unit || '';
+                    return `<span class="inline-block px-2 py-0.5 rounded text-xs mr-1 mb-1 ${enough ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}">
+                      <strong>${this.escapeHtml(rmName)}</strong>: ${this.fmt(need)} ${this.escapeHtml(unit)} <span class="opacity-70">(stock: ${this.fmt(have)})</span>
+                    </span>`;
+                  }).join('');
+                const buildable = parseInt(p.buildable_units) || 0;
+                const buildableClass = buildable > 0 ? 'text-green-600' : 'text-red-600';
+                return `<tr>
+                  <td class="text-gray-500">${i + 1}</td>
+                  <td class="font-semibold">${this.escapeHtml(p.name)}</td>
+                  <td>${this.escapeHtml(p.unit || 'pcs')}</td>
+                  <td>${this.escapeHtml(p.category || '')}</td>
+                  <td style="min-width: 320px;">${recipeStr}</td>
+                  <td class="text-right">PKR ${this.fmt(p.cost_per_unit)}</td>
+                  <td class="text-right">${parseFloat(p.sale_rate) > 0 ? 'PKR ' + this.fmt(p.sale_rate) : '<span class="text-gray-400">—</span>'}</td>
+                  <td class="text-center">
+                    <span class="text-2xl font-bold ${buildableClass}">${this.fmt(buildable)}</span>
+                    <div class="text-xs text-gray-500">${this.escapeHtml(p.unit || 'pcs')}</div>
+                  </td>
+                  <td>
+                    <button onclick="App.showBuildProduct(${p.id})" class="btn btn-secondary btn-sm" title="Build / Produce" ${ings.length === 0 ? 'disabled' : ''}><i class="fas fa-hammer"></i></button>
+                    <button onclick="App.showProductEditor(${p.id})" class="btn btn-secondary btn-sm ml-1" title="Edit"><i class="fas fa-edit"></i></button>
+                    <button onclick="App.deleteProduct(${p.id})" class="text-red-500 hover:text-red-700 ml-1" title="Delete"><i class="fas fa-trash text-sm"></i></button>
+                  </td>
+                </tr>`;
+              }).join('')}
+            </tbody></table></div>
+        </div>
+
+        ${items.length === 0 ? '' : `
+        <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-900">
+          <i class="fas fa-info-circle mr-1"></i>
+          <strong>How it works:</strong> Each product has a recipe (raw materials + quantities per 1 finished unit).
+          The system reads current Raw Material stock and shows how many finished products you can build right now.
+          Click <i class="fas fa-hammer"></i> to actually deduct raw materials and (optionally) add finished units to Inventory.
+        </div>`}
+      </div>`;
+  },
+
+  showProductEditor(id = null) {
+    const p = id ? this.state.products.find(x => x.id === id) : { name:'', unit:'pcs', category:'', notes:'', sale_rate: 0, ingredients: [] };
+    if (id && !p) return;
+    // Working copy of ingredients
+    this._editingIngredients = (p.ingredients || []).map(ing => ({
+      raw_material_id: ing.raw_material_id,
+      quantity_required: ing.quantity_required,
+      unit: ing.unit || ing.raw_unit || ''
+    }));
+
+    this.openModal(`
+      <h2 class="text-xl font-bold mb-4"><i class="fas fa-industry text-purple-600 mr-2"></i>${id ? 'Edit' : 'Add'} Product (Recipe)</h2>
+      <form id="prod-form" class="space-y-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div class="md:col-span-2">
+            <label class="block text-sm font-medium mb-1">Product Name *</label>
+            <input id="p-name" type="text" required class="input-field" value="${this.escapeAttr(p.name || '')}" placeholder="e.g. Rack">
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">Unit</label>
+            <select id="p-unit" class="input-field">
+              ${['pcs','set','box','dozen','pair','kg','meter','foot'].map(u => `<option value="${u}" ${ (p.unit || 'pcs') === u ? 'selected' : ''}>${u}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">Category</label>
+            <input id="p-cat" type="text" class="input-field" value="${this.escapeAttr(p.category || '')}" placeholder="e.g. Furniture">
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">Sale Rate (PKR) — optional</label>
+            <input id="p-rate" type="number" step="any" class="input-field" value="${p.sale_rate || 0}">
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">Notes</label>
+            <input id="p-notes" type="text" class="input-field" value="${this.escapeAttr(p.notes || '')}">
+          </div>
+        </div>
+
+        <div class="border-t pt-4">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-base font-bold text-gray-800"><i class="fas fa-cubes text-orange-500 mr-1"></i>Recipe — Raw Materials per 1 unit</h3>
+            <button type="button" onclick="App._addIngredientRow()" class="btn btn-secondary btn-sm"><i class="fas fa-plus"></i> Add Ingredient</button>
+          </div>
+          ${this.state.rawMaterials.length === 0 ? `
+            <div class="bg-yellow-50 border border-yellow-200 rounded p-3 text-sm text-yellow-800">
+              <i class="fas fa-exclamation-triangle mr-1"></i>
+              No raw materials found. Please add raw materials first from the <strong>Raw Material</strong> section before defining a recipe.
+            </div>` : ''}
+          <div id="ingredients-list" class="space-y-2"></div>
+          <div id="ingredients-summary" class="mt-3 p-3 rounded-lg bg-gray-50 border text-sm"></div>
+        </div>
+
+        <div class="flex gap-2 justify-end pt-2 border-t">
+          ${id ? `<button type="button" class="btn btn-danger mr-auto" onclick="App.deleteProduct(${id})"><i class="fas fa-trash"></i> Delete</button>` : ''}
+          <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save</button>
+        </div>
+      </form>
+    `, 'modal-lg');
+
+    this._renderIngredientRows();
+
+    document.getElementById('prod-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      // Read latest values from rows
+      this._collectIngredientRows();
+      const ings = (this._editingIngredients || []).filter(i => i.raw_material_id && parseFloat(i.quantity_required) > 0);
+      const payload = {
+        name: document.getElementById('p-name').value.trim(),
+        unit: document.getElementById('p-unit').value || 'pcs',
+        category: document.getElementById('p-cat').value,
+        notes: document.getElementById('p-notes').value,
+        sale_rate: parseFloat(document.getElementById('p-rate').value) || 0,
+        ingredients: ings
+      };
+      if (!payload.name) { this.toast('Product name required', 'error'); return; }
+      try {
+        if (id) await this.api.put(`/api/products/${id}`, payload);
+        else await this.api.post('/api/products', payload);
+        this.closeModal();
+        await this.showProducts();
+        this.toast('Saved', 'success');
+      } catch (err) { this.toast('Failed to save', 'error'); }
+    });
+  },
+
+  _addIngredientRow() {
+    this._collectIngredientRows();
+    if (!this._editingIngredients) this._editingIngredients = [];
+    this._editingIngredients.push({ raw_material_id: null, quantity_required: 0, unit: '' });
+    this._renderIngredientRows();
+  },
+
+  _removeIngredientRow(idx) {
+    this._collectIngredientRows();
+    this._editingIngredients.splice(idx, 1);
+    this._renderIngredientRows();
+  },
+
+  _collectIngredientRows() {
+    const list = document.getElementById('ingredients-list');
+    if (!list) return;
+    const rows = list.querySelectorAll('.ingredient-row');
+    const arr = [];
+    rows.forEach(row => {
+      const rmId = parseInt(row.querySelector('.ing-rm').value) || null;
+      const qty = parseFloat(row.querySelector('.ing-qty').value) || 0;
+      const rm = this.state.rawMaterials.find(r => r.id === rmId);
+      arr.push({
+        raw_material_id: rmId,
+        quantity_required: qty,
+        unit: rm ? (rm.unit || '') : ''
+      });
+    });
+    this._editingIngredients = arr;
+  },
+
+  _renderIngredientRows() {
+    const list = document.getElementById('ingredients-list');
+    if (!list) return;
+    const rms = this.state.rawMaterials;
+    const ings = this._editingIngredients || [];
+    if (ings.length === 0) {
+      list.innerHTML = `<div class="text-gray-400 text-sm text-center py-4 border-2 border-dashed rounded-lg">No ingredients yet. Click <strong>Add Ingredient</strong> to link raw materials.</div>`;
+    } else {
+      list.innerHTML = ings.map((ing, idx) => {
+        const rm = rms.find(r => r.id === ing.raw_material_id);
+        const optionsHtml = `<option value="">-- Select Raw Material --</option>` +
+          rms.map(r => `<option value="${r.id}" ${r.id === ing.raw_material_id ? 'selected' : ''}>${this.escapeHtml(r.name)} (Stock: ${this.fmt(r.quantity)} ${this.escapeHtml(r.unit||'')})</option>`).join('');
+        const unit = rm ? (rm.unit || '') : '';
+        return `
+          <div class="ingredient-row grid grid-cols-12 gap-2 items-center bg-white border rounded-lg p-2">
+            <div class="col-span-12 md:col-span-6">
+              <label class="block text-xs text-gray-500 mb-1">Raw Material</label>
+              <select class="input-field ing-rm" onchange="App._onIngredientChange(${idx})">${optionsHtml}</select>
+            </div>
+            <div class="col-span-7 md:col-span-3">
+              <label class="block text-xs text-gray-500 mb-1">Quantity Required (per 1 unit)</label>
+              <input type="number" step="any" class="input-field ing-qty" value="${ing.quantity_required || ''}" oninput="App._refreshIngredientSummary()">
+            </div>
+            <div class="col-span-3 md:col-span-2">
+              <label class="block text-xs text-gray-500 mb-1">Unit</label>
+              <input type="text" class="input-field ing-unit" value="${this.escapeAttr(unit)}" readonly style="background:#f8fafc;">
+            </div>
+            <div class="col-span-2 md:col-span-1 text-right">
+              <button type="button" onclick="App._removeIngredientRow(${idx})" class="text-red-500 hover:text-red-700 mt-5" title="Remove"><i class="fas fa-trash"></i></button>
+            </div>
+          </div>`;
+      }).join('');
+    }
+    this._refreshIngredientSummary();
+  },
+
+  _onIngredientChange(idx) {
+    // Update unit display when a raw material is selected
+    const list = document.getElementById('ingredients-list');
+    const row = list.querySelectorAll('.ingredient-row')[idx];
+    if (!row) return;
+    const rmId = parseInt(row.querySelector('.ing-rm').value) || null;
+    const rm = this.state.rawMaterials.find(r => r.id === rmId);
+    row.querySelector('.ing-unit').value = rm ? (rm.unit || '') : '';
+    this._refreshIngredientSummary();
+  },
+
+  _refreshIngredientSummary() {
+    const summary = document.getElementById('ingredients-summary');
+    if (!summary) return;
+    const list = document.getElementById('ingredients-list');
+    const rows = list ? list.querySelectorAll('.ingredient-row') : [];
+    if (rows.length === 0) {
+      summary.innerHTML = '<span class="text-gray-500"><i class="fas fa-info-circle mr-1"></i>Add at least one raw material to compute buildable units.</span>';
+      return;
+    }
+    let buildable = null;
+    let totalCost = 0;
+    let validCount = 0;
+    let detailRows = [];
+    rows.forEach(row => {
+      const rmId = parseInt(row.querySelector('.ing-rm').value) || null;
+      const need = parseFloat(row.querySelector('.ing-qty').value) || 0;
+      if (!rmId || need <= 0) return;
+      const rm = this.state.rawMaterials.find(r => r.id === rmId);
+      if (!rm) return;
+      validCount++;
+      const have = parseFloat(rm.quantity) || 0;
+      const rate = parseFloat(rm.rate) || 0;
+      totalCost += need * rate;
+      const can = have / need;
+      if (buildable === null || can < buildable) buildable = can;
+      const enough = have >= need;
+      detailRows.push(`<div class="text-xs ${enough ? 'text-green-700' : 'text-red-700'}">
+        <i class="fas fa-${enough ? 'check' : 'times'}-circle mr-1"></i>
+        <strong>${this.escapeHtml(rm.name)}</strong>: need ${this.fmt(need)} ${this.escapeHtml(rm.unit||'')} per unit, stock ${this.fmt(have)} → can make ${this.fmt(Math.floor(can))} unit(s)
+      </div>`);
+    });
+    if (validCount === 0) {
+      summary.innerHTML = '<span class="text-gray-500"><i class="fas fa-info-circle mr-1"></i>Select raw materials and enter quantities.</span>';
+      return;
+    }
+    const buildableInt = buildable === null ? 0 : Math.floor(buildable);
+    summary.innerHTML = `
+      <div class="flex flex-wrap items-center gap-x-6 gap-y-2 mb-2">
+        <div><span class="text-gray-600">Material cost / unit:</span> <strong class="text-purple-700">PKR ${this.fmt(totalCost)}</strong></div>
+        <div><span class="text-gray-600">Can build right now:</span> <strong class="text-2xl ${buildableInt > 0 ? 'text-green-600' : 'text-red-600'}">${this.fmt(buildableInt)}</strong> <span class="text-gray-500">unit(s)</span></div>
+      </div>
+      <div class="space-y-0.5">${detailRows.join('')}</div>
+    `;
+  },
+
+  async deleteProduct(id) {
+    if (!confirm('Delete this product and its recipe?')) return;
+    try {
+      await this.api.delete(`/api/products/${id}`);
+      this.closeModal();
+      await this.showProducts();
+      this.toast('Deleted', 'success');
+    } catch (e) { this.toast('Failed', 'error'); }
+  },
+
+  showBuildProduct(id) {
+    const p = this.state.products.find(x => x.id === id);
+    if (!p) return;
+    const buildable = parseInt(p.buildable_units) || 0;
+    const ings = p.ingredients || [];
+    if (ings.length === 0) { this.toast('This product has no recipe', 'error'); return; }
+
+    this.openModal(`
+      <h2 class="text-xl font-bold mb-2"><i class="fas fa-hammer text-orange-500 mr-2"></i>Build / Produce: ${this.escapeHtml(p.name)}</h2>
+      <p class="text-sm text-gray-600 mb-4">This will deduct the required raw materials from stock for each unit you build.</p>
+
+      <div class="bg-gray-50 border rounded-lg p-3 mb-4">
+        <div class="text-sm text-gray-600">Maximum buildable with current stock:</div>
+        <div class="text-3xl font-bold ${buildable > 0 ? 'text-green-600' : 'text-red-600'}">${this.fmt(buildable)} <span class="text-base text-gray-600">${this.escapeHtml(p.unit || 'pcs')}</span></div>
+      </div>
+
+      <form id="build-form" class="space-y-3">
+        <div>
+          <label class="block text-sm font-medium mb-1">Units to Build *</label>
+          <input id="build-units" type="number" min="1" max="${buildable}" required class="input-field" value="1" oninput="App._refreshBuildPreview(${id})" ${buildable === 0 ? 'disabled' : ''}>
+        </div>
+        <div id="build-preview" class="text-sm"></div>
+        <label class="flex items-center gap-2 mt-2 text-sm">
+          <input id="build-add-inv" type="checkbox" checked> Add finished units to <strong>Inventory</strong>
+        </label>
+        <div class="flex gap-2 justify-end pt-3 border-t">
+          <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary" ${buildable === 0 ? 'disabled' : ''}><i class="fas fa-hammer"></i> Build</button>
+        </div>
+      </form>
+    `);
+    this._refreshBuildPreview(id);
+
+    document.getElementById('build-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const units = parseInt(document.getElementById('build-units').value) || 0;
+      const addInv = document.getElementById('build-add-inv').checked;
+      if (units < 1) { this.toast('Enter at least 1 unit', 'error'); return; }
+      try {
+        const res = await this.api.post(`/api/products/${id}/build`, { units, add_to_inventory: addInv });
+        if (res.error) { this.toast(res.error, 'error'); return; }
+        this.closeModal();
+        await this.showProducts();
+        this.toast(`Built ${units} unit(s) of ${p.name}`, 'success');
+      } catch (err) { this.toast('Failed to build', 'error'); }
+    });
+  },
+
+  _refreshBuildPreview(productId) {
+    const p = this.state.products.find(x => x.id === productId);
+    if (!p) return;
+    const units = parseInt(document.getElementById('build-units')?.value) || 0;
+    const preview = document.getElementById('build-preview');
+    if (!preview) return;
+    if (units <= 0) { preview.innerHTML = ''; return; }
+    const ings = p.ingredients || [];
+    let html = `<div class="font-medium text-gray-700 mb-1">Will deduct from Raw Material:</div><div class="space-y-1">`;
+    let totalCost = 0;
+    for (const ing of ings) {
+      const need = (parseFloat(ing.quantity_required) || 0) * units;
+      const have = parseFloat(ing.raw_quantity) || 0;
+      const rate = parseFloat(ing.raw_rate) || 0;
+      totalCost += need * rate;
+      const ok = have >= need;
+      html += `<div class="text-xs ${ok ? 'text-green-700' : 'text-red-700'}">
+        <i class="fas fa-${ok ? 'check' : 'times'}-circle mr-1"></i>
+        ${this.escapeHtml(ing.raw_name || '')}: -${this.fmt(need)} ${this.escapeHtml(ing.unit || ing.raw_unit || '')} (stock will go ${this.fmt(have)} → ${this.fmt(have - need)})
+      </div>`;
+    }
+    html += `</div><div class="mt-2 text-sm"><span class="text-gray-600">Total material cost:</span> <strong class="text-purple-700">PKR ${this.fmt(totalCost)}</strong></div>`;
+    preview.innerHTML = html;
   },
 
   // ========= EMPLOYEES =========
@@ -3009,3 +3429,4 @@ document.addEventListener('click', (e) => {
   }
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') App.closeModal(); });
+); });

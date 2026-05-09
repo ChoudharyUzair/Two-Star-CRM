@@ -594,6 +594,171 @@ app.delete('/api/raw-materials/:id', requireAuth, async (c) => {
   return c.json({ success: true })
 })
 
+// ============ PRODUCTS (MANUFACTURING / RECIPES) ============
+// A product (e.g. "Rack") is built from raw materials (e.g. A=2kg, B=5ft, C=3kg)
+// per 1 finished unit. Using current raw_materials.quantity we compute
+// how many finished units can be built right now.
+
+// List all products with their recipe + computed "buildable" count.
+app.get('/api/products', requireAuth, async (c) => {
+  const products = await c.env.DB.prepare('SELECT * FROM products ORDER BY name ASC').all()
+  const ingredients = await c.env.DB.prepare(
+    `SELECT pi.*, rm.name as raw_name, rm.unit as raw_unit, rm.quantity as raw_quantity, rm.rate as raw_rate
+     FROM product_ingredients pi
+     LEFT JOIN raw_materials rm ON rm.id = pi.raw_material_id
+     ORDER BY pi.product_id, pi.sort_order, pi.id`
+  ).all()
+
+  const ingByProduct: Record<number, any[]> = {}
+  for (const ing of (ingredients.results as any[])) {
+    if (!ingByProduct[ing.product_id]) ingByProduct[ing.product_id] = []
+    ingByProduct[ing.product_id].push(ing)
+  }
+
+  const list = (products.results as any[]).map(p => {
+    const ings = ingByProduct[p.id] || []
+    // buildable = floor(min over ingredients of (raw.quantity / qty_required))
+    let buildable: number | null = null
+    let cost_per_unit = 0
+    let any_missing = false
+    for (const ing of ings) {
+      const need = parseFloat(ing.quantity_required) || 0
+      const have = parseFloat(ing.raw_quantity) || 0
+      const rate = parseFloat(ing.raw_rate) || 0
+      cost_per_unit += need * rate
+      if (need <= 0) continue
+      if (ing.raw_material_id == null) { any_missing = true; continue }
+      const can = have / need
+      if (buildable === null || can < buildable) buildable = can
+    }
+    if (ings.length === 0) buildable = 0
+    if (any_missing) buildable = 0
+    return {
+      ...p,
+      ingredients: ings,
+      buildable_units: buildable === null ? 0 : Math.floor(buildable),
+      cost_per_unit
+    }
+  })
+  return c.json({ products: list })
+})
+
+app.get('/api/products/:id', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const product = await c.env.DB.prepare('SELECT * FROM products WHERE id = ?').bind(id).first()
+  if (!product) return c.json({ error: 'Not found' }, 404)
+  const ingredients = await c.env.DB.prepare(
+    `SELECT pi.*, rm.name as raw_name, rm.unit as raw_unit, rm.quantity as raw_quantity, rm.rate as raw_rate
+     FROM product_ingredients pi
+     LEFT JOIN raw_materials rm ON rm.id = pi.raw_material_id
+     WHERE pi.product_id = ?
+     ORDER BY pi.sort_order ASC, pi.id ASC`
+  ).bind(id).all()
+  return c.json({ product, ingredients: ingredients.results })
+})
+
+async function syncProductIngredients(env: any, productId: number, ingredients: any[]) {
+  await env.DB.prepare('DELETE FROM product_ingredients WHERE product_id = ?').bind(productId).run()
+  if (!Array.isArray(ingredients)) return
+  for (let i = 0; i < ingredients.length; i++) {
+    const ing = ingredients[i]
+    if (!ing || !ing.raw_material_id) continue
+    const qty = parseFloat(ing.quantity_required) || 0
+    if (qty <= 0) continue
+    // Get the raw material's unit as a snapshot
+    const rm = await env.DB.prepare('SELECT unit FROM raw_materials WHERE id = ?').bind(ing.raw_material_id).first() as any
+    const unit = ing.unit || rm?.unit || ''
+    await env.DB.prepare(
+      `INSERT INTO product_ingredients (product_id, raw_material_id, quantity_required, unit, sort_order)
+       VALUES (?, ?, ?, ?, ?)`
+    ).bind(productId, ing.raw_material_id, qty, unit, i).run()
+  }
+}
+
+app.post('/api/products', requireAuth, async (c) => {
+  const { name, unit, category, notes, sale_rate, ingredients } = await c.req.json()
+  if (!name) return c.json({ error: 'Name required' }, 400)
+  const result = await c.env.DB.prepare(
+    `INSERT INTO products (name, unit, category, notes, sale_rate) VALUES (?, ?, ?, ?, ?)`
+  ).bind(name, unit || 'pcs', category || '', notes || '', parseFloat(sale_rate) || 0).run()
+  const productId = result.meta.last_row_id as number
+  await syncProductIngredients(c.env, productId, ingredients || [])
+  return c.json({ id: productId })
+})
+
+app.put('/api/products/:id', requireAuth, async (c) => {
+  const id = parseInt(c.req.param('id'))
+  const { name, unit, category, notes, sale_rate, ingredients } = await c.req.json()
+  if (!name) return c.json({ error: 'Name required' }, 400)
+  await c.env.DB.prepare(
+    `UPDATE products SET name=?, unit=?, category=?, notes=?, sale_rate=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
+  ).bind(name, unit || 'pcs', category || '', notes || '', parseFloat(sale_rate) || 0, id).run()
+  await syncProductIngredients(c.env, id, ingredients || [])
+  return c.json({ success: true })
+})
+
+app.delete('/api/products/:id', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  await c.env.DB.prepare('DELETE FROM products WHERE id = ?').bind(id).run()
+  return c.json({ success: true })
+})
+
+// "Build" / produce N units of a product: deducts raw materials and (optionally) adds to inventory.
+app.post('/api/products/:id/build', requireAuth, async (c) => {
+  const id = parseInt(c.req.param('id'))
+  const { units, add_to_inventory } = await c.req.json()
+  const u = parseFloat(units)
+  if (!u || u <= 0) return c.json({ error: 'Units must be > 0' }, 400)
+
+  const product = await c.env.DB.prepare('SELECT * FROM products WHERE id = ?').bind(id).first() as any
+  if (!product) return c.json({ error: 'Product not found' }, 404)
+
+  const ingsRes = await c.env.DB.prepare(
+    `SELECT pi.*, rm.name as raw_name, rm.quantity as raw_quantity
+     FROM product_ingredients pi LEFT JOIN raw_materials rm ON rm.id = pi.raw_material_id
+     WHERE pi.product_id = ?`
+  ).bind(id).all()
+  const ings = ingsRes.results as any[]
+  if (ings.length === 0) return c.json({ error: 'This product has no recipe yet' }, 400)
+
+  // Pre-check: enough stock?
+  for (const ing of ings) {
+    const need = (parseFloat(ing.quantity_required) || 0) * u
+    const have = parseFloat(ing.raw_quantity) || 0
+    if (need > have) {
+      return c.json({
+        error: `Not enough "${ing.raw_name}" (need ${need}, have ${have})`
+      }, 400)
+    }
+  }
+
+  // Deduct raw materials
+  for (const ing of ings) {
+    const need = (parseFloat(ing.quantity_required) || 0) * u
+    await c.env.DB.prepare(
+      `UPDATE raw_materials SET quantity = quantity - ?, total_value = (quantity - ?) * rate, updated_at=CURRENT_TIMESTAMP WHERE id = ?`
+    ).bind(need, need, ing.raw_material_id).run()
+  }
+
+  // Optionally add finished units to inventory (matching by name)
+  if (add_to_inventory) {
+    const existing = await c.env.DB.prepare(
+      'SELECT id FROM inventory WHERE name = ? COLLATE NOCASE'
+    ).bind(product.name).first() as any
+    if (existing) {
+      await c.env.DB.prepare(
+        'UPDATE inventory SET quantity = quantity + ?, updated_at=CURRENT_TIMESTAMP WHERE id = ?'
+      ).bind(u, existing.id).run()
+    } else {
+      await c.env.DB.prepare(
+        'INSERT INTO inventory (name, unit, rate, quantity, category, notes) VALUES (?, ?, ?, ?, ?, ?)'
+      ).bind(product.name, product.unit || 'pcs', parseFloat(product.sale_rate) || 0, u, product.category || '', product.notes || '').run()
+    }
+  }
+
+  return c.json({ success: true, units_built: u, added_to_inventory: !!add_to_inventory })
+})
+
 // ============ EMPLOYEES ============
 app.get('/api/employees', requireAuth, async (c) => {
   const result = await c.env.DB.prepare(
