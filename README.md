@@ -9,7 +9,7 @@
 
 ## URLs
 - **Production**: https://two-star-crm.pages.dev
-- **Latest Deploy**: https://7f42df33.two-star-crm.pages.dev
+- **Latest Deploy**: https://2990650f.two-star-crm.pages.dev
 - **GitHub**: https://github.com/ChoudharyUzair/Two-Star-CRM
 
 ## Default Login
