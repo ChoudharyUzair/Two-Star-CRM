@@ -570,6 +570,7 @@ const App = {
                 <th style="width:40px;">${colHeader('sno')}</th>
                 <th style="width:120px;">${colHeader('date')}</th>
                 <th style="width:110px;">${colHeader('bill_no')}</th>
+                <th style="width:130px;">${colHeader('amount_pending')}</th>
                 <th style="width:130px;">${colHeader('amount_received')}</th>
                 <th style="width:120px;">${colHeader('status')}</th>
                 <th>${colHeader('description')}</th>
@@ -581,6 +582,7 @@ const App = {
               <tfoot>
                 <tr class="bg-gray-100 font-bold">
                   <td colspan="3" class="text-right">TOTALS:</td>
+                  <td></td>
                   <td class="amount-received">PKR ${this.fmt(totalReceived)}</td>
                   <td colspan="${2 + this.state.customColumns.length}"></td>
                   <td class="text-right amount-running">PKR ${this.fmt(netBalance)}</td>
@@ -595,7 +597,7 @@ const App = {
 
   renderRows(opening) {
     if (this.state.transactions.length === 0) {
-      return `<tr><td colspan="${8 + this.state.customColumns.length}" class="text-center py-8 text-gray-500">
+      return `<tr><td colspan="${9 + this.state.customColumns.length}" class="text-center py-8 text-gray-500">
         <i class="fas fa-inbox text-3xl mb-2 block"></i>No transactions yet. Click "Add Row" to start.</td></tr>`;
     }
     let running = opening;
@@ -606,11 +608,13 @@ const App = {
       const customData = (() => { try { return JSON.parse(t.custom_data || '{}'); } catch { return {}; } })();
       const isAuto = t.auto_generated == 1;
       const lockIcon = isAuto ? `<i class="fas fa-link text-blue-400 ml-1" title="Auto-linked from Bill #${this.escapeAttr(t.bill_no || '')}"></i>` : '';
+      const isPaid = pen <= 0;
       return `
         <tr data-id="${t.id}" class="${isAuto ? 'row-auto' : ''}">
           <td class="text-gray-500">${i + 1}${lockIcon}</td>
           <td class="cell-display">${t.entry_date || ''}</td>
           <td class="cell-display">${this.escapeHtml(t.bill_no || '')}</td>
+          <td class="amount-pending cell-display">${isPaid ? '<span class="text-gray-400">—</span>' : 'PKR ' + this.fmt(pen)}</td>
           <td class="amount-received cell-display">PKR ${this.fmt(rec)}</td>
           <td><span class="status-badge status-${(t.status||'').toLowerCase()}">${this.escapeHtml(t.status || '')}</span></td>
           <td class="cell-display">${this.escapeHtml(t.description || '')}</td>
@@ -1434,7 +1438,8 @@ const App = {
                     <td>${it.supplier_id ? `<a href="#" onclick="App.openClient(${it.supplier_id}); return false;" class="text-blue-500 hover:underline">${this.escapeHtml(supName)}</a>` : this.escapeHtml(supName)}</td>
                     <td>${this.escapeHtml(it.category || '')}</td>
                     <td>
-                      <button onclick="App.showRawEditor(${it.id})" class="btn btn-secondary btn-sm" title="Edit"><i class="fas fa-edit"></i></button>
+                      <button onclick="App.showRestockRaw(${it.id})" class="btn btn-success btn-sm" title="Add Stock (Restock)"><i class="fas fa-plus"></i></button>
+                      <button onclick="App.showRawEditor(${it.id})" class="btn btn-secondary btn-sm ml-1" title="Edit"><i class="fas fa-edit"></i></button>
                       <button onclick="App.deleteRaw(${it.id})" class="text-red-500 hover:text-red-700 ml-1"><i class="fas fa-trash text-sm"></i></button>
                     </td>
                   </tr>`;
@@ -1449,33 +1454,46 @@ const App = {
     if (id && !it) return;
     const supplierOpts = this.state.allClients.map(c => `<option value="${c.id}" ${it.supplier_id == c.id ? 'selected' : ''}>${this.escapeHtml(c.name)} (${this.escapeHtml(c.folder_name || '')})</option>`).join('');
 
+    // For ADD mode, give user a "Pick existing" dropdown so they can restock instead of duplicating.
+    const existingPickerHtml = !id ? `
+      <div class="md:col-span-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+        <label class="block text-sm font-semibold mb-1 text-amber-800"><i class="fas fa-recycle mr-1"></i>Restock an existing material? (recommended)</label>
+        <select id="r-existing" class="input-field" onchange="App._pickExistingRaw()">
+          <option value="">-- This is a brand new material --</option>
+          ${this.state.rawMaterials.map(r => `<option value="${r.id}">${this.escapeHtml(r.name)} (${this.escapeHtml(r.unit||'pcs')}) — Stock: ${this.fmt(r.quantity)} @ PKR ${this.fmt(r.rate)}${r.supplier_name_resolved||r.supplier_name ? ' · '+this.escapeHtml(r.supplier_name_resolved||r.supplier_name) : ''}</option>`).join('')}
+        </select>
+        <p class="text-xs text-amber-700 mt-1">Pick an existing material to ADD the new quantity to its current stock (rate becomes the weighted average). Leave empty to add a brand-new entry. If you type a name/unit/supplier that already exists, it will auto-merge.</p>
+      </div>` : '';
+
     this.openModal(`
       <h2 class="text-xl font-bold mb-4"><i class="fas fa-cubes text-orange-500 mr-2"></i>${id ? 'Edit' : 'Add'} Raw Material</h2>
       <form id="raw-form" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        ${existingPickerHtml}
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Material Name *</label>
-          <input id="r-name" type="text" required class="input-field" value="${this.escapeAttr(it.name || '')}"></div>
+          <input id="r-name" type="text" required class="input-field" value="${this.escapeAttr(it.name || '')}" oninput="App._checkRawDuplicate()"></div>
         <div><label class="block text-sm font-medium mb-1">Unit</label>
-          <select id="r-unit" class="input-field">
+          <select id="r-unit" class="input-field" onchange="App._checkRawDuplicate()">
             ${['pcs','kg','gram','ton','litre','ml','meter','cm','foot','inch','yard','box','dozen','pack','roll','bag','bottle','bundle','sheet','set','pair','carton'].map(u => `<option value="${u}" ${ (it.unit || 'pcs') === u ? 'selected' : ''}>${u}</option>`).join('')}
           </select></div>
         <div><label class="block text-sm font-medium mb-1">Category</label>
           <input id="r-cat" type="text" class="input-field" value="${this.escapeAttr(it.category || '')}"></div>
-        <div><label class="block text-sm font-medium mb-1">Quantity Available</label>
+        <div><label class="block text-sm font-medium mb-1">${id ? 'Quantity Available' : 'Quantity to Add'}</label>
           <input id="r-qty" type="number" step="any" class="input-field" value="${it.quantity || 0}" oninput="App._calcRawTotal()"></div>
         <div><label class="block text-sm font-medium mb-1">Rate per Unit (PKR)</label>
           <input id="r-rate" type="number" step="any" class="input-field" value="${it.rate || 0}" oninput="App._calcRawTotal()"></div>
-        <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Total Value</label>
+        <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">${id ? 'Total Value' : 'Value of This Batch'}</label>
           <div id="r-total" class="input-field" style="background:#f8fafc; font-weight:bold;">PKR 0.00</div></div>
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Supplier (link to client)</label>
-          <select id="r-supplier" class="input-field">
+          <select id="r-supplier" class="input-field" onchange="App._checkRawDuplicate()">
             <option value="">-- None / Manual --</option>
             ${supplierOpts}
           </select>
           <p class="text-xs text-gray-500 mt-1">Linking to a supplier auto-shows totals on their ledger summary.</p></div>
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Supplier Name (manual, if not linked)</label>
-          <input id="r-supname" type="text" class="input-field" value="${this.escapeAttr(it.supplier_name || '')}"></div>
+          <input id="r-supname" type="text" class="input-field" value="${this.escapeAttr(it.supplier_name || '')}" oninput="App._checkRawDuplicate()"></div>
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Notes</label>
           <textarea id="r-notes" class="input-field" rows="2">${this.escapeHtml(it.notes || '')}</textarea></div>
+        <div id="r-dup-hint" class="md:col-span-2 hidden p-2 bg-blue-50 border border-blue-200 rounded text-xs text-blue-800"></div>
         <div class="md:col-span-2 flex gap-2 justify-end pt-2 border-t">
           ${id ? `<button type="button" class="btn btn-danger mr-auto" onclick="App.deleteRaw(${id})"><i class="fas fa-trash"></i> Delete</button>` : ''}
           <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
@@ -1483,8 +1501,10 @@ const App = {
         </div>
       </form>`, 'modal-lg');
     this._calcRawTotal();
+    if (!id) this._checkRawDuplicate();
     document.getElementById('raw-form').addEventListener('submit', async (e) => {
       e.preventDefault();
+      const targetId = !id ? (document.getElementById('r-existing')?.value ? parseInt(document.getElementById('r-existing').value) : null) : null;
       const payload = {
         name: document.getElementById('r-name').value,
         unit: document.getElementById('r-unit').value || 'pcs',
@@ -1493,16 +1513,136 @@ const App = {
         supplier_id: document.getElementById('r-supplier').value ? parseInt(document.getElementById('r-supplier').value) : null,
         supplier_name: document.getElementById('r-supname').value,
         category: document.getElementById('r-cat').value,
-        notes: document.getElementById('r-notes').value
+        notes: document.getElementById('r-notes').value,
+        target_id: targetId
       };
       try {
-        if (id) await this.api.put(`/api/raw-materials/${id}`, payload);
-        else await this.api.post('/api/raw-materials', payload);
+        let res;
+        if (id) {
+          res = await this.api.put(`/api/raw-materials/${id}`, payload);
+        } else {
+          res = await this.api.post('/api/raw-materials', payload);
+        }
         this.closeModal();
         await this.showRawMaterials();
-        this.toast('Saved', 'success');
+        this.toast(res?.merged ? 'Stock updated on existing material' : 'Saved', 'success');
       } catch (err) { this.toast('Failed', 'error'); }
     });
+  },
+
+  // When user picks an existing material from the "Restock" dropdown,
+  // auto-fill name/unit/supplier so the merge is unambiguous.
+  _pickExistingRaw() {
+    const sel = document.getElementById('r-existing');
+    if (!sel || !sel.value) { this._checkRawDuplicate(); return; }
+    const rm = this.state.rawMaterials.find(x => x.id == sel.value);
+    if (!rm) return;
+    document.getElementById('r-name').value = rm.name || '';
+    const unitSel = document.getElementById('r-unit');
+    if (unitSel) {
+      const opt = Array.from(unitSel.options).find(o => o.value === (rm.unit || 'pcs'));
+      if (opt) unitSel.value = opt.value;
+    }
+    document.getElementById('r-cat').value = rm.category || '';
+    document.getElementById('r-supplier').value = rm.supplier_id || '';
+    document.getElementById('r-supname').value = rm.supplier_name || '';
+    document.getElementById('r-rate').value = rm.rate || 0;
+    document.getElementById('r-qty').value = 0; // user enters quantity to ADD
+    this._calcRawTotal();
+    this._checkRawDuplicate();
+  },
+
+  // Live duplicate check: warn user that a matching material exists and they'll be auto-merged.
+  _checkRawDuplicate() {
+    const hint = document.getElementById('r-dup-hint');
+    const picker = document.getElementById('r-existing');
+    if (!hint) return;
+    if (picker && picker.value) {
+      const rm = this.state.rawMaterials.find(x => x.id == picker.value);
+      if (rm) {
+        hint.classList.remove('hidden');
+        hint.innerHTML = `<i class="fas fa-info-circle mr-1"></i>Will <strong>add</strong> the new quantity to <strong>${this.escapeHtml(rm.name)}</strong> (current stock: ${this.fmt(rm.quantity)} ${this.escapeHtml(rm.unit||'')}). Rate will become the weighted average.`;
+        return;
+      }
+    }
+    const name = (document.getElementById('r-name')?.value || '').trim().toLowerCase();
+    const unit = (document.getElementById('r-unit')?.value || '').trim().toLowerCase();
+    const supId = document.getElementById('r-supplier')?.value || '';
+    const supName = (document.getElementById('r-supname')?.value || '').trim().toLowerCase();
+    if (!name) { hint.classList.add('hidden'); return; }
+    const match = this.state.rawMaterials.find(r => {
+      if ((r.name || '').trim().toLowerCase() !== name) return false;
+      if ((r.unit || '').trim().toLowerCase() !== unit) return false;
+      if (supId) return String(r.supplier_id || '') === String(supId);
+      if (r.supplier_id) return false;
+      return (r.supplier_name || '').trim().toLowerCase() === supName;
+    });
+    if (match) {
+      hint.classList.remove('hidden');
+      hint.innerHTML = `<i class="fas fa-recycle mr-1"></i>A matching raw material already exists: <strong>${this.escapeHtml(match.name)}</strong> (Stock: ${this.fmt(match.quantity)} ${this.escapeHtml(match.unit||'')} @ PKR ${this.fmt(match.rate)}). Saving will <strong>add to its stock</strong> instead of creating a duplicate.`;
+    } else {
+      hint.classList.add('hidden');
+    }
+  },
+
+  // Quick "Restock" modal — only asks for quantity + rate, then weighted-avg merges.
+  showRestockRaw(id) {
+    const rm = this.state.rawMaterials.find(x => x.id === id);
+    if (!rm) return;
+    this.openModal(`
+      <h2 class="text-xl font-bold mb-4"><i class="fas fa-recycle text-green-600 mr-2"></i>Restock: ${this.escapeHtml(rm.name)}</h2>
+      <div class="mb-3 p-3 bg-gray-50 rounded text-sm">
+        <div class="flex justify-between"><span class="text-gray-500">Current Stock:</span><strong>${this.fmt(rm.quantity)} ${this.escapeHtml(rm.unit||'')}</strong></div>
+        <div class="flex justify-between"><span class="text-gray-500">Current Rate:</span><strong>PKR ${this.fmt(rm.rate)}</strong></div>
+        <div class="flex justify-between"><span class="text-gray-500">Current Value:</span><strong class="amount-running">PKR ${this.fmt(rm.total_value)}</strong></div>
+      </div>
+      <form id="restock-form" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div><label class="block text-sm font-medium mb-1">Quantity to Add *</label>
+          <input id="rs-qty" type="number" step="any" min="0" required class="input-field" value="0" oninput="App._calcRestockPreview(${id})"></div>
+        <div><label class="block text-sm font-medium mb-1">Rate per Unit for this batch (PKR)</label>
+          <input id="rs-rate" type="number" step="any" min="0" class="input-field" value="${rm.rate || 0}" oninput="App._calcRestockPreview(${id})"></div>
+        <div class="md:col-span-2 p-3 bg-blue-50 border border-blue-200 rounded text-sm" id="rs-preview">
+          New stock will be calculated after you enter quantity.
+        </div>
+        <div class="md:col-span-2 flex gap-2 justify-end pt-2 border-t">
+          <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button type="submit" class="btn btn-success"><i class="fas fa-plus"></i> Add Stock</button>
+        </div>
+      </form>`);
+    this._calcRestockPreview(id);
+    document.getElementById('restock-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const qty = parseFloat(document.getElementById('rs-qty').value) || 0;
+      const rate = parseFloat(document.getElementById('rs-rate').value) || 0;
+      if (qty <= 0) { this.toast('Quantity must be > 0', 'error'); return; }
+      try {
+        await this.api.post(`/api/raw-materials/${id}/restock`, { quantity: qty, rate });
+        this.closeModal();
+        await this.showRawMaterials();
+        this.toast('Stock added', 'success');
+      } catch (err) { this.toast('Failed', 'error'); }
+    });
+  },
+
+  _calcRestockPreview(id) {
+    const rm = this.state.rawMaterials.find(x => x.id === id);
+    if (!rm) return;
+    const addQty = parseFloat(document.getElementById('rs-qty')?.value) || 0;
+    const addRate = parseFloat(document.getElementById('rs-rate')?.value) || 0;
+    const oldQty = parseFloat(rm.quantity) || 0;
+    const oldRate = parseFloat(rm.rate) || 0;
+    const newQty = oldQty + addQty;
+    const newRate = newQty > 0 ? ((oldQty * oldRate) + (addQty * addRate)) / newQty : addRate;
+    const newTotal = newQty * newRate;
+    const el = document.getElementById('rs-preview');
+    if (el) {
+      el.innerHTML = `<div class="font-semibold mb-1 text-blue-800"><i class="fas fa-calculator mr-1"></i>After restock:</div>
+        <div class="grid grid-cols-3 gap-2 text-blue-900">
+          <div><span class="text-xs text-blue-600">New Stock</span><div class="font-bold">${this.fmt(newQty)} ${this.escapeHtml(rm.unit||'')}</div></div>
+          <div><span class="text-xs text-blue-600">Avg Rate</span><div class="font-bold">PKR ${this.fmt(newRate)}</div></div>
+          <div><span class="text-xs text-blue-600">Total Value</span><div class="font-bold">PKR ${this.fmt(newTotal)}</div></div>
+        </div>`;
+    }
   },
 
   _calcRawTotal() {

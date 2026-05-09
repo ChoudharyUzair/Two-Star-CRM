@@ -608,14 +608,82 @@ app.get('/api/raw-materials', requireAuth, async (c) => {
 })
 
 app.post('/api/raw-materials', requireAuth, async (c) => {
-  const { name, unit, quantity, rate, supplier_id, supplier_name, category, notes } = await c.req.json()
+  const { name, unit, quantity, rate, supplier_id, supplier_name, category, notes, merge_mode, target_id } = await c.req.json()
   if (!name) return c.json({ error: 'Name required' }, 400)
   const q = parseFloat(quantity) || 0, r = parseFloat(rate) || 0
+  const u = unit || 'pcs'
+  const sid = supplier_id || null
+  const sname = supplier_name || ''
+
+  // If client explicitly asks to merge into a specific existing material, do that
+  if (target_id) {
+    const existing = await c.env.DB.prepare('SELECT * FROM raw_materials WHERE id = ?').bind(target_id).first() as any
+    if (existing) {
+      const oldQty = parseFloat(existing.quantity) || 0
+      const oldRate = parseFloat(existing.rate) || 0
+      const newQty = oldQty + q
+      // Weighted-average rate so existing stock value isn't lost when rate differs
+      const newRate = newQty > 0 ? ((oldQty * oldRate) + (q * r)) / newQty : r
+      const newTotal = newQty * newRate
+      await c.env.DB.prepare(
+        `UPDATE raw_materials SET quantity=?, rate=?, total_value=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
+      ).bind(newQty, newRate, newTotal, target_id).run()
+      return c.json({ id: target_id, merged: true })
+    }
+  }
+
+  // Auto-merge: if a raw material with same name + unit + supplier already exists,
+  // ADD quantity to existing (weighted-average rate) instead of creating a duplicate.
+  // Caller can opt out by sending merge_mode === 'force_new'.
+  if (merge_mode !== 'force_new') {
+    let dup: any = null
+    if (sid) {
+      dup = await c.env.DB.prepare(
+        `SELECT * FROM raw_materials WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND LOWER(TRIM(unit)) = LOWER(TRIM(?)) AND supplier_id = ? LIMIT 1`
+      ).bind(name, u, sid).first()
+    } else {
+      dup = await c.env.DB.prepare(
+        `SELECT * FROM raw_materials WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND LOWER(TRIM(unit)) = LOWER(TRIM(?)) AND supplier_id IS NULL AND LOWER(TRIM(COALESCE(supplier_name,''))) = LOWER(TRIM(?)) LIMIT 1`
+      ).bind(name, u, sname).first()
+    }
+    if (dup) {
+      const oldQty = parseFloat(dup.quantity) || 0
+      const oldRate = parseFloat(dup.rate) || 0
+      const newQty = oldQty + q
+      const newRate = newQty > 0 ? ((oldQty * oldRate) + (q * r)) / newQty : r
+      const newTotal = newQty * newRate
+      await c.env.DB.prepare(
+        `UPDATE raw_materials SET quantity=?, rate=?, total_value=?, category=COALESCE(NULLIF(?, ''), category), notes=COALESCE(NULLIF(?, ''), notes), updated_at=CURRENT_TIMESTAMP WHERE id=?`
+      ).bind(newQty, newRate, newTotal, category || '', notes || '', dup.id).run()
+      return c.json({ id: dup.id, merged: true })
+    }
+  }
+
   const result = await c.env.DB.prepare(
     `INSERT INTO raw_materials (name, unit, quantity, rate, total_value, supplier_id, supplier_name, category, notes)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(name, unit || 'pcs', q, r, q * r, supplier_id || null, supplier_name || '', category || '', notes || '').run()
+  ).bind(name, u, q, r, q * r, sid, sname, category || '', notes || '').run()
   return c.json({ id: result.meta.last_row_id })
+})
+
+// Restock helper: explicitly add quantity to an existing raw material (weighted-avg rate)
+app.post('/api/raw-materials/:id/restock', requireAuth, async (c) => {
+  const id = parseInt(c.req.param('id'))
+  const { quantity, rate } = await c.req.json()
+  const addQty = parseFloat(quantity) || 0
+  const addRate = parseFloat(rate) || 0
+  if (addQty <= 0) return c.json({ error: 'Quantity must be > 0' }, 400)
+  const existing = await c.env.DB.prepare('SELECT * FROM raw_materials WHERE id = ?').bind(id).first() as any
+  if (!existing) return c.json({ error: 'Not found' }, 404)
+  const oldQty = parseFloat(existing.quantity) || 0
+  const oldRate = parseFloat(existing.rate) || 0
+  const newQty = oldQty + addQty
+  const newRate = newQty > 0 ? ((oldQty * oldRate) + (addQty * addRate)) / newQty : addRate
+  const newTotal = newQty * newRate
+  await c.env.DB.prepare(
+    `UPDATE raw_materials SET quantity=?, rate=?, total_value=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
+  ).bind(newQty, newRate, newTotal, id).run()
+  return c.json({ success: true, id, quantity: newQty, rate: newRate, total_value: newTotal })
 })
 
 app.put('/api/raw-materials/:id', requireAuth, async (c) => {
