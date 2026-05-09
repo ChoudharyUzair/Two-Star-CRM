@@ -598,106 +598,329 @@ app.delete('/api/bills/:id', requireAuth, async (c) => {
 })
 
 // ============ RAW MATERIALS ============
+//
+// IMPORTANT: A raw material can have MULTIPLE suppliers (each batch/purchase
+// can be sourced from a different supplier). Each purchase is recorded in
+// the `raw_material_purchases` table. The supplier's "amount_pending" on
+// the raw material itself is the LATEST/primary supplier (legacy field).
+//
+// Suppliers are clients (in any folder). When a purchase is recorded with
+// a paid_amount, the REMAINING (total - paid) is auto-pushed to the
+// supplier's ledger as an entry that we OWE the supplier.
+// In ledger terms (we are the business):
+//   - "amount_received" = how much money WE GAVE the supplier (we paid them)
+//   - "amount_pending"  = how much we still OWE the supplier (the bill amount)
+// This way the supplier ledger Remaining Balance = (we owe) - (we paid)
+// and a positive remaining means we still owe them.
+
+// Helper: sync a raw-material purchase to the supplier's ledger.
+// Auto-creates / updates a transaction in transactions table for that supplier.
+async function syncRawPurchaseLedger(env: any, purchaseId: number, p: any) {
+  // p = { supplier_id, supplier_name, entry_date, total_amount, paid_amount, raw_name, quantity, unit, rate, ... }
+  if (!p.supplier_id) {
+    // If previously linked, drop it
+    const old = await env.DB.prepare('SELECT ledger_transaction_id FROM raw_material_purchases WHERE id = ?').bind(purchaseId).first() as any
+    if (old?.ledger_transaction_id) {
+      await env.DB.prepare('DELETE FROM transactions WHERE id = ?').bind(old.ledger_transaction_id).run()
+      await env.DB.prepare('UPDATE raw_material_purchases SET ledger_transaction_id = NULL WHERE id = ?').bind(purchaseId).run()
+    }
+    return
+  }
+  const total = parseFloat(p.total_amount) || 0
+  const paid = parseFloat(p.paid_amount) || 0
+  const due = total - paid
+  // Status: Received = fully paid, Partial = some paid, Pending = nothing paid
+  const status = due <= 0 ? 'Received' : (paid > 0 ? 'Partial' : 'Pending')
+  // Description shows what was bought
+  const desc = `Raw Material Purchase: ${p.raw_name || ''} — ${p.quantity || 0} ${p.unit || ''} @ PKR ${p.rate || 0}`
+
+  // Find existing linked transaction
+  const existing = await env.DB.prepare('SELECT ledger_transaction_id FROM raw_material_purchases WHERE id = ?').bind(purchaseId).first() as any
+  if (existing?.ledger_transaction_id) {
+    const tx = await env.DB.prepare('SELECT * FROM transactions WHERE id = ?').bind(existing.ledger_transaction_id).first() as any
+    if (tx) {
+      await env.DB.prepare(
+        `UPDATE transactions SET client_id=?, entry_date=?, amount_pending=?, amount_received=?, status=?, description=?
+         WHERE id = ?`
+      ).bind(p.supplier_id, p.entry_date, total, paid, status, desc, existing.ledger_transaction_id).run()
+      return
+    }
+  }
+  // Insert new ledger row in supplier's ledger
+  // amount_pending = total bill (we owe), amount_received = how much WE paid them
+  const result = await env.DB.prepare(
+    `INSERT INTO transactions (client_id, entry_date, bill_no, amount_received, amount_pending, status, description, rm_purchase_id, auto_generated)
+     VALUES (?, ?, '', ?, ?, ?, ?, ?, 1)`
+  ).bind(p.supplier_id, p.entry_date, paid, total, status, desc, purchaseId).run()
+  await env.DB.prepare('UPDATE raw_material_purchases SET ledger_transaction_id = ? WHERE id = ?').bind(result.meta.last_row_id, purchaseId).run()
+}
+
+// Recompute the raw material's aggregate (quantity, weighted-avg rate, total_value)
+// from its underlying purchase rows. Keeps `supplier_id` / `supplier_name` as the
+// LAST (most recent) purchase's supplier (for display in the legacy column).
+async function recomputeRawMaterialFromPurchases(env: any, rawId: number) {
+  const purchases = await env.DB.prepare(
+    'SELECT * FROM raw_material_purchases WHERE raw_material_id = ? ORDER BY entry_date ASC, id ASC'
+  ).bind(rawId).all()
+  const rows = (purchases.results as any[]) || []
+  let totalQty = 0
+  let totalValue = 0
+  for (const r of rows) {
+    const q = parseFloat(r.quantity) || 0
+    const rt = parseFloat(r.rate) || 0
+    totalQty += q
+    totalValue += q * rt
+  }
+  const avgRate = totalQty > 0 ? (totalValue / totalQty) : 0
+  // Latest supplier
+  const last: any = rows.length > 0 ? rows[rows.length - 1] : null
+  await env.DB.prepare(
+    `UPDATE raw_materials SET quantity=?, rate=?, total_value=?, supplier_id=?, supplier_name=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
+  ).bind(totalQty, avgRate, totalValue, last ? (last.supplier_id || null) : null, last ? (last.supplier_name || '') : '', rawId).run()
+}
+
 app.get('/api/raw-materials', requireAuth, async (c) => {
   const result = await c.env.DB.prepare(
     `SELECT rm.*, cl.name as supplier_name_resolved 
      FROM raw_materials rm LEFT JOIN clients cl ON cl.id = rm.supplier_id
      ORDER BY rm.name ASC`
   ).all()
-  return c.json({ items: result.results })
+  // For each material, also fetch a list of suppliers (distinct)
+  const items = result.results as any[]
+  if (items.length > 0) {
+    const ids = items.map(i => i.id)
+    const placeholders = ids.map(() => '?').join(',')
+    const purchases = await c.env.DB.prepare(
+      `SELECT rmp.raw_material_id, rmp.supplier_id, rmp.supplier_name,
+              cl.name as supplier_name_resolved,
+              SUM(rmp.total_amount) as total_amount,
+              SUM(rmp.paid_amount) as paid_amount,
+              SUM(rmp.remaining_amount) as remaining_amount,
+              COUNT(*) as purchase_count
+       FROM raw_material_purchases rmp
+       LEFT JOIN clients cl ON cl.id = rmp.supplier_id
+       WHERE rmp.raw_material_id IN (${placeholders})
+       GROUP BY rmp.raw_material_id, rmp.supplier_id, rmp.supplier_name`
+    ).bind(...ids).all()
+    const supBy: Record<number, any[]> = {}
+    for (const p of (purchases.results as any[])) {
+      const k = p.raw_material_id
+      if (!supBy[k]) supBy[k] = []
+      supBy[k].push(p)
+    }
+    for (const it of items) {
+      it.suppliers = supBy[it.id] || []
+    }
+  }
+  return c.json({ items })
+})
+
+// Get a single raw material with full purchase/batch history
+app.get('/api/raw-materials/:id', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const item = await c.env.DB.prepare(
+    `SELECT rm.*, cl.name as supplier_name_resolved
+     FROM raw_materials rm LEFT JOIN clients cl ON cl.id = rm.supplier_id
+     WHERE rm.id = ?`
+  ).bind(id).first()
+  if (!item) return c.json({ error: 'Not found' }, 404)
+  const purchases = await c.env.DB.prepare(
+    `SELECT rmp.*, cl.name as supplier_name_resolved
+     FROM raw_material_purchases rmp
+     LEFT JOIN clients cl ON cl.id = rmp.supplier_id
+     WHERE rmp.raw_material_id = ?
+     ORDER BY rmp.entry_date DESC, rmp.id DESC`
+  ).bind(id).all()
+  return c.json({ item, purchases: purchases.results })
 })
 
 app.post('/api/raw-materials', requireAuth, async (c) => {
-  const { name, unit, quantity, rate, supplier_id, supplier_name, category, notes, merge_mode, target_id } = await c.req.json()
+  const body = await c.req.json()
+  const { name, unit, quantity, rate, supplier_id, supplier_name, category, notes,
+          merge_mode, target_id, paid_amount, entry_date } = body
   if (!name) return c.json({ error: 'Name required' }, 400)
   const q = parseFloat(quantity) || 0, r = parseFloat(rate) || 0
   const u = unit || 'pcs'
   const sid = supplier_id || null
   const sname = supplier_name || ''
+  const total = q * r
+  const paid = parseFloat(paid_amount) || 0
+  const remaining = Math.max(0, total - paid)
+  const eDate = entry_date || new Date().toISOString().slice(0, 10)
+
+  // Helper to record purchase batch + sync supplier ledger
+  const recordPurchase = async (rawId: number) => {
+    if (q <= 0) return // nothing actually purchased — skip batch entry
+    const ins = await c.env.DB.prepare(
+      `INSERT INTO raw_material_purchases (raw_material_id, supplier_id, supplier_name, entry_date,
+                                           quantity, rate, total_amount, paid_amount, remaining_amount, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(rawId, sid, sname, eDate, q, r, total, paid, remaining, notes || '').run()
+    const purchaseId = ins.meta.last_row_id as number
+    await syncRawPurchaseLedger(c.env, purchaseId, {
+      supplier_id: sid, supplier_name: sname, entry_date: eDate,
+      total_amount: total, paid_amount: paid,
+      raw_name: name, quantity: q, unit: u, rate: r
+    })
+    return purchaseId
+  }
 
   // If client explicitly asks to merge into a specific existing material, do that
   if (target_id) {
     const existing = await c.env.DB.prepare('SELECT * FROM raw_materials WHERE id = ?').bind(target_id).first() as any
     if (existing) {
-      const oldQty = parseFloat(existing.quantity) || 0
-      const oldRate = parseFloat(existing.rate) || 0
-      const newQty = oldQty + q
-      // Weighted-average rate so existing stock value isn't lost when rate differs
-      const newRate = newQty > 0 ? ((oldQty * oldRate) + (q * r)) / newQty : r
-      const newTotal = newQty * newRate
-      await c.env.DB.prepare(
-        `UPDATE raw_materials SET quantity=?, rate=?, total_value=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
-      ).bind(newQty, newRate, newTotal, target_id).run()
+      await recordPurchase(target_id)
+      await recomputeRawMaterialFromPurchases(c.env, target_id)
       return c.json({ id: target_id, merged: true })
     }
   }
 
-  // Auto-merge: if a raw material with same name + unit + supplier already exists,
-  // ADD quantity to existing (weighted-average rate) instead of creating a duplicate.
-  // Caller can opt out by sending merge_mode === 'force_new'.
+  // Auto-merge by (name + unit). We allow multiple suppliers, so we DON'T
+  // require supplier match anymore — same material name+unit = same item.
   if (merge_mode !== 'force_new') {
-    let dup: any = null
-    if (sid) {
-      dup = await c.env.DB.prepare(
-        `SELECT * FROM raw_materials WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND LOWER(TRIM(unit)) = LOWER(TRIM(?)) AND supplier_id = ? LIMIT 1`
-      ).bind(name, u, sid).first()
-    } else {
-      dup = await c.env.DB.prepare(
-        `SELECT * FROM raw_materials WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND LOWER(TRIM(unit)) = LOWER(TRIM(?)) AND supplier_id IS NULL AND LOWER(TRIM(COALESCE(supplier_name,''))) = LOWER(TRIM(?)) LIMIT 1`
-      ).bind(name, u, sname).first()
-    }
+    const dup = await c.env.DB.prepare(
+      `SELECT * FROM raw_materials WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND LOWER(TRIM(unit)) = LOWER(TRIM(?)) LIMIT 1`
+    ).bind(name, u).first() as any
     if (dup) {
-      const oldQty = parseFloat(dup.quantity) || 0
-      const oldRate = parseFloat(dup.rate) || 0
-      const newQty = oldQty + q
-      const newRate = newQty > 0 ? ((oldQty * oldRate) + (q * r)) / newQty : r
-      const newTotal = newQty * newRate
+      await recordPurchase(dup.id)
+      // Update name/category/notes if user changed them, then recompute
       await c.env.DB.prepare(
-        `UPDATE raw_materials SET quantity=?, rate=?, total_value=?, category=COALESCE(NULLIF(?, ''), category), notes=COALESCE(NULLIF(?, ''), notes), updated_at=CURRENT_TIMESTAMP WHERE id=?`
-      ).bind(newQty, newRate, newTotal, category || '', notes || '', dup.id).run()
+        `UPDATE raw_materials SET category=COALESCE(NULLIF(?, ''), category), notes=COALESCE(NULLIF(?, ''), notes) WHERE id=?`
+      ).bind(category || '', notes || '', dup.id).run()
+      await recomputeRawMaterialFromPurchases(c.env, dup.id)
       return c.json({ id: dup.id, merged: true })
     }
   }
 
+  // Create brand new material
   const result = await c.env.DB.prepare(
     `INSERT INTO raw_materials (name, unit, quantity, rate, total_value, supplier_id, supplier_name, category, notes)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(name, u, q, r, q * r, sid, sname, category || '', notes || '').run()
-  return c.json({ id: result.meta.last_row_id })
+  ).bind(name, u, 0, 0, 0, sid, sname, category || '', notes || '').run()
+  const newId = result.meta.last_row_id as number
+  await recordPurchase(newId)
+  await recomputeRawMaterialFromPurchases(c.env, newId)
+  return c.json({ id: newId })
 })
 
-// Restock helper: explicitly add quantity to an existing raw material (weighted-avg rate)
+// Restock helper: add a new purchase batch to an existing raw material with optional supplier payment.
 app.post('/api/raw-materials/:id/restock', requireAuth, async (c) => {
   const id = parseInt(c.req.param('id'))
-  const { quantity, rate } = await c.req.json()
+  const body = await c.req.json()
+  const { quantity, rate, supplier_id, supplier_name, paid_amount, entry_date, notes } = body
   const addQty = parseFloat(quantity) || 0
   const addRate = parseFloat(rate) || 0
   if (addQty <= 0) return c.json({ error: 'Quantity must be > 0' }, 400)
   const existing = await c.env.DB.prepare('SELECT * FROM raw_materials WHERE id = ?').bind(id).first() as any
   if (!existing) return c.json({ error: 'Not found' }, 404)
-  const oldQty = parseFloat(existing.quantity) || 0
-  const oldRate = parseFloat(existing.rate) || 0
-  const newQty = oldQty + addQty
-  const newRate = newQty > 0 ? ((oldQty * oldRate) + (addQty * addRate)) / newQty : addRate
-  const newTotal = newQty * newRate
+  const sid = supplier_id || null
+  const sname = supplier_name || ''
+  const total = addQty * addRate
+  const paid = parseFloat(paid_amount) || 0
+  const remaining = Math.max(0, total - paid)
+  const eDate = entry_date || new Date().toISOString().slice(0, 10)
+  const ins = await c.env.DB.prepare(
+    `INSERT INTO raw_material_purchases (raw_material_id, supplier_id, supplier_name, entry_date,
+                                         quantity, rate, total_amount, paid_amount, remaining_amount, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(id, sid, sname, eDate, addQty, addRate, total, paid, remaining, notes || '').run()
+  const purchaseId = ins.meta.last_row_id as number
+  await syncRawPurchaseLedger(c.env, purchaseId, {
+    supplier_id: sid, supplier_name: sname, entry_date: eDate,
+    total_amount: total, paid_amount: paid,
+    raw_name: existing.name, quantity: addQty, unit: existing.unit, rate: addRate
+  })
+  await recomputeRawMaterialFromPurchases(c.env, id)
+  return c.json({ success: true, id, purchase_id: purchaseId })
+})
+
+// Update an existing purchase batch (rate, qty, supplier, payment)
+app.put('/api/raw-material-purchases/:pid', requireAuth, async (c) => {
+  const pid = parseInt(c.req.param('pid'))
+  const body = await c.req.json()
+  const { quantity, rate, supplier_id, supplier_name, paid_amount, entry_date, notes } = body
+  const existing = await c.env.DB.prepare('SELECT * FROM raw_material_purchases WHERE id = ?').bind(pid).first() as any
+  if (!existing) return c.json({ error: 'Not found' }, 404)
+  const q = parseFloat(quantity) || 0, rt = parseFloat(rate) || 0
+  const sid = supplier_id || null
+  const sname = supplier_name || ''
+  const total = q * rt
+  const paid = parseFloat(paid_amount) || 0
+  const remaining = Math.max(0, total - paid)
+  const eDate = entry_date || existing.entry_date
   await c.env.DB.prepare(
-    `UPDATE raw_materials SET quantity=?, rate=?, total_value=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
-  ).bind(newQty, newRate, newTotal, id).run()
-  return c.json({ success: true, id, quantity: newQty, rate: newRate, total_value: newTotal })
+    `UPDATE raw_material_purchases SET supplier_id=?, supplier_name=?, entry_date=?,
+        quantity=?, rate=?, total_amount=?, paid_amount=?, remaining_amount=?, notes=?, updated_at=CURRENT_TIMESTAMP
+     WHERE id=?`
+  ).bind(sid, sname, eDate, q, rt, total, paid, remaining, notes || '', pid).run()
+  // Get raw name/unit for ledger description
+  const rm = await c.env.DB.prepare('SELECT name, unit FROM raw_materials WHERE id = ?').bind(existing.raw_material_id).first() as any
+  await syncRawPurchaseLedger(c.env, pid, {
+    supplier_id: sid, supplier_name: sname, entry_date: eDate,
+    total_amount: total, paid_amount: paid,
+    raw_name: rm?.name || '', quantity: q, unit: rm?.unit || '', rate: rt
+  })
+  await recomputeRawMaterialFromPurchases(c.env, existing.raw_material_id)
+  return c.json({ success: true })
+})
+
+// Delete a purchase batch (also drops linked supplier ledger row)
+app.delete('/api/raw-material-purchases/:pid', requireAuth, async (c) => {
+  const pid = parseInt(c.req.param('pid'))
+  const existing = await c.env.DB.prepare('SELECT * FROM raw_material_purchases WHERE id = ?').bind(pid).first() as any
+  if (!existing) return c.json({ error: 'Not found' }, 404)
+  if (existing.ledger_transaction_id) {
+    await c.env.DB.prepare('DELETE FROM transactions WHERE id = ?').bind(existing.ledger_transaction_id).run()
+  }
+  await c.env.DB.prepare('DELETE FROM raw_material_purchases WHERE id = ?').bind(pid).run()
+  await recomputeRawMaterialFromPurchases(c.env, existing.raw_material_id)
+  return c.json({ success: true })
+})
+
+// Pay a supplier against one specific purchase batch (adds to paid_amount, reduces remaining,
+// and updates the linked ledger row).
+app.post('/api/raw-material-purchases/:pid/pay', requireAuth, async (c) => {
+  const pid = parseInt(c.req.param('pid'))
+  const body = await c.req.json()
+  const addPaid = parseFloat(body.amount) || 0
+  if (addPaid <= 0) return c.json({ error: 'Amount must be > 0' }, 400)
+  const existing = await c.env.DB.prepare('SELECT * FROM raw_material_purchases WHERE id = ?').bind(pid).first() as any
+  if (!existing) return c.json({ error: 'Not found' }, 404)
+  const total = parseFloat(existing.total_amount) || 0
+  const newPaid = (parseFloat(existing.paid_amount) || 0) + addPaid
+  const newRemaining = Math.max(0, total - newPaid)
+  await c.env.DB.prepare(
+    `UPDATE raw_material_purchases SET paid_amount=?, remaining_amount=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
+  ).bind(newPaid, newRemaining, pid).run()
+  const rm = await c.env.DB.prepare('SELECT name, unit FROM raw_materials WHERE id = ?').bind(existing.raw_material_id).first() as any
+  await syncRawPurchaseLedger(c.env, pid, {
+    supplier_id: existing.supplier_id, supplier_name: existing.supplier_name,
+    entry_date: existing.entry_date,
+    total_amount: total, paid_amount: newPaid,
+    raw_name: rm?.name || '', quantity: existing.quantity, unit: rm?.unit || '', rate: existing.rate
+  })
+  return c.json({ success: true, paid_amount: newPaid, remaining_amount: newRemaining })
 })
 
 app.put('/api/raw-materials/:id', requireAuth, async (c) => {
   const id = c.req.param('id')
-  const { name, unit, quantity, rate, supplier_id, supplier_name, category, notes } = await c.req.json()
-  const q = parseFloat(quantity) || 0, r = parseFloat(rate) || 0
+  const { name, unit, category, notes } = await c.req.json()
+  // Only basic fields editable here — quantity/rate/supplier are derived from purchases.
   await c.env.DB.prepare(
-    `UPDATE raw_materials SET name=?, unit=?, quantity=?, rate=?, total_value=?, supplier_id=?, supplier_name=?, category=?, notes=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
-  ).bind(name, unit || 'pcs', q, r, q * r, supplier_id || null, supplier_name || '', category || '', notes || '', id).run()
+    `UPDATE raw_materials SET name=?, unit=?, category=?, notes=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
+  ).bind(name, unit || 'pcs', category || '', notes || '', id).run()
   return c.json({ success: true })
 })
 
 app.delete('/api/raw-materials/:id', requireAuth, async (c) => {
   const id = c.req.param('id')
+  // Drop linked ledger rows first
+  const purchases = await c.env.DB.prepare('SELECT ledger_transaction_id FROM raw_material_purchases WHERE raw_material_id = ?').bind(id).all()
+  for (const p of (purchases.results as any[])) {
+    if (p.ledger_transaction_id) {
+      await c.env.DB.prepare('DELETE FROM transactions WHERE id = ?').bind(p.ledger_transaction_id).run()
+    }
+  }
   await c.env.DB.prepare('DELETE FROM raw_materials WHERE id = ?').bind(id).run()
   return c.json({ success: true })
 })
@@ -1089,7 +1312,8 @@ app.delete('/api/custom-sections/rows/:rowId', requireAuth, async (c) => {
 app.get('/api/dashboard', requireAuth, async (c) => {
   const [totals, perFolder, topPending, recent, statuses, clientCount, folderCount, billStats,
          empCount, empPaid, empAdvance, expenseStats, rawStats, customSecCount,
-         rawList, empList, expenseList, profitStats, productList, invMfgList] = await Promise.all([
+         rawList, empList, expenseList, profitStats, productList, invMfgList,
+         supplierStats, mfgProducts, mfgIngredients, builtSoldStats] = await Promise.all([
     c.env.DB.prepare(`
       SELECT COALESCE(SUM(amount_received),0) as total_received,
              COALESCE(SUM(amount_pending),0) as total_pending,
@@ -1170,6 +1394,34 @@ app.get('/api/dashboard', requireAuth, async (c) => {
       SELECT id, name, sku, unit, rate, quantity, manufacturing_cost, category
       FROM inventory
       ORDER BY name ASC
+    `).all(),
+    // Supplier stats (how much we owe suppliers across all raw-material purchases)
+    c.env.DB.prepare(`
+      SELECT
+        COALESCE(SUM(total_amount), 0) as total_purchased,
+        COALESCE(SUM(paid_amount), 0) as total_paid,
+        COALESCE(SUM(remaining_amount), 0) as total_remaining,
+        COUNT(*) as purchase_count
+      FROM raw_material_purchases
+    `).first(),
+    // Manufacturing products with recipes
+    c.env.DB.prepare(`SELECT id, name, unit, sale_rate, category FROM products ORDER BY name ASC`).all(),
+    // All product ingredients (joined with raw materials for cost & stock lookups)
+    c.env.DB.prepare(`
+      SELECT pi.product_id, pi.raw_material_id, pi.quantity_required, pi.unit,
+             rm.name as raw_name, rm.unit as raw_unit, rm.quantity as raw_quantity, rm.rate as raw_rate
+      FROM product_ingredients pi
+      LEFT JOIN raw_materials rm ON rm.id = pi.raw_material_id
+    `).all(),
+    // Bills items grouped by product to compute units sold (i.e. produced)
+    c.env.DB.prepare(`
+      SELECT product_name,
+             COALESCE(SUM(quantity), 0) as units_sold,
+             COALESCE(SUM(total), 0) as total_revenue,
+             COALESCE(SUM(quantity * manufacturing_cost), 0) as total_mfg_cost
+      FROM bill_items
+      WHERE product_name IS NOT NULL AND product_name != ''
+      GROUP BY product_name
     `).all()
   ])
 
@@ -1194,7 +1446,11 @@ app.get('/api/dashboard', requireAuth, async (c) => {
     empPaidStats: empPaid,
     profitStats,
     productList: productList.results,
-    invMfgList: invMfgList.results
+    invMfgList: invMfgList.results,
+    supplierStats,
+    mfgProducts: mfgProducts.results,
+    mfgIngredients: mfgIngredients.results,
+    builtSoldStats: builtSoldStats.results
   })
 })
 
