@@ -1108,17 +1108,6 @@ const App = {
         <!-- Activity Calendar -->
         <div id="dashboard-calendar"></div>
 
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          <div class="bg-white rounded-xl shadow-sm p-5">
-            <h2 class="font-bold text-gray-800 mb-3"><i class="fas fa-chart-pie mr-2"></i>Status Breakdown</h2>
-            ${statuses.length === 0 ? '<p class="text-gray-500 text-center py-8">No transactions</p>' : '<canvas id="statusChart" height="200"></canvas>'}
-          </div>
-          <div class="bg-white rounded-xl shadow-sm p-5">
-            <h2 class="font-bold text-gray-800 mb-3"><i class="fas fa-chart-bar mr-2"></i>Section Comparison</h2>
-            ${perFolder.length === 0 ? '<p class="text-gray-500 text-center py-8">No data</p>' : '<canvas id="folderChart" height="200"></canvas>'}
-          </div>
-        </div>
-
         <div class="bg-white rounded-xl shadow-sm p-5">
           <h2 class="font-bold text-gray-800 mb-3"><i class="fas fa-history mr-2"></i>Recent Transactions</h2>
           ${recent.length === 0 ? '<p class="text-gray-500 text-center py-4">No transactions</p>' : `
@@ -1143,27 +1132,6 @@ const App = {
     // Render calendar
     this.renderCalendar('dashboard-calendar');
 
-    requestAnimationFrame(() => {
-      if (typeof Chart === 'undefined') return;
-      if (statuses.length > 0) {
-        const ctx = document.getElementById('statusChart');
-        if (ctx) new Chart(ctx, {
-          type: 'doughnut',
-          data: { labels: statuses.map(s => s.status), datasets: [{ data: statuses.map(s => s.count), backgroundColor: ['#f59e0b','#10b981','#3b82f6','#ef4444','#6b7280'] }] },
-          options: { plugins: { legend: { position: 'bottom' } } }
-        });
-      }
-      if (perFolder.length > 0) {
-        const ctx = document.getElementById('folderChart');
-        if (ctx) new Chart(ctx, {
-          type: 'bar',
-          data: { labels: perFolder.map(f => f.name), datasets: [
-            { label: 'Received', data: perFolder.map(f => f.total_received), backgroundColor: '#ef4444' }
-          ] },
-          options: { plugins: { legend: { position: 'bottom' } }, scales: { y: { beginAtZero: true } } }
-        });
-      }
-    });
   },
 
   // ========= INVENTORY =========
@@ -1476,8 +1444,8 @@ const App = {
     const items = f ? this.state.products.filter(p =>
       (p.name || '').toLowerCase().includes(f) ||
       (p.category || '').toLowerCase().includes(f)) : this.state.products;
-    const totalBuildable = this.state.products.reduce((s, p) => s + (parseInt(p.buildable_units) || 0), 0);
-    const totalCost = this.state.products.reduce((s, p) => s + (parseFloat(p.cost_per_unit) || 0) * (parseInt(p.buildable_units) || 0), 0);
+    const totalBuildable = this.state.products.reduce((s, p) => s + (parseFloat(p.buildable_units) || 0), 0);
+    const totalCost = this.state.products.reduce((s, p) => s + (parseFloat(p.cost_per_unit) || 0) * (parseFloat(p.buildable_units) || 0), 0);
     const area = document.getElementById('content-area');
     area.innerHTML = `
       <div class="page-header">
@@ -1495,7 +1463,7 @@ const App = {
           <div class="stat-card"><p class="text-xs text-gray-500">Products</p><p class="text-xl font-bold text-blue-600">${this.state.products.length}</p></div>
           <div class="stat-card"><p class="text-xs text-gray-500">Buildable Now (sum)</p><p class="text-xl font-bold amount-running">${this.fmt(totalBuildable)}</p></div>
           <div class="stat-card"><p class="text-xs text-gray-500">Material Cost (Buildable)</p><p class="text-xl font-bold text-purple-600">PKR ${this.fmt(totalCost)}</p></div>
-          <div class="stat-card"><p class="text-xs text-gray-500">Out of Stock</p><p class="text-xl font-bold text-red-600">${this.state.products.filter(p => (parseInt(p.buildable_units)||0) === 0).length}</p></div>
+          <div class="stat-card"><p class="text-xs text-gray-500">Out of Stock</p><p class="text-xl font-bold text-red-600">${this.state.products.filter(p => (parseFloat(p.buildable_units)||0) === 0).length}</p></div>
         </div>
 
         <div class="bg-white rounded-xl shadow-sm overflow-hidden">
@@ -1528,7 +1496,7 @@ const App = {
                       <strong>${this.escapeHtml(rmName)}</strong>: ${this.fmt(need)} ${this.escapeHtml(unit)} <span class="opacity-70">(stock: ${this.fmt(have)})</span>
                     </span>`;
                   }).join('');
-                const buildable = parseInt(p.buildable_units) || 0;
+                const buildable = parseFloat(p.buildable_units) || 0;
                 const buildableClass = buildable > 0 ? 'text-green-600' : 'text-red-600';
                 return `<tr>
                   <td class="text-gray-500">${i + 1}</td>
@@ -1784,7 +1752,7 @@ const App = {
   showBuildProduct(id) {
     const p = this.state.products.find(x => x.id === id);
     if (!p) return;
-    const buildable = parseInt(p.buildable_units) || 0;
+    const buildable = parseFloat(p.buildable_units) || 0;
     const ings = p.ingredients || [];
     if (ings.length === 0) { this.toast('This product has no recipe', 'error'); return; }
 
@@ -1800,7 +1768,7 @@ const App = {
       <form id="build-form" class="space-y-3">
         <div>
           <label class="block text-sm font-medium mb-1">Units to Build *</label>
-          <input id="build-units" type="number" min="1" max="${buildable}" required class="input-field" value="1" oninput="App._refreshBuildPreview(${id})" ${buildable === 0 ? 'disabled' : ''}>
+          <input id="build-units" type="number" step="any" min="0.01" max="${buildable}" required class="input-field" value="1" oninput="App._refreshBuildPreview(${id})" ${buildable === 0 ? 'disabled' : ''}>
         </div>
         <div id="build-preview" class="text-sm"></div>
         <label class="flex items-center gap-2 mt-2 text-sm">
@@ -1816,9 +1784,9 @@ const App = {
 
     document.getElementById('build-form').addEventListener('submit', async (e) => {
       e.preventDefault();
-      const units = parseInt(document.getElementById('build-units').value) || 0;
+      const units = parseFloat(document.getElementById('build-units').value) || 0;
       const addInv = document.getElementById('build-add-inv').checked;
-      if (units < 1) { this.toast('Enter at least 1 unit', 'error'); return; }
+      if (units <= 0) { this.toast('Enter a quantity greater than 0', 'error'); return; }
       try {
         const res = await this.api.post(`/api/products/${id}/build`, { units, add_to_inventory: addInv });
         if (res.error) { this.toast(res.error, 'error'); return; }
@@ -1832,7 +1800,7 @@ const App = {
   _refreshBuildPreview(productId) {
     const p = this.state.products.find(x => x.id === productId);
     if (!p) return;
-    const units = parseInt(document.getElementById('build-units')?.value) || 0;
+    const units = parseFloat(document.getElementById('build-units')?.value) || 0;
     const preview = document.getElementById('build-preview');
     if (!preview) return;
     if (units <= 0) { preview.innerHTML = ''; return; }
@@ -2344,7 +2312,7 @@ const App = {
   _etxItemChanged() {
     const sel = document.getElementById('etx-item');
     const opt = sel.options[sel.selectedIndex];
-    const rate = opt ? (parseInt(opt.dataset.rate) || 0) : 0;
+    const rate = opt ? (parseFloat(opt.dataset.rate) || 0) : 0;
     document.getElementById('etx-rate').value = rate;
     this._etxRecalc();
   },
@@ -2935,7 +2903,7 @@ const App = {
     if (this._billItems.length === 0) { this.toast('At least one item required', 'error'); return; }
     const subtotal = this._billItems.reduce((s, it) => s + ((parseFloat(it.quantity) || 0) * (parseFloat(it.rate) || 0)), 0);
     const taxable = subtotal - discount;
-    const taxAmt = Math.round(taxable * (taxPct / 100));
+    const taxAmt = taxable * (taxPct / 100);
     const total = taxable + taxAmt;
     const matched = this.state.allClients.find(c => c.name === customerName);
     const payload = {
@@ -3429,4 +3397,3 @@ document.addEventListener('click', (e) => {
   }
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') App.closeModal(); });
-); });

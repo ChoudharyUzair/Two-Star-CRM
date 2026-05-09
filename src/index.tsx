@@ -836,7 +836,7 @@ app.post('/api/employee-transactions', requireAuth, async (c) => {
   if (!employee_id || !type) return c.json({ error: 'employee_id & type required' }, 400)
   const eType = entry_type === 'per_piece' ? 'per_piece' : 'cash'
   let amt = parseFloat(amount) || 0
-  const qty = parseInt(quantity) || 0
+  const qty = parseFloat(quantity) || 0
   const r = parseFloat(rate) || 0
   if (eType === 'per_piece') amt = qty * r
   // paid_amount: how much was actually paid out of the total amount.
@@ -862,7 +862,7 @@ app.put('/api/employee-transactions/:id', requireAuth, async (c) => {
   const { entry_date, type, amount, description, entry_type, item_id, item_name, quantity, rate, paid_amount } = body
   const eType = entry_type === 'per_piece' ? 'per_piece' : 'cash'
   let amt = parseFloat(amount) || 0
-  const qty = parseInt(quantity) || 0
+  const qty = parseFloat(quantity) || 0
   const r = parseFloat(rate) || 0
   if (eType === 'per_piece') amt = qty * r
   let paid: number | null = null
@@ -1212,7 +1212,6 @@ app.get('/', (c) => {
     <p class="boot-text">Loading Two Star CRM...</p>
   </div>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
 <script src="/static/app.js" defer></script>
 </body>
 </html>`)
