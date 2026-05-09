@@ -925,7 +925,12 @@ const App = {
   renderDashboard(data) {
     const { totals, perFolder, topPending, recent, statuses, clientCount, folderCount, billStats,
             empCount, empPaid, empAdvance, expenseStats, rawStats, customSecCount,
-            rawList, empList, expenseList, empPaidStats } = data;
+            rawList, empList, expenseList, empPaidStats, profitStats, productList, invMfgList } = data;
+    const totalProfit = profitStats?.total_profit || 0;
+    const profitMonth = profitStats?.profit_this_month || 0;
+    const profitToday = profitStats?.profit_today || 0;
+    const products = productList || [];
+    const invMfg = invMfgList || [];
     const empTotalAmount = (empPaidStats && empPaidStats.total_amount) || 0;
     const empTotalPaid = (empPaidStats && empPaidStats.total_paid) || (typeof empPaid === 'number' ? empPaid : 0);
     // Recompute remaining across all employees: (salary - paid) - advance - deduction + bonus
@@ -960,6 +965,25 @@ const App = {
             <p class="text-xl font-bold text-blue-600 mt-1">${clientCount} / ${folderCount}</p></div>
         </div>
 
+        <!-- Net Profit Highlight Card -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div class="stat-card" style="background: linear-gradient(135deg,#ecfdf5,#d1fae5); border:1px solid #6ee7b7;">
+            <p class="text-xs text-green-800 font-semibold"><i class="fas fa-chart-line mr-1"></i>Net Profit (All Time)</p>
+            <p class="text-2xl font-extrabold text-green-700 mt-1">PKR ${this.fmt(totalProfit)}</p>
+            <p class="text-xs text-green-700 mt-1">From sold bills · (Sell − Mfg.) × Qty</p>
+          </div>
+          <div class="stat-card" style="background:#f0fdfa; border:1px solid #99f6e4;">
+            <p class="text-xs text-teal-800 font-semibold"><i class="fas fa-calendar-alt mr-1"></i>Profit This Month</p>
+            <p class="text-2xl font-extrabold text-teal-700 mt-1">PKR ${this.fmt(profitMonth)}</p>
+            <p class="text-xs text-teal-700 mt-1">Auto-calculated from bills</p>
+          </div>
+          <div class="stat-card" style="background:#eff6ff; border:1px solid #bfdbfe;">
+            <p class="text-xs text-blue-800 font-semibold"><i class="fas fa-sun mr-1"></i>Profit Today</p>
+            <p class="text-2xl font-extrabold text-blue-700 mt-1">PKR ${this.fmt(profitToday)}</p>
+            <p class="text-xs text-blue-700 mt-1">Updates as bills are made</p>
+          </div>
+        </div>
+
         <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
           <div class="stat-card cursor-pointer" onclick="App.showRawMaterials()">
             <p class="text-xs text-gray-500"><i class="fas fa-cubes mr-1"></i>Raw Materials</p>
@@ -968,7 +992,7 @@ const App = {
           </div>
           <div class="stat-card cursor-pointer" onclick="App.showProducts()">
             <p class="text-xs text-gray-500"><i class="fas fa-industry mr-1"></i>Products / Mfg.</p>
-            <p class="text-xl font-bold text-purple-600 mt-1">${this.state.products.length} product(s)</p>
+            <p class="text-xl font-bold text-purple-600 mt-1">${products.length} product(s)</p>
             <p class="text-xs text-gray-400 mt-1">Recipes linked to Raw Material</p>
           </div>
           <div class="stat-card cursor-pointer" onclick="App.showEmployees()">
@@ -999,6 +1023,52 @@ const App = {
                     <td class="text-right p-3 amount-running">PKR ${this.fmt(f.total_pending - f.total_received)}</td>
                   </tr>`).join('')}
               </tbody></table></div>`}
+        </div>
+
+        <!-- Products / Manufacturing Summary -->
+        <div class="bg-white rounded-xl shadow-sm p-5">
+          <h2 class="font-bold text-gray-800 mb-3 flex items-center justify-between">
+            <span><i class="fas fa-industry text-purple-500 mr-2"></i>Products / Manufacturing Summary</span>
+            <div class="flex gap-2">
+              <button onclick="App.showProducts()" class="text-xs text-blue-600 hover:underline font-normal">Recipes <i class="fas fa-arrow-right ml-1"></i></button>
+              <button onclick="App.showInventory()" class="text-xs text-blue-600 hover:underline font-normal">Inventory <i class="fas fa-arrow-right ml-1"></i></button>
+            </div>
+          </h2>
+          ${(!invMfg || invMfg.length === 0) ? '<p class="text-gray-500 text-center py-4">No products in inventory yet</p>' : `
+            <div class="overflow-x-auto"><table class="w-full text-sm">
+              <thead class="bg-gray-50"><tr>
+                <th class="text-left p-3">Product</th>
+                <th class="text-right p-3" title="Cost to manufacture / buy one unit">Mfg. Cost</th>
+                <th class="text-right p-3" title="Selling price on bill">Selling Rate</th>
+                <th class="text-right p-3" title="Per-unit profit">Margin / unit</th>
+                <th class="text-right p-3">In Stock</th>
+                <th class="text-right p-3" title="Potential profit if all stock sold">Potential Profit</th>
+              </tr></thead><tbody>
+                ${invMfg.slice(0, 15).map(p => {
+                  const mfg = parseFloat(p.manufacturing_cost) || 0;
+                  const rate = parseFloat(p.rate) || 0;
+                  const qty = parseFloat(p.quantity) || 0;
+                  const margin = rate - mfg;
+                  const potential = margin * qty;
+                  return `
+                  <tr class="border-t hover:bg-gray-50 cursor-pointer" onclick="App.showInventoryEditor(${p.id})">
+                    <td class="p-3"><i class="fas fa-box text-orange-500 mr-2"></i>${this.escapeHtml(p.name)}
+                      ${p.category ? `<span class="text-xs text-gray-400 ml-1">(${this.escapeHtml(p.category)})</span>` : ''}</td>
+                    <td class="text-right p-3 text-orange-600">${mfg > 0 ? 'PKR ' + this.fmt(mfg) : '<span class="text-gray-400">—</span>'}</td>
+                    <td class="text-right p-3 font-medium">PKR ${this.fmt(rate)}</td>
+                    <td class="text-right p-3 ${margin >= 0 ? 'text-green-600' : 'text-red-600'} font-semibold">PKR ${this.fmt(margin)}</td>
+                    <td class="text-right p-3">${this.fmt(qty)} <span class="text-xs text-gray-400">${this.escapeHtml(p.unit || '')}</span></td>
+                    <td class="text-right p-3 ${potential >= 0 ? 'text-green-700' : 'text-red-700'} font-bold">PKR ${this.fmt(potential)}</td>
+                  </tr>`;
+                }).join('')}
+                <tr class="border-t-2 bg-gray-50 font-bold">
+                  <td class="p-3" colspan="5">Total Net Profit Earned (from completed bills)</td>
+                  <td class="text-right p-3 text-green-700">PKR ${this.fmt(totalProfit)}</td>
+                </tr>
+              </tbody></table></div>
+            ${invMfg.length > 15 ? `<p class="text-xs text-gray-400 text-center mt-2">Showing 15 of ${invMfg.length} products</p>` : ''}
+            ${products.length > 0 ? `<p class="text-xs text-gray-500 mt-3"><i class="fas fa-info-circle mr-1"></i>You also have <strong>${products.length}</strong> manufactured product recipe(s). <a href="#" onclick="App.showProducts(); return false;" class="text-blue-600 hover:underline">View recipes →</a></p>` : ''}
+          `}
         </div>
 
         <!-- Raw Material Summary -->
@@ -1159,6 +1229,11 @@ const App = {
       (i.category || '').toLowerCase().includes(filter.toLowerCase())) : this.state.inventory;
     const totalValue = this.state.inventory.reduce((s, i) => s + (parseFloat(i.rate) || 0) * (parseFloat(i.quantity) || 0), 0);
     const totalQty = this.state.inventory.reduce((s, i) => s + (parseFloat(i.quantity) || 0), 0);
+    // Potential profit (per-unit (rate - mfg_cost) * qty in stock) — internal indicator only
+    const potentialProfit = this.state.inventory.reduce((s, i) => {
+      const margin = (parseFloat(i.rate) || 0) - (parseFloat(i.manufacturing_cost) || 0);
+      return s + margin * (parseFloat(i.quantity) || 0);
+    }, 0);
     const area = document.getElementById('content-area');
     area.innerHTML = `
       <div class="page-header">
@@ -1174,27 +1249,34 @@ const App = {
           <div class="stat-card"><p class="text-xs text-gray-500">Products</p><p class="text-xl font-bold text-blue-600">${this.state.inventory.length}</p></div>
           <div class="stat-card"><p class="text-xs text-gray-500">Total Quantity</p><p class="text-xl font-bold text-purple-600">${this.fmt(totalQty)}</p></div>
           <div class="stat-card"><p class="text-xs text-gray-500">Inventory Value</p><p class="text-xl font-bold amount-running">PKR ${this.fmt(totalValue)}</p></div>
-          <div class="stat-card"><p class="text-xs text-gray-500">Low Stock (≤5)</p><p class="text-xl font-bold text-red-600">${this.state.inventory.filter(i => (parseFloat(i.quantity)||0) <= 5).length}</p></div>
+          <div class="stat-card"><p class="text-xs text-gray-500" title="If all current stock sold at selling rate">Potential Profit</p><p class="text-xl font-bold text-green-600">PKR ${this.fmt(potentialProfit)}</p></div>
         </div>
         <div class="bg-white rounded-xl shadow-sm overflow-hidden">
           <div class="overflow-x-auto"><table class="ledger-table">
             <thead><tr>
               <th style="width:40px;">#</th><th>Product</th><th style="width:120px;">SKU</th>
-              <th style="width:90px;">Unit</th><th style="width:120px;">Rate</th>
-              <th style="width:120px;">Qty</th><th style="width:130px;">Stock Value</th>
+              <th style="width:90px;">Unit</th>
+              <th style="width:130px;" title="Internal: cost to manufacture / buy one unit. Never shown on bill.">Mfg. Cost</th>
+              <th style="width:120px;" title="Selling price (used on bill)">Selling Rate</th>
+              <th style="width:120px;" title="Per-unit profit = Selling - Mfg.">Margin</th>
+              <th style="width:110px;">Qty</th><th style="width:130px;">Stock Value</th>
               <th style="width:120px;">Category</th><th style="width:100px;">Action</th>
             </tr></thead><tbody>
-              ${items.length === 0 ? `<tr><td colspan="9" class="text-center py-8 text-gray-500">
+              ${items.length === 0 ? `<tr><td colspan="11" class="text-center py-8 text-gray-500">
                 <i class="fas fa-box-open text-3xl mb-2 block"></i>${filter ? 'No matching products' : 'No products yet.'}</td></tr>` :
                 items.map((it, i) => {
                   const rate = parseFloat(it.rate) || 0, qty = parseFloat(it.quantity) || 0;
+                  const mfg = parseFloat(it.manufacturing_cost) || 0;
+                  const margin = rate - mfg;
                   const value = rate * qty, lowStock = qty <= 5;
                   return `<tr>
                     <td class="text-gray-500">${i + 1}</td>
                     <td>${this.escapeHtml(it.name)}</td>
                     <td>${this.escapeHtml(it.sku || '')}</td>
                     <td>${this.escapeHtml(it.unit || 'pcs')}</td>
-                    <td>${this.fmt(rate)}</td>
+                    <td class="text-right text-orange-600">${mfg > 0 ? this.fmt(mfg) : '<span class="text-gray-400">—</span>'}</td>
+                    <td class="text-right font-medium">${this.fmt(rate)}</td>
+                    <td class="text-right ${margin >= 0 ? 'text-green-600' : 'text-red-600'} font-semibold">${this.fmt(margin)}</td>
                     <td class="${lowStock ? 'low-stock' : 'in-stock'}">${this.fmt(qty)}</td>
                     <td class="amount-running text-right font-bold">PKR ${this.fmt(value)}</td>
                     <td>${this.escapeHtml(it.category || '')}</td>
@@ -1210,7 +1292,7 @@ const App = {
   },
 
   showInventoryEditor(id = null) {
-    const it = id ? this.state.inventory.find(x => x.id === id) : { name:'', sku:'', unit:'pcs', rate:0, quantity:0, category:'', notes:'' };
+    const it = id ? this.state.inventory.find(x => x.id === id) : { name:'', sku:'', unit:'pcs', rate:0, quantity:0, category:'', notes:'', manufacturing_cost:0 };
     if (id && !it) return;
     this.openModal(`
       <h2 class="text-xl font-bold mb-4"><i class="fas fa-box text-orange-500 mr-2"></i>${id ? 'Edit' : 'Add'} Product</h2>
@@ -1221,11 +1303,23 @@ const App = {
           <div><label class="block text-sm font-medium mb-1">SKU</label><input id="i-sku" type="text" class="input-field" value="${this.escapeAttr(it.sku || '')}"></div>
           <div><label class="block text-sm font-medium mb-1">Unit</label><input id="i-unit" type="text" class="input-field" value="${this.escapeAttr(it.unit || 'pcs')}"></div>
         </div>
-        <div class="grid grid-cols-2 gap-3">
-          <div><label class="block text-sm font-medium mb-1">Rate (PKR)</label><input id="i-rate" type="number" step="any" class="input-field" value="${it.rate || 0}"></div>
-          <div><label class="block text-sm font-medium mb-1">Quantity</label><input id="i-qty" type="number" step="any" class="input-field" value="${it.quantity || 0}"></div>
+        <div class="bg-orange-50 border border-orange-200 rounded-lg p-3 space-y-2">
+          <p class="text-xs text-orange-800"><i class="fas fa-industry mr-1"></i><strong>Pricing & Profit</strong> — Manufacturing Cost is internal and never appears on the bill. Net profit per unit = Selling Rate − Manufacturing Cost.</p>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="block text-sm font-medium mb-1 text-orange-900">Manufacturing Cost (PKR)</label>
+              <input id="i-mfg" type="number" step="any" class="input-field" value="${it.manufacturing_cost || 0}" oninput="App._calcInvMargin()" placeholder="e.g. 2000"></div>
+            <div><label class="block text-sm font-medium mb-1 text-blue-900">Selling Rate / Bill Rate (PKR)</label>
+              <input id="i-rate" type="number" step="any" class="input-field" value="${it.rate || 0}" oninput="App._calcInvMargin()" placeholder="e.g. 3000"></div>
+          </div>
+          <div class="flex justify-between items-center text-sm bg-white rounded p-2">
+            <span class="text-gray-600">Net Profit per unit:</span>
+            <span id="i-margin" class="font-bold text-green-600">PKR 0.00</span>
+          </div>
         </div>
-        <div><label class="block text-sm font-medium mb-1">Category</label><input id="i-cat" type="text" class="input-field" value="${this.escapeAttr(it.category || '')}"></div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="block text-sm font-medium mb-1">Quantity in Stock</label><input id="i-qty" type="number" step="any" class="input-field" value="${it.quantity || 0}"></div>
+          <div><label class="block text-sm font-medium mb-1">Category</label><input id="i-cat" type="text" class="input-field" value="${this.escapeAttr(it.category || '')}"></div>
+        </div>
         <div><label class="block text-sm font-medium mb-1">Notes</label><textarea id="i-notes" class="input-field" rows="2">${this.escapeHtml(it.notes || '')}</textarea></div>
         <div class="flex gap-2 justify-end pt-2">
           ${id ? `<button type="button" class="btn btn-danger mr-auto" onclick="App.deleteInv(${id})"><i class="fas fa-trash"></i> Delete</button>` : ''}
@@ -1233,6 +1327,7 @@ const App = {
           <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save</button>
         </div>
       </form>`);
+    this._calcInvMargin();
     document.getElementById('inv-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const payload = {
@@ -1240,6 +1335,7 @@ const App = {
         sku: document.getElementById('i-sku').value,
         unit: document.getElementById('i-unit').value || 'pcs',
         rate: parseFloat(document.getElementById('i-rate').value) || 0,
+        manufacturing_cost: parseFloat(document.getElementById('i-mfg').value) || 0,
         quantity: parseFloat(document.getElementById('i-qty').value) || 0,
         category: document.getElementById('i-cat').value,
         notes: document.getElementById('i-notes').value
@@ -1252,6 +1348,17 @@ const App = {
         this.toast('Saved', 'success');
       } catch (err) { this.toast('Failed', 'error'); }
     });
+  },
+
+  _calcInvMargin() {
+    const rate = parseFloat(document.getElementById('i-rate')?.value) || 0;
+    const mfg = parseFloat(document.getElementById('i-mfg')?.value) || 0;
+    const margin = rate - mfg;
+    const el = document.getElementById('i-margin');
+    if (el) {
+      el.textContent = 'PKR ' + this.fmt(margin);
+      el.className = 'font-bold ' + (margin >= 0 ? 'text-green-600' : 'text-red-600');
+    }
   },
 
   async deleteInv(id) {
@@ -2748,7 +2855,15 @@ const App = {
         product_id: i.product_id, product_name: i.product_name,
         quantity: i.quantity, rate: i.rate, total: i.total
       }));
-    } else items = [{ product_id: null, product_name: '', quantity: 1, rate: 0, total: 0 }];
+    } else items = [{ product_id: null, product_name: '', quantity: 1, rate: 0, total: 0, manufacturing_cost: 0 }];
+    // Hydrate manufacturing_cost from inventory snapshot (for editing existing bills, server already returns it via bill_items)
+    items = items.map(it => {
+      if (it.manufacturing_cost === undefined || it.manufacturing_cost === null) {
+        const inv = it.product_id ? this.state.inventory.find(p => p.id === it.product_id) : null;
+        it.manufacturing_cost = inv ? (parseFloat(inv.manufacturing_cost) || 0) : 0;
+      }
+      return it;
+    });
     this._billItems = items;
     this._billEditing = editing;
     // Bill No: 4-digit-based, unique. e.g. timestamp tail + 4 random.
@@ -2786,7 +2901,22 @@ const App = {
       <button type="button" class="btn btn-secondary btn-sm mb-3" onclick="App._addBillRow()"><i class="fas fa-plus"></i> Add Item Row</button>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-        <div><label class="block text-sm font-medium mb-1">Notes</label><textarea id="b-notes" class="input-field" rows="2">${editing ? this.escapeHtml(editing.notes || '') : ''}</textarea></div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Notes</label>
+          <textarea id="b-notes" class="input-field" rows="2">${editing ? this.escapeHtml(editing.notes || '') : ''}</textarea>
+          <div class="mt-3 bg-green-50 border border-green-200 rounded-lg p-3" title="Internal only — never shown on the bill">
+            <div class="text-xs text-green-800 font-semibold mb-1"><i class="fas fa-eye-slash mr-1"></i>Internal: Net Profit (will NOT appear on the bill)</div>
+            <div class="flex justify-between items-center">
+              <span class="text-xs text-gray-600">Total Mfg. Cost:</span>
+              <span id="b-mfg-total" class="font-semibold text-orange-700 text-sm">PKR 0.00</span>
+            </div>
+            <div class="flex justify-between items-center mt-1">
+              <span class="text-sm font-bold text-green-800">Net Profit:</span>
+              <span id="b-net-profit" class="font-extrabold text-green-700 text-base">PKR 0.00</span>
+            </div>
+            <p class="text-xs text-gray-500 mt-1">= Σ (Selling Rate − Mfg. Cost) × Qty. Auto-fed to Dashboard & Calendar.</p>
+          </div>
+        </div>
         <div class="space-y-2">
           <div class="flex justify-between items-center"><label class="text-sm">Subtotal:</label><span id="b-subtotal" class="font-bold">PKR 0.00</span></div>
           <div class="flex justify-between items-center"><label class="text-sm">Discount:</label>
@@ -2861,16 +2991,25 @@ const App = {
       this._billItems[i].product_id = inv.id;
       this._billItems[i].product_name = inv.name;
       this._billItems[i].rate = parseFloat(inv.rate) || 0;
+      this._billItems[i].manufacturing_cost = parseFloat(inv.manufacturing_cost) || 0;
       this._billItems[i].total = (parseFloat(this._billItems[i].quantity) || 0) * this._billItems[i].rate;
       this._renderBillItems();
       this._calcBill();
     } else {
       this._billItems[i].product_id = null;
       this._billItems[i].product_name = value;
+      this._billItems[i].manufacturing_cost = 0;
     }
   },
   _calcBill() {
     const subtotal = this._billItems.reduce((s, it) => s + ((parseFloat(it.quantity) || 0) * (parseFloat(it.rate) || 0)), 0);
+    const mfgTotal = this._billItems.reduce((s, it) => s + ((parseFloat(it.quantity) || 0) * (parseFloat(it.manufacturing_cost) || 0)), 0);
+    const netProfit = this._billItems.reduce((s, it) => {
+      const q = parseFloat(it.quantity) || 0;
+      const r = parseFloat(it.rate) || 0;
+      const m = parseFloat(it.manufacturing_cost) || 0;
+      return s + (r - m) * q;
+    }, 0);
     const discount = parseFloat(document.getElementById('b-discount')?.value) || 0;
     const taxPct = parseFloat(document.getElementById('b-tax')?.value) || 0;
     const taxable = subtotal - discount;
@@ -2881,9 +3020,16 @@ const App = {
     const subEl = document.getElementById('b-subtotal');
     const totEl = document.getElementById('b-total');
     const dueEl = document.getElementById('b-due');
+    const mfgEl = document.getElementById('b-mfg-total');
+    const npEl = document.getElementById('b-net-profit');
     if (subEl) subEl.textContent = 'PKR ' + this.fmt(subtotal);
     if (totEl) totEl.textContent = 'PKR ' + this.fmt(total);
     if (dueEl) dueEl.textContent = 'PKR ' + this.fmt(due);
+    if (mfgEl) mfgEl.textContent = 'PKR ' + this.fmt(mfgTotal);
+    if (npEl) {
+      npEl.textContent = 'PKR ' + this.fmt(netProfit);
+      npEl.className = 'font-extrabold text-base ' + (netProfit >= 0 ? 'text-green-700' : 'text-red-700');
+    }
   },
 
   async _saveBill(billId, alsoPrint) {
@@ -2914,6 +3060,7 @@ const App = {
       items: this._billItems.map(it => ({
         product_id: it.product_id || null, product_name: it.product_name || '',
         quantity: parseFloat(it.quantity) || 0, rate: parseFloat(it.rate) || 0,
+        manufacturing_cost: parseFloat(it.manufacturing_cost) || 0,
         total: (parseFloat(it.quantity) || 0) * (parseFloat(it.rate) || 0)
       }))
     };
@@ -2961,8 +3108,10 @@ const App = {
           <div class="invoice-header">
             <div class="company-block">
               <h1>${this.escapeHtml(b.company_name || 'Two Star Industries')}</h1>
-              ${b.bill_address ? `<p>${this.escapeHtml(b.bill_address)}</p>` : ''}
+              ${b.bill_address ? `<p><i class="fas fa-map-marker-alt mr-1"></i>${this.escapeHtml(b.bill_address)}</p>` : ''}
               ${b.bill_phone ? `<p><i class="fas fa-phone mr-1"></i>${this.escapeHtml(b.bill_phone)}</p>` : ''}
+              ${b.bill_email ? `<p><i class="fas fa-envelope mr-1"></i>${this.escapeHtml(b.bill_email)}</p>` : ''}
+              ${b.bill_website ? `<p><i class="fas fa-globe mr-1"></i>${this.escapeHtml(b.bill_website)}</p>` : ''}
               <h2 style="margin-top:10px; font-size: 1.3rem; color: #475569;">INVOICE</h2>
             </div>
             <div class="logo-block">${logoHtml}</div>
@@ -3054,9 +3203,21 @@ const App = {
                 <p class="text-xs text-gray-500 mt-1">Logo appears on sidebar, login page, and printed bills.</p>
               </div>
 
-              <div><label class="block text-sm font-medium mb-1">Bill Address</label><input id="br-addr" type="text" class="input-field" value="${this.escapeAttr(b.bill_address)}"></div>
-              <div><label class="block text-sm font-medium mb-1">Bill Phone</label><input id="br-phone" type="text" class="input-field" value="${this.escapeAttr(b.bill_phone)}"></div>
-              <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Bill Footer</label><input id="br-footer" type="text" class="input-field" value="${this.escapeAttr(b.bill_footer)}"></div>
+              <div class="md:col-span-2 bg-purple-50 border border-purple-200 rounded-lg p-3">
+                <label class="block text-sm font-bold mb-2 text-purple-900"><i class="fas fa-file-invoice mr-2"></i>Bill / Invoice Template — Contact Details</label>
+                <p class="text-xs text-purple-700 mb-3">These fields appear at the top of every printed bill. Leave any blank to hide it from the bill.</p>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div><label class="block text-sm font-medium mb-1"><i class="fas fa-phone text-blue-500 mr-1"></i>Number</label>
+                    <input id="br-phone" type="text" class="input-field" value="${this.escapeAttr(b.bill_phone)}" placeholder="e.g. +92 300 1234567"></div>
+                  <div><label class="block text-sm font-medium mb-1"><i class="fas fa-envelope text-red-500 mr-1"></i>Gmail / Email</label>
+                    <input id="br-email" type="email" class="input-field" value="${this.escapeAttr(b.bill_email || '')}" placeholder="e.g. yourbusiness@gmail.com"></div>
+                  <div><label class="block text-sm font-medium mb-1"><i class="fas fa-globe text-green-500 mr-1"></i>Website</label>
+                    <input id="br-website" type="text" class="input-field" value="${this.escapeAttr(b.bill_website || '')}" placeholder="e.g. www.yourbusiness.com"></div>
+                  <div><label class="block text-sm font-medium mb-1"><i class="fas fa-map-marker-alt text-orange-500 mr-1"></i>Address</label>
+                    <input id="br-addr" type="text" class="input-field" value="${this.escapeAttr(b.bill_address)}" placeholder="e.g. Plot 12, Industrial Area, City"></div>
+                </div>
+              </div>
+              <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Bill Footer Text</label><input id="br-footer" type="text" class="input-field" value="${this.escapeAttr(b.bill_footer)}" placeholder="Thank you for your business!"></div>
             </div>
             <h2 class="font-bold text-gray-800 text-lg pt-4 border-t"><i class="fas fa-paint-roller mr-2"></i>Theme Colors</h2>
             ${[
@@ -3175,6 +3336,8 @@ const App = {
       running_color: document.getElementById('br-running').value,
       bill_address: document.getElementById('br-addr').value,
       bill_phone: document.getElementById('br-phone').value,
+      bill_email: document.getElementById('br-email')?.value || '',
+      bill_website: document.getElementById('br-website')?.value || '',
       bill_footer: document.getElementById('br-footer').value
     };
     try {
@@ -3291,10 +3454,11 @@ const App = {
           if (info.bonus > 0)       { lines += `<div class="cal-day-line rec" title="Bonus">B: ${this.fmtCompact(info.bonus)}</div>`; hasData = true; }
           if (info.deduction > 0)   { lines += `<div class="cal-day-line exp" title="Deduction">D: ${this.fmtCompact(info.deduction)}</div>`; hasData = true; hasExpense = true; }
         } else {
-          if (info.received > 0)     { lines += `<div class="cal-day-line rec" title="Received">${this.fmtCompact(info.received)}</div>`; hasData = true; }
-          if (info.bills_count > 0)  { lines += `<div class="cal-day-line bills" title="Bills">${info.bills_count} bill${info.bills_count > 1 ? 's' : ''}</div>`; hasData = true; }
-          if (info.salary_paid > 0)  { lines += `<div class="cal-day-line sal" title="Salary Paid">Sal: ${this.fmtCompact(info.salary_paid)}</div>`; hasData = true; }
-          if (info.expenses > 0)     { lines += `<div class="cal-day-line exp" title="Expenses">Exp: ${this.fmtCompact(info.expenses)}</div>`; hasData = true; hasExpense = true; }
+          if (info.net_profit > 0)   { lines += `<div class="cal-day-line profit" title="Net Profit">₹+${this.fmtCompact(info.net_profit)}</div>`; hasData = true; }
+          else if (info.net_profit < 0) { lines += `<div class="cal-day-line exp" title="Net Loss">₹${this.fmtCompact(info.net_profit)}</div>`; hasData = true; hasExpense = true; }
+          if (info.received > 0)     { lines += `<div class="cal-day-line rec" title="Received">R: ${this.fmtCompact(info.received)}</div>`; hasData = true; }
+          if (info.bills_count > 0)  { lines += `<div class="cal-day-line bills" title="Bills">${info.bills_count}b</div>`; hasData = true; }
+          if (info.expenses > 0)     { lines += `<div class="cal-day-line exp" title="Expenses">E: ${this.fmtCompact(info.expenses)}</div>`; hasData = true; hasExpense = true; }
         }
       }
       const cls = `cal-cell ${hasData ? 'has-data' : ''} ${hasExpense ? 'has-expense' : ''} ${isToday ? 'today' : ''}`;
@@ -3309,13 +3473,14 @@ const App = {
          <div class="cal-total-card"><div class="lbl">Advance</div><div class="val amount-pending">PKR ${this.fmt(t.advance || 0)}</div></div>
          <div class="cal-total-card"><div class="lbl">Bonus</div><div class="val text-green-600">PKR ${this.fmt(t.bonus || 0)}</div></div>
          <div class="cal-total-card"><div class="lbl">Deduction</div><div class="val text-red-600">PKR ${this.fmt(t.deduction || 0)}</div></div>`
-      : `<div class="cal-total-card"><div class="lbl">Received</div><div class="val amount-received">PKR ${this.fmt(t.received || 0)}</div></div>
+      : `<div class="cal-total-card cal-profit-card"><div class="lbl"><i class="fas fa-chart-line mr-1"></i>Net Profit</div><div class="val ${(t.net_profit||0) >= 0 ? 'text-green-700' : 'text-red-700'}">PKR ${this.fmt(t.net_profit || 0)}</div></div>
+         <div class="cal-total-card"><div class="lbl">Received</div><div class="val amount-received">PKR ${this.fmt(t.received || 0)}</div></div>
          <div class="cal-total-card"><div class="lbl">Bills</div><div class="val text-purple-600">${t.bills_count || 0} (PKR ${this.fmt(t.bills_total || 0)})</div></div>
          <div class="cal-total-card"><div class="lbl">Salary Paid</div><div class="val text-blue-600">PKR ${this.fmt(t.salary_paid || 0)}</div></div>
          <div class="cal-total-card"><div class="lbl">Side Expenses</div><div class="val text-red-600">PKR ${this.fmt(t.expenses || 0)}</div></div>`;
 
     container.innerHTML = `
-      <div class="cal-wrap">
+      <div class="cal-wrap cal-compact">
         <div class="cal-header">
           <h2><i class="fas fa-calendar-days text-blue-500 mr-2"></i>${isEmployee ? 'Employee Calendar' : 'Activity Calendar'}</h2>
           <div class="cal-nav">
@@ -3370,7 +3535,9 @@ const App = {
           <div class="cal-detail-row"><span class="lbl"><i class="fas fa-gift text-green-500 mr-2"></i>Bonus</span><span class="val text-green-600">PKR ${this.fmt(info.bonus || 0)}</span></div>
           <div class="cal-detail-row"><span class="lbl"><i class="fas fa-minus-circle text-red-500 mr-2"></i>Deduction</span><span class="val text-red-600">PKR ${this.fmt(info.deduction || 0)}</span></div>`;
       } else {
+        const np = info.net_profit || 0;
         body = `
+          <div class="cal-detail-row" style="background:#ecfdf5; border-radius:6px;"><span class="lbl"><i class="fas fa-chart-line text-green-600 mr-2"></i><strong>Net Profit</strong></span><span class="val ${np >= 0 ? 'text-green-700' : 'text-red-700'}" style="font-size:1.05rem;">PKR ${this.fmt(np)}</span></div>
           <div class="cal-detail-row"><span class="lbl"><i class="fas fa-arrow-down text-green-500 mr-2"></i>Total Received</span><span class="val amount-received">PKR ${this.fmt(info.received || 0)}</span></div>
           <div class="cal-detail-row"><span class="lbl"><i class="fas fa-file-invoice text-purple-500 mr-2"></i>Bills Created</span><span class="val text-purple-600">${info.bills_count || 0} (PKR ${this.fmt(info.bills_total || 0)})</span></div>
           <div class="cal-detail-row"><span class="lbl"><i class="fas fa-money-check-alt text-blue-500 mr-2"></i>Salary Paid</span><span class="val text-blue-600">PKR ${this.fmt(info.salary_paid || 0)}</span></div>

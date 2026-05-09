@@ -115,6 +115,7 @@ app.put('/api/branding', requireAuth, async (c) => {
       primary_color = ?, accent_color = ?,
       received_color = ?, pending_color = ?, running_color = ?,
       bill_address = ?, bill_phone = ?, bill_footer = ?,
+      bill_website = ?, bill_email = ?,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = 1
   `).bind(
@@ -128,7 +129,9 @@ app.put('/api/branding', requireAuth, async (c) => {
     b.running_color || '#10b981',
     b.bill_address || '',
     b.bill_phone || '',
-    b.bill_footer || ''
+    b.bill_footer || '',
+    b.bill_website || '',
+    b.bill_email || ''
   ).run()
   return c.json({ success: true })
 })
@@ -369,20 +372,20 @@ app.get('/api/inventory', requireAuth, async (c) => {
 })
 
 app.post('/api/inventory', requireAuth, async (c) => {
-  const { name, sku, unit, rate, quantity, category, notes } = await c.req.json()
+  const { name, sku, unit, rate, quantity, category, notes, manufacturing_cost } = await c.req.json()
   if (!name) return c.json({ error: 'Name required' }, 400)
   const result = await c.env.DB.prepare(
-    'INSERT INTO inventory (name, sku, unit, rate, quantity, category, notes) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).bind(name, sku || '', unit || 'pcs', parseFloat(rate) || 0, parseFloat(quantity) || 0, category || '', notes || '').run()
+    'INSERT INTO inventory (name, sku, unit, rate, quantity, category, notes, manufacturing_cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).bind(name, sku || '', unit || 'pcs', parseFloat(rate) || 0, parseFloat(quantity) || 0, category || '', notes || '', parseFloat(manufacturing_cost) || 0).run()
   return c.json({ id: result.meta.last_row_id })
 })
 
 app.put('/api/inventory/:id', requireAuth, async (c) => {
   const id = c.req.param('id')
-  const { name, sku, unit, rate, quantity, category, notes } = await c.req.json()
+  const { name, sku, unit, rate, quantity, category, notes, manufacturing_cost } = await c.req.json()
   await c.env.DB.prepare(
-    'UPDATE inventory SET name = ?, sku = ?, unit = ?, rate = ?, quantity = ?, category = ?, notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-  ).bind(name, sku || '', unit || 'pcs', parseFloat(rate) || 0, parseFloat(quantity) || 0, category || '', notes || '', id).run()
+    'UPDATE inventory SET name = ?, sku = ?, unit = ?, rate = ?, quantity = ?, category = ?, notes = ?, manufacturing_cost = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+  ).bind(name, sku || '', unit || 'pcs', parseFloat(rate) || 0, parseFloat(quantity) || 0, category || '', notes || '', parseFloat(manufacturing_cost) || 0, id).run()
   return c.json({ success: true })
 })
 
@@ -449,6 +452,25 @@ app.get('/api/bills/:id', requireAuth, async (c) => {
   return c.json({ bill, items: items.results })
 })
 
+// Compute and persist net_profit for a bill: sum((rate - mfg_cost) * qty) for each item
+// Manufacturing cost per item is snapshotted from the inventory product at sale time.
+async function computeAndSaveBillProfit(env: any, billId: number, items: any[]): Promise<number> {
+  let totalProfit = 0
+  for (const it of (items || [])) {
+    const qty = parseFloat(it.quantity) || 0
+    const rate = parseFloat(it.rate) || 0
+    let mfgCost = parseFloat(it.manufacturing_cost) || 0
+    // If client did not send mfg_cost, look it up from inventory
+    if ((!mfgCost || mfgCost <= 0) && it.product_id) {
+      const inv = await env.DB.prepare('SELECT manufacturing_cost FROM inventory WHERE id = ?').bind(it.product_id).first() as any
+      if (inv && inv.manufacturing_cost) mfgCost = parseFloat(inv.manufacturing_cost) || 0
+    }
+    totalProfit += (rate - mfgCost) * qty
+  }
+  await env.DB.prepare('UPDATE bills SET net_profit = ? WHERE id = ?').bind(totalProfit, billId).run()
+  return totalProfit
+}
+
 app.post('/api/bills', requireAuth, async (c) => {
   const b = await c.req.json()
   const billNo = (b.bill_no || '').trim() || generateUniqueBillNo()
@@ -470,17 +492,26 @@ app.post('/api/bills', requireAuth, async (c) => {
   if (Array.isArray(b.items)) {
     for (let i = 0; i < b.items.length; i++) {
       const it = b.items[i]
+      // Snapshot manufacturing_cost from inventory if not explicitly provided
+      let mfgCost = parseFloat(it.manufacturing_cost) || 0
+      if ((!mfgCost || mfgCost <= 0) && it.product_id) {
+        const inv = await c.env.DB.prepare('SELECT manufacturing_cost FROM inventory WHERE id = ?').bind(it.product_id).first() as any
+        if (inv && inv.manufacturing_cost) mfgCost = parseFloat(inv.manufacturing_cost) || 0
+      }
       await c.env.DB.prepare(`
-        INSERT INTO bill_items (bill_id, product_id, product_name, quantity, rate, total, sort_order)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO bill_items (bill_id, product_id, product_name, quantity, rate, total, sort_order, manufacturing_cost)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(billId, it.product_id || null, it.product_name || '',
-              parseFloat(it.quantity) || 0, parseFloat(it.rate) || 0, parseFloat(it.total) || 0, i).run()
+              parseFloat(it.quantity) || 0, parseFloat(it.rate) || 0, parseFloat(it.total) || 0, i, mfgCost).run()
       if (it.product_id && parseFloat(it.quantity) > 0) {
         await c.env.DB.prepare('UPDATE inventory SET quantity = quantity - ? WHERE id = ?')
           .bind(parseFloat(it.quantity), it.product_id).run()
       }
     }
   }
+
+  // Compute & persist net_profit for this bill (sum of (rate - mfg_cost) * qty)
+  await computeAndSaveBillProfit(c.env, billId, b.items || [])
 
   // Auto-link to client ledger
   await syncBillLedger(c.env, billId, { ...b, bill_no: billNo, bill_date: billDate })
@@ -524,16 +555,25 @@ app.put('/api/bills/:id', requireAuth, async (c) => {
   if (Array.isArray(b.items)) {
     for (let i = 0; i < b.items.length; i++) {
       const it = b.items[i]
+      // Snapshot mfg_cost from inventory if not explicitly provided
+      let mfgCost = parseFloat(it.manufacturing_cost) || 0
+      if ((!mfgCost || mfgCost <= 0) && it.product_id) {
+        const inv = await c.env.DB.prepare('SELECT manufacturing_cost FROM inventory WHERE id = ?').bind(it.product_id).first() as any
+        if (inv && inv.manufacturing_cost) mfgCost = parseFloat(inv.manufacturing_cost) || 0
+      }
       await c.env.DB.prepare(`
-        INSERT INTO bill_items (bill_id, product_id, product_name, quantity, rate, total, sort_order)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO bill_items (bill_id, product_id, product_name, quantity, rate, total, sort_order, manufacturing_cost)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(id, it.product_id || null, it.product_name || '',
-              parseFloat(it.quantity) || 0, parseFloat(it.rate) || 0, parseFloat(it.total) || 0, i).run()
+              parseFloat(it.quantity) || 0, parseFloat(it.rate) || 0, parseFloat(it.total) || 0, i, mfgCost).run()
       if (it.product_id && parseFloat(it.quantity) > 0) {
         await c.env.DB.prepare('UPDATE inventory SET quantity = quantity - ? WHERE id = ?').bind(parseFloat(it.quantity), it.product_id).run()
       }
     }
   }
+
+  // Recompute & persist net_profit
+  await computeAndSaveBillProfit(c.env, id, b.items || [])
 
   await syncBillLedger(c.env, id, { ...b, bill_no: billNoT || b.bill_no })
 
@@ -981,7 +1021,7 @@ app.delete('/api/custom-sections/rows/:rowId', requireAuth, async (c) => {
 app.get('/api/dashboard', requireAuth, async (c) => {
   const [totals, perFolder, topPending, recent, statuses, clientCount, folderCount, billStats,
          empCount, empPaid, empAdvance, expenseStats, rawStats, customSecCount,
-         rawList, empList, expenseList] = await Promise.all([
+         rawList, empList, expenseList, profitStats, productList, invMfgList] = await Promise.all([
     c.env.DB.prepare(`
       SELECT COALESCE(SUM(amount_received),0) as total_received,
              COALESCE(SUM(amount_pending),0) as total_pending,
@@ -1046,6 +1086,22 @@ app.get('/api/dashboard', requireAuth, async (c) => {
     c.env.DB.prepare(`
       SELECT id, entry_date, category, description, amount, paid_to
       FROM side_expenses ORDER BY entry_date DESC, id DESC LIMIT 50
+    `).all(),
+    // Net profit stats (sum of bills.net_profit)
+    c.env.DB.prepare(`
+      SELECT
+        COALESCE(SUM(net_profit), 0) as total_profit,
+        COALESCE(SUM(CASE WHEN bill_date >= date('now','start of month') THEN net_profit ELSE 0 END), 0) as profit_this_month,
+        COALESCE(SUM(CASE WHEN bill_date = date('now') THEN net_profit ELSE 0 END), 0) as profit_today
+      FROM bills
+    `).first(),
+    // Products / Manufacturing summary
+    c.env.DB.prepare(`SELECT id, name, unit, sale_rate FROM products ORDER BY name ASC`).all(),
+    // Inventory items with manufacturing cost (used for "Products / Manufacturing" summary on dashboard)
+    c.env.DB.prepare(`
+      SELECT id, name, sku, unit, rate, quantity, manufacturing_cost, category
+      FROM inventory
+      ORDER BY name ASC
     `).all()
   ])
 
@@ -1067,7 +1123,10 @@ app.get('/api/dashboard', requireAuth, async (c) => {
     rawList: rawList.results,
     empList: empList.results,
     expenseList: expenseList.results,
-    empPaidStats: empPaid
+    empPaidStats: empPaid,
+    profitStats,
+    productList: productList.results,
+    invMfgList: invMfgList.results
   })
 })
 
@@ -1114,7 +1173,7 @@ app.get('/api/calendar', requireAuth, async (c) => {
     return c.json({ month, daily: Object.values(daily), totals, type: 'employee' })
   }
 
-  // Global daily: received, billed, expenses, salary paid
+  // Global daily: received, billed, expenses, salary paid, net profit
   const [txDaily, billDaily, expenseDaily, empDaily] = await Promise.all([
     c.env.DB.prepare(`
       SELECT entry_date,
@@ -1129,7 +1188,8 @@ app.get('/api/calendar', requireAuth, async (c) => {
       SELECT bill_date,
              COUNT(*) as bills_count,
              COALESCE(SUM(total),0) as bills_total,
-             COALESCE(SUM(paid),0) as bills_paid
+             COALESCE(SUM(paid),0) as bills_paid,
+             COALESCE(SUM(net_profit),0) as net_profit
       FROM bills
       WHERE bill_date >= ? AND bill_date <= ?
       GROUP BY bill_date
@@ -1155,7 +1215,7 @@ app.get('/api/calendar', requireAuth, async (c) => {
   const ensure = (d: string) => {
     if (!daily[d]) daily[d] = { date: d, received: 0, pending: 0, tx_count: 0,
                                 bills_count: 0, bills_total: 0, bills_paid: 0,
-                                expenses: 0, salary_paid: 0, advance: 0 }
+                                expenses: 0, salary_paid: 0, advance: 0, net_profit: 0 }
     return daily[d]
   }
   for (const r of (txDaily.results as any[])) {
@@ -1169,6 +1229,7 @@ app.get('/api/calendar', requireAuth, async (c) => {
     d.bills_count = r.bills_count || 0
     d.bills_total = parseFloat(r.bills_total) || 0
     d.bills_paid = parseFloat(r.bills_paid) || 0
+    d.net_profit = parseFloat(r.net_profit) || 0
   }
   for (const r of (expenseDaily.results as any[])) {
     const d = ensure(r.entry_date)
@@ -1186,8 +1247,9 @@ app.get('/api/calendar', requireAuth, async (c) => {
     bills_total: s.bills_total + d.bills_total,
     expenses: s.expenses + d.expenses,
     salary_paid: s.salary_paid + d.salary_paid,
-    advance: s.advance + d.advance
-  }), { received: 0, bills_count: 0, bills_total: 0, expenses: 0, salary_paid: 0, advance: 0 })
+    advance: s.advance + d.advance,
+    net_profit: s.net_profit + d.net_profit
+  }), { received: 0, bills_count: 0, bills_total: 0, expenses: 0, salary_paid: 0, advance: 0, net_profit: 0 })
   return c.json({ month, daily: list, totals, type: 'global' })
 })
 
