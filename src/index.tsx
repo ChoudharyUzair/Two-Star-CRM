@@ -1313,7 +1313,9 @@ app.get('/api/dashboard', requireAuth, async (c) => {
   const [totals, perFolder, topPending, recent, statuses, clientCount, folderCount, billStats,
          empCount, empPaid, empAdvance, expenseStats, rawStats, customSecCount,
          rawList, empList, expenseList, profitStats, productList, invMfgList,
-         supplierStats, mfgProducts, mfgIngredients, builtSoldStats] = await Promise.all([
+         supplierStats, mfgProducts, mfgIngredients, builtSoldStats,
+         salesTodayStats, salesMonthStats, salesAllTimeStats,
+         salesTodayProducts, salesMonthProducts, salesAllTimeProducts] = await Promise.all([
     c.env.DB.prepare(`
       SELECT COALESCE(SUM(amount_received),0) as total_received,
              COALESCE(SUM(amount_pending),0) as total_pending,
@@ -1422,6 +1424,65 @@ app.get('/api/dashboard', requireAuth, async (c) => {
       FROM bill_items
       WHERE product_name IS NOT NULL AND product_name != ''
       GROUP BY product_name
+    `).all(),
+    // Sales totals — today
+    c.env.DB.prepare(`
+      SELECT COALESCE(SUM(bi.quantity), 0) as units_sold,
+             COALESCE(SUM(bi.total), 0) as total_revenue,
+             COUNT(DISTINCT b.id) as bill_count
+      FROM bill_items bi
+      LEFT JOIN bills b ON b.id = bi.bill_id
+      WHERE b.bill_date = date('now')
+    `).first(),
+    // Sales totals — this month
+    c.env.DB.prepare(`
+      SELECT COALESCE(SUM(bi.quantity), 0) as units_sold,
+             COALESCE(SUM(bi.total), 0) as total_revenue,
+             COUNT(DISTINCT b.id) as bill_count
+      FROM bill_items bi
+      LEFT JOIN bills b ON b.id = bi.bill_id
+      WHERE b.bill_date >= date('now','start of month')
+    `).first(),
+    // Sales totals — all time
+    c.env.DB.prepare(`
+      SELECT COALESCE(SUM(bi.quantity), 0) as units_sold,
+             COALESCE(SUM(bi.total), 0) as total_revenue,
+             COUNT(DISTINCT b.id) as bill_count
+      FROM bill_items bi
+      LEFT JOIN bills b ON b.id = bi.bill_id
+    `).first(),
+    // Per-product sales — today
+    c.env.DB.prepare(`
+      SELECT bi.product_name,
+             COALESCE(SUM(bi.quantity), 0) as units_sold,
+             COALESCE(SUM(bi.total), 0) as total_revenue
+      FROM bill_items bi
+      LEFT JOIN bills b ON b.id = bi.bill_id
+      WHERE b.bill_date = date('now') AND bi.product_name IS NOT NULL AND bi.product_name != ''
+      GROUP BY bi.product_name
+      ORDER BY units_sold DESC
+    `).all(),
+    // Per-product sales — this month
+    c.env.DB.prepare(`
+      SELECT bi.product_name,
+             COALESCE(SUM(bi.quantity), 0) as units_sold,
+             COALESCE(SUM(bi.total), 0) as total_revenue
+      FROM bill_items bi
+      LEFT JOIN bills b ON b.id = bi.bill_id
+      WHERE b.bill_date >= date('now','start of month') AND bi.product_name IS NOT NULL AND bi.product_name != ''
+      GROUP BY bi.product_name
+      ORDER BY units_sold DESC
+    `).all(),
+    // Per-product sales — all time
+    c.env.DB.prepare(`
+      SELECT bi.product_name,
+             COALESCE(SUM(bi.quantity), 0) as units_sold,
+             COALESCE(SUM(bi.total), 0) as total_revenue
+      FROM bill_items bi
+      LEFT JOIN bills b ON b.id = bi.bill_id
+      WHERE bi.product_name IS NOT NULL AND bi.product_name != ''
+      GROUP BY bi.product_name
+      ORDER BY units_sold DESC
     `).all()
   ])
 
@@ -1450,7 +1511,13 @@ app.get('/api/dashboard', requireAuth, async (c) => {
     supplierStats,
     mfgProducts: mfgProducts.results,
     mfgIngredients: mfgIngredients.results,
-    builtSoldStats: builtSoldStats.results
+    builtSoldStats: builtSoldStats.results,
+    salesTodayStats,
+    salesMonthStats,
+    salesAllTimeStats,
+    salesTodayProducts: salesTodayProducts.results,
+    salesMonthProducts: salesMonthProducts.results,
+    salesAllTimeProducts: salesAllTimeProducts.results
   })
 })
 

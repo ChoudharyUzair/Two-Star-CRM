@@ -957,7 +957,9 @@ const App = {
   renderDashboard(data) {
     const { totals, perFolder, topPending, recent, statuses, clientCount, folderCount, billStats,
             empCount, empPaid, empAdvance, expenseStats, rawStats, customSecCount,
-            rawList, empList, expenseList, empPaidStats, profitStats, productList, invMfgList } = data;
+            rawList, empList, expenseList, empPaidStats, profitStats, productList, invMfgList,
+            salesTodayStats, salesMonthStats, salesAllTimeStats,
+            salesTodayProducts, salesMonthProducts, salesAllTimeProducts } = data;
     const totalProfit = profitStats?.total_profit || 0;
     const profitMonth = profitStats?.profit_this_month || 0;
     const profitToday = profitStats?.profit_today || 0;
@@ -1078,6 +1080,121 @@ const App = {
               </tbody></table></div>`}
         </div>
 
+        <!-- Inventory Summary -->
+        <div class="bg-white rounded-xl shadow-sm p-5">
+          <h2 class="font-bold text-gray-800 mb-3 flex items-center justify-between">
+            <span><i class="fas fa-boxes text-orange-500 mr-2"></i>Inventory Summary</span>
+            <button onclick="App.showInventory()" class="text-xs text-blue-600 hover:underline font-normal">View All <i class="fas fa-arrow-right ml-1"></i></button>
+          </h2>
+          ${(!invMfg || invMfg.length === 0) ? '<p class="text-gray-500 text-center py-4">No inventory products yet. <a href="#" onclick="App.showInventory(); return false;" class="text-blue-600 hover:underline">Add a product →</a></p>' : `
+            <div class="overflow-x-auto"><table class="w-full text-sm">
+              <thead class="bg-gray-50"><tr>
+                <th class="text-left p-3">Product</th>
+                <th class="text-left p-3">SKU</th>
+                <th class="text-left p-3">Category</th>
+                <th class="text-right p-3" title="Quantity available in stock">Quantity</th>
+                <th class="text-right p-3" title="Manufacturing / purchase cost per unit">Cost</th>
+                <th class="text-right p-3" title="Selling / Sale price per unit">Sale Price</th>
+                <th class="text-right p-3" title="Total units sold to customers">Sold</th>
+              </tr></thead><tbody>
+                ${invMfg.map(it => {
+                  const qty = parseFloat(it.quantity) || 0;
+                  const cost = parseFloat(it.manufacturing_cost) || 0;
+                  const rate = parseFloat(it.rate) || 0;
+                  const sold = soldMap[it.name] || {};
+                  const unitsSold = parseFloat(sold.units_sold) || 0;
+                  const lowStock = qty <= 5;
+                  return `
+                  <tr class="border-t hover:bg-gray-50 cursor-pointer" onclick="App.showInventory()">
+                    <td class="p-3"><i class="fas fa-box text-orange-500 mr-2"></i><strong>${this.escapeHtml(it.name)}</strong>
+                      <div class="text-xs text-gray-400">per ${this.escapeHtml(it.unit || 'pcs')}</div></td>
+                    <td class="p-3 text-gray-600">${this.escapeHtml(it.sku || '-')}</td>
+                    <td class="p-3 text-gray-600">${this.escapeHtml(it.category || '-')}</td>
+                    <td class="text-right p-3 ${lowStock ? 'text-red-600 font-semibold' : 'text-green-700 font-semibold'}">${this.fmt(qty)} <span class="text-xs text-gray-400">${this.escapeHtml(it.unit || '')}</span></td>
+                    <td class="text-right p-3 text-orange-600">${cost > 0 ? 'PKR ' + this.fmt(cost) : '<span class="text-gray-400">—</span>'}</td>
+                    <td class="text-right p-3 font-medium">PKR ${this.fmt(rate)}</td>
+                    <td class="text-right p-3 text-blue-700 font-semibold">${this.fmt(unitsSold)}</td>
+                  </tr>`;
+                }).join('')}
+              </tbody></table></div>
+          `}
+        </div>
+
+        <!-- Sales Summary (Daily / Monthly / All-Time) -->
+        <div class="bg-white rounded-xl shadow-sm p-5">
+          <h2 class="font-bold text-gray-800 mb-3 flex items-center justify-between">
+            <span><i class="fas fa-chart-bar text-green-500 mr-2"></i>Sales Summary</span>
+            <button onclick="App.showBills && App.showBills()" class="text-xs text-blue-600 hover:underline font-normal">View Bills <i class="fas fa-arrow-right ml-1"></i></button>
+          </h2>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <!-- Today -->
+            <div class="rounded-lg border border-blue-200 bg-blue-50 p-4">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-sm font-semibold text-blue-800"><i class="fas fa-sun mr-1"></i>Today</span>
+                <span class="text-xs text-blue-700">${(salesTodayStats?.bill_count) || 0} bill(s)</span>
+              </div>
+              <p class="text-xs text-blue-700">Units Sold</p>
+              <p class="text-2xl font-extrabold text-blue-700">${this.fmt(salesTodayStats?.units_sold || 0)}</p>
+              <p class="text-xs text-blue-700 mt-2">Revenue</p>
+              <p class="text-lg font-bold text-blue-800">PKR ${this.fmt(salesTodayStats?.total_revenue || 0)}</p>
+              <div class="mt-3 pt-3 border-t border-blue-200">
+                <p class="text-xs text-blue-800 font-semibold mb-1">Products Sold:</p>
+                ${(!salesTodayProducts || salesTodayProducts.length === 0) ? '<p class="text-xs text-gray-500 italic">No sales today</p>' :
+                  salesTodayProducts.slice(0, 8).map(p => `
+                    <div class="flex justify-between text-xs py-0.5">
+                      <span class="text-gray-700 truncate" title="${this.escapeAttr(p.product_name || '')}">${this.escapeHtml(p.product_name || '-')}</span>
+                      <span class="font-semibold text-blue-700">${this.fmt(p.units_sold)}</span>
+                    </div>`).join('')}
+                ${salesTodayProducts && salesTodayProducts.length > 8 ? `<p class="text-xs text-gray-400 mt-1">+${salesTodayProducts.length - 8} more</p>` : ''}
+              </div>
+            </div>
+
+            <!-- This Month -->
+            <div class="rounded-lg border border-teal-200 bg-teal-50 p-4">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-sm font-semibold text-teal-800"><i class="fas fa-calendar-alt mr-1"></i>This Month</span>
+                <span class="text-xs text-teal-700">${(salesMonthStats?.bill_count) || 0} bill(s)</span>
+              </div>
+              <p class="text-xs text-teal-700">Units Sold</p>
+              <p class="text-2xl font-extrabold text-teal-700">${this.fmt(salesMonthStats?.units_sold || 0)}</p>
+              <p class="text-xs text-teal-700 mt-2">Revenue</p>
+              <p class="text-lg font-bold text-teal-800">PKR ${this.fmt(salesMonthStats?.total_revenue || 0)}</p>
+              <div class="mt-3 pt-3 border-t border-teal-200">
+                <p class="text-xs text-teal-800 font-semibold mb-1">Products Sold:</p>
+                ${(!salesMonthProducts || salesMonthProducts.length === 0) ? '<p class="text-xs text-gray-500 italic">No sales this month</p>' :
+                  salesMonthProducts.slice(0, 8).map(p => `
+                    <div class="flex justify-between text-xs py-0.5">
+                      <span class="text-gray-700 truncate" title="${this.escapeAttr(p.product_name || '')}">${this.escapeHtml(p.product_name || '-')}</span>
+                      <span class="font-semibold text-teal-700">${this.fmt(p.units_sold)}</span>
+                    </div>`).join('')}
+                ${salesMonthProducts && salesMonthProducts.length > 8 ? `<p class="text-xs text-gray-400 mt-1">+${salesMonthProducts.length - 8} more</p>` : ''}
+              </div>
+            </div>
+
+            <!-- All Time -->
+            <div class="rounded-lg border border-green-200 bg-green-50 p-4">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-sm font-semibold text-green-800"><i class="fas fa-infinity mr-1"></i>All Time</span>
+                <span class="text-xs text-green-700">${(salesAllTimeStats?.bill_count) || 0} bill(s)</span>
+              </div>
+              <p class="text-xs text-green-700">Units Sold</p>
+              <p class="text-2xl font-extrabold text-green-700">${this.fmt(salesAllTimeStats?.units_sold || 0)}</p>
+              <p class="text-xs text-green-700 mt-2">Revenue</p>
+              <p class="text-lg font-bold text-green-800">PKR ${this.fmt(salesAllTimeStats?.total_revenue || 0)}</p>
+              <div class="mt-3 pt-3 border-t border-green-200">
+                <p class="text-xs text-green-800 font-semibold mb-1">Products Sold:</p>
+                ${(!salesAllTimeProducts || salesAllTimeProducts.length === 0) ? '<p class="text-xs text-gray-500 italic">No sales yet</p>' :
+                  salesAllTimeProducts.slice(0, 8).map(p => `
+                    <div class="flex justify-between text-xs py-0.5">
+                      <span class="text-gray-700 truncate" title="${this.escapeAttr(p.product_name || '')}">${this.escapeHtml(p.product_name || '-')}</span>
+                      <span class="font-semibold text-green-700">${this.fmt(p.units_sold)}</span>
+                    </div>`).join('')}
+                ${salesAllTimeProducts && salesAllTimeProducts.length > 8 ? `<p class="text-xs text-gray-400 mt-1">+${salesAllTimeProducts.length - 8} more</p>` : ''}
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Manufacturing Summary -->
         <div class="bg-white rounded-xl shadow-sm p-5">
           <h2 class="font-bold text-gray-800 mb-3 flex items-center justify-between">
@@ -1093,21 +1210,11 @@ const App = {
                 <th class="text-left p-3">Product</th>
                 <th class="text-left p-3" title="Raw materials needed per unit">Recipe (per unit)</th>
                 <th class="text-right p-3" title="Mfg cost = sum of (raw rate × required qty)">Cost / unit</th>
-                <th class="text-right p-3" title="Selling price">Sale Rate</th>
                 <th class="text-right p-3" title="Units that can be built from current raw stock">Buildable</th>
-                <th class="text-right p-3" title="Units already sold to customers">Sold</th>
-                <th class="text-right p-3" title="Profit from units already sold">Profit Earned</th>
               </tr></thead><tbody>
                 ${mfgProducts.slice(0, 15).map(p => {
                   const r = productRecipes[p.id] || { ingredients: [], cost_per_unit: 0, buildable: 0 };
                   const cost = r.cost_per_unit;
-                  const sale = parseFloat(p.sale_rate) || 0;
-                  const margin = sale - cost;
-                  const sold = soldMap[p.name] || {};
-                  const unitsSold = parseFloat(sold.units_sold) || 0;
-                  const revenue = parseFloat(sold.total_revenue) || 0;
-                  const mfgCostTotal = parseFloat(sold.total_mfg_cost) || 0;
-                  const profitEarned = revenue - mfgCostTotal;
                   const recipeText = r.ingredients.length === 0
                     ? '<span class="text-gray-400 italic">No recipe set</span>'
                     : r.ingredients.map(ing => `<span class="inline-block bg-orange-50 text-orange-800 text-xs px-2 py-0.5 rounded mr-1 mb-1">${this.escapeHtml(ing.raw_name || '?')} × ${this.fmt(ing.quantity_required)} ${this.escapeHtml(ing.unit || ing.raw_unit || '')}</span>`).join('');
@@ -1118,16 +1225,9 @@ const App = {
                       <div class="text-xs text-gray-400">per ${this.escapeHtml(p.unit || 'unit')}</div></td>
                     <td class="p-3 align-top">${recipeText}</td>
                     <td class="text-right p-3 align-top text-orange-600">${cost > 0 ? 'PKR ' + this.fmt(cost) : '<span class="text-gray-400">—</span>'}</td>
-                    <td class="text-right p-3 align-top font-medium">PKR ${this.fmt(sale)}</td>
                     <td class="text-right p-3 align-top ${r.buildable > 0 ? 'text-green-700 font-semibold' : 'text-red-500'}">${this.fmt(r.buildable)}</td>
-                    <td class="text-right p-3 align-top">${this.fmt(unitsSold)}</td>
-                    <td class="text-right p-3 align-top ${profitEarned >= 0 ? 'text-green-700' : 'text-red-700'} font-bold">PKR ${this.fmt(profitEarned)}</td>
                   </tr>`;
                 }).join('')}
-                <tr class="border-t-2 bg-gray-50 font-bold">
-                  <td class="p-3" colspan="6">Total Net Profit Earned (from completed bills)</td>
-                  <td class="text-right p-3 text-green-700">PKR ${this.fmt(totalProfit)}</td>
-                </tr>
               </tbody></table></div>
             ${mfgProducts.length > 15 ? `<p class="text-xs text-gray-400 text-center mt-2">Showing 15 of ${mfgProducts.length} products</p>` : ''}
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 text-xs">

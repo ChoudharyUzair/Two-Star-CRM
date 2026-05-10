@@ -6,7 +6,17 @@
 - **Goal**: Complete business CRM for Two Star Industries — manage clients, ledgers, inventory, raw materials, manufacturing recipes, employees, side expenses, and bills with auto Net Profit tracking.
 - **Stack**: Hono (TypeScript) + Cloudflare Pages + Cloudflare D1 (SQLite) + TailwindCSS + Vanilla JS frontend
 
-## What's New (latest update — 2026-05-09)
+## What's New (latest update — 2026-05-10)
+
+### Dashboard Enhancements
+- **New Inventory Summary section** on the Dashboard — shows for each product: Quantity in stock, Cost (Mfg.), Sale Price, and Sold units (clean overview, no extra columns).
+- **New Sales Summary section** on the Dashboard — three side-by-side cards showing how many products were sold:
+  - **Today** — units sold, revenue, bill count, and per-product breakdown
+  - **This Month** — units sold, revenue, bill count, and per-product breakdown
+  - **All Time** — units sold, revenue, bill count, and per-product breakdown
+- **Manufacturing Summary cleaned up** — removed `Sale Rate`, `Sold`, and `Profit Earned` columns. Now only shows Product, Recipe (per unit), Cost / unit, and Buildable for a focused production view.
+
+## What's New (previous update — 2026-05-09)
 
 ### 1. Multi-Supplier Raw Materials
 - A single raw material can now be sourced from **multiple suppliers** (each batch tracked separately in the new `raw_material_purchases` table).
