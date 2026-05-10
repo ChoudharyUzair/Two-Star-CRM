@@ -1020,25 +1020,6 @@ const App = {
             <p class="text-xl font-bold text-blue-600 mt-1">${clientCount} / ${folderCount}</p></div>
         </div>
 
-        <!-- Net Profit Highlight Card -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div class="stat-card" style="background: linear-gradient(135deg,#ecfdf5,#d1fae5); border:1px solid #6ee7b7;">
-            <p class="text-xs text-green-800 font-semibold"><i class="fas fa-chart-line mr-1"></i>Net Profit (All Time)</p>
-            <p class="text-2xl font-extrabold text-green-700 mt-1">PKR ${this.fmt(totalProfit)}</p>
-            <p class="text-xs text-green-700 mt-1">From sold bills · (Sell − Mfg.) × Qty</p>
-          </div>
-          <div class="stat-card" style="background:#f0fdfa; border:1px solid #99f6e4;">
-            <p class="text-xs text-teal-800 font-semibold"><i class="fas fa-calendar-alt mr-1"></i>Profit This Month</p>
-            <p class="text-2xl font-extrabold text-teal-700 mt-1">PKR ${this.fmt(profitMonth)}</p>
-            <p class="text-xs text-teal-700 mt-1">Auto-calculated from bills</p>
-          </div>
-          <div class="stat-card" style="background:#eff6ff; border:1px solid #bfdbfe;">
-            <p class="text-xs text-blue-800 font-semibold"><i class="fas fa-sun mr-1"></i>Profit Today</p>
-            <p class="text-2xl font-extrabold text-blue-700 mt-1">PKR ${this.fmt(profitToday)}</p>
-            <p class="text-xs text-blue-700 mt-1">Updates as bills are made</p>
-          </div>
-        </div>
-
         <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
           <div class="stat-card cursor-pointer" onclick="App.showRawMaterials()">
             <p class="text-xs text-gray-500"><i class="fas fa-cubes mr-1"></i>Raw Materials</p>
@@ -1062,70 +1043,32 @@ const App = {
           </div>
         </div>
 
-        <div class="bg-white rounded-xl shadow-sm p-5">
-          <h2 class="font-bold text-gray-800 mb-3"><i class="fas fa-folder-tree mr-2"></i>Per-Section Summary</h2>
-          ${perFolder.length === 0 ? '<p class="text-gray-500 text-center py-4">No sections yet</p>' : `
-            <div class="overflow-x-auto"><table class="w-full text-sm">
-              <thead class="bg-gray-50"><tr>
-                <th class="text-left p-3">Section</th><th class="text-right p-3">Entries</th>
-                <th class="text-right p-3">Received</th><th class="text-right p-3">Remaining Balance</th>
-              </tr></thead><tbody>
-                ${perFolder.map(f => `
-                  <tr class="border-t hover:bg-gray-50 cursor-pointer" onclick="App.openFolder(${f.id})">
-                    <td class="p-3"><i class="fas ${f.icon} mr-2" style="color:${f.color}"></i>${this.escapeHtml(f.name)}</td>
-                    <td class="text-right p-3">${f.client_count}</td>
-                    <td class="text-right p-3 amount-received">PKR ${this.fmt(f.total_received)}</td>
-                    <td class="text-right p-3 amount-running">PKR ${this.fmt(f.total_pending - f.total_received)}</td>
-                  </tr>`).join('')}
-              </tbody></table></div>`}
-        </div>
-
-        <!-- Inventory Summary -->
-        <div class="bg-white rounded-xl shadow-sm p-5">
-          <h2 class="font-bold text-gray-800 mb-3 flex items-center justify-between">
-            <span><i class="fas fa-boxes text-orange-500 mr-2"></i>Inventory Summary</span>
-            <button onclick="App.showInventory()" class="text-xs text-blue-600 hover:underline font-normal">View All <i class="fas fa-arrow-right ml-1"></i></button>
-          </h2>
-          ${(!invMfg || invMfg.length === 0) ? '<p class="text-gray-500 text-center py-4">No inventory products yet. <a href="#" onclick="App.showInventory(); return false;" class="text-blue-600 hover:underline">Add a product →</a></p>' : `
-            <div class="overflow-x-auto"><table class="w-full text-sm">
-              <thead class="bg-gray-50"><tr>
-                <th class="text-left p-3">Product</th>
-                <th class="text-left p-3">SKU</th>
-                <th class="text-left p-3">Category</th>
-                <th class="text-right p-3" title="Quantity available in stock">Quantity</th>
-                <th class="text-right p-3" title="Manufacturing / purchase cost per unit">Cost</th>
-                <th class="text-right p-3" title="Selling / Sale price per unit">Sale Price</th>
-                <th class="text-right p-3" title="Total units sold to customers">Sold</th>
-              </tr></thead><tbody>
-                ${invMfg.map(it => {
-                  const qty = parseFloat(it.quantity) || 0;
-                  const cost = parseFloat(it.manufacturing_cost) || 0;
-                  const rate = parseFloat(it.rate) || 0;
-                  const sold = soldMap[it.name] || {};
-                  const unitsSold = parseFloat(sold.units_sold) || 0;
-                  const lowStock = qty <= 5;
-                  return `
-                  <tr class="border-t hover:bg-gray-50 cursor-pointer" onclick="App.showInventory()">
-                    <td class="p-3"><i class="fas fa-box text-orange-500 mr-2"></i><strong>${this.escapeHtml(it.name)}</strong>
-                      <div class="text-xs text-gray-400">per ${this.escapeHtml(it.unit || 'pcs')}</div></td>
-                    <td class="p-3 text-gray-600">${this.escapeHtml(it.sku || '-')}</td>
-                    <td class="p-3 text-gray-600">${this.escapeHtml(it.category || '-')}</td>
-                    <td class="text-right p-3 ${lowStock ? 'text-red-600 font-semibold' : 'text-green-700 font-semibold'}">${this.fmt(qty)} <span class="text-xs text-gray-400">${this.escapeHtml(it.unit || '')}</span></td>
-                    <td class="text-right p-3 text-orange-600">${cost > 0 ? 'PKR ' + this.fmt(cost) : '<span class="text-gray-400">—</span>'}</td>
-                    <td class="text-right p-3 font-medium">PKR ${this.fmt(rate)}</td>
-                    <td class="text-right p-3 text-blue-700 font-semibold">${this.fmt(unitsSold)}</td>
-                  </tr>`;
-                }).join('')}
-              </tbody></table></div>
-          `}
-        </div>
-
-        <!-- Sales Summary (Daily / Monthly / All-Time) -->
+        <!-- Sales Summary (Daily / Monthly / All-Time) + Net Profit -->
         <div class="bg-white rounded-xl shadow-sm p-5">
           <h2 class="font-bold text-gray-800 mb-3 flex items-center justify-between">
             <span><i class="fas fa-chart-bar text-green-500 mr-2"></i>Sales Summary</span>
             <button onclick="App.showBills && App.showBills()" class="text-xs text-blue-600 hover:underline font-normal">View Bills <i class="fas fa-arrow-right ml-1"></i></button>
           </h2>
+
+          <!-- Net Profit Cards (moved here from top) -->
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+            <div class="rounded-lg p-4" style="background: linear-gradient(135deg,#ecfdf5,#d1fae5); border:1px solid #6ee7b7;">
+              <p class="text-xs text-green-800 font-semibold"><i class="fas fa-chart-line mr-1"></i>Net Profit (All Time)</p>
+              <p class="text-2xl font-extrabold text-green-700 mt-1">PKR ${this.fmt(totalProfit)}</p>
+              <p class="text-xs text-green-700 mt-1">From sold bills · (Sell − Mfg.) × Qty</p>
+            </div>
+            <div class="rounded-lg p-4" style="background:#f0fdfa; border:1px solid #99f6e4;">
+              <p class="text-xs text-teal-800 font-semibold"><i class="fas fa-calendar-alt mr-1"></i>Profit This Month</p>
+              <p class="text-2xl font-extrabold text-teal-700 mt-1">PKR ${this.fmt(profitMonth)}</p>
+              <p class="text-xs text-teal-700 mt-1">Auto-calculated from bills</p>
+            </div>
+            <div class="rounded-lg p-4" style="background:#eff6ff; border:1px solid #bfdbfe;">
+              <p class="text-xs text-blue-800 font-semibold"><i class="fas fa-sun mr-1"></i>Profit Today</p>
+              <p class="text-2xl font-extrabold text-blue-700 mt-1">PKR ${this.fmt(profitToday)}</p>
+              <p class="text-xs text-blue-700 mt-1">Updates as bills are made</p>
+            </div>
+          </div>
+
           <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
             <!-- Today -->
             <div class="rounded-lg border border-blue-200 bg-blue-50 p-4">
@@ -1195,6 +1138,64 @@ const App = {
           </div>
         </div>
 
+        <div class="bg-white rounded-xl shadow-sm p-5">
+          <h2 class="font-bold text-gray-800 mb-3"><i class="fas fa-folder-tree mr-2"></i>Per-Section Summary</h2>
+          ${perFolder.length === 0 ? '<p class="text-gray-500 text-center py-4">No sections yet</p>' : `
+            <div class="overflow-x-auto"><table class="w-full text-sm">
+              <thead class="bg-gray-50"><tr>
+                <th class="text-left p-3">Section</th><th class="text-right p-3">Entries</th>
+                <th class="text-right p-3">Received</th><th class="text-right p-3">Remaining Balance</th>
+              </tr></thead><tbody>
+                ${perFolder.map(f => `
+                  <tr class="border-t hover:bg-gray-50 cursor-pointer" onclick="App.openFolder(${f.id})">
+                    <td class="p-3"><i class="fas ${f.icon} mr-2" style="color:${f.color}"></i>${this.escapeHtml(f.name)}</td>
+                    <td class="text-right p-3">${f.client_count}</td>
+                    <td class="text-right p-3 amount-received">PKR ${this.fmt(f.total_received)}</td>
+                    <td class="text-right p-3 amount-running">PKR ${this.fmt(f.total_pending - f.total_received)}</td>
+                  </tr>`).join('')}
+              </tbody></table></div>`}
+        </div>
+
+        <!-- Inventory Summary -->
+        <div class="bg-white rounded-xl shadow-sm p-5">
+          <h2 class="font-bold text-gray-800 mb-3 flex items-center justify-between">
+            <span><i class="fas fa-boxes text-orange-500 mr-2"></i>Inventory Summary</span>
+            <button onclick="App.showInventory()" class="text-xs text-blue-600 hover:underline font-normal">View All <i class="fas fa-arrow-right ml-1"></i></button>
+          </h2>
+          ${(!invMfg || invMfg.length === 0) ? '<p class="text-gray-500 text-center py-4">No inventory products yet. <a href="#" onclick="App.showInventory(); return false;" class="text-blue-600 hover:underline">Add a product →</a></p>' : `
+            <div class="overflow-x-auto"><table class="w-full text-sm">
+              <thead class="bg-gray-50"><tr>
+                <th class="text-left p-3">Product</th>
+                <th class="text-left p-3">SKU</th>
+                <th class="text-left p-3">Category</th>
+                <th class="text-right p-3" title="Quantity available in stock">Quantity</th>
+                <th class="text-right p-3" title="Manufacturing / purchase cost per unit">Cost</th>
+                <th class="text-right p-3" title="Selling / Sale price per unit">Sale Price</th>
+                <th class="text-right p-3" title="Total units sold to customers">Sold</th>
+              </tr></thead><tbody>
+                ${invMfg.map(it => {
+                  const qty = parseFloat(it.quantity) || 0;
+                  const cost = parseFloat(it.manufacturing_cost) || 0;
+                  const rate = parseFloat(it.rate) || 0;
+                  const sold = soldMap[it.name] || {};
+                  const unitsSold = parseFloat(sold.units_sold) || 0;
+                  const lowStock = qty <= 5;
+                  return `
+                  <tr class="border-t hover:bg-gray-50 cursor-pointer" onclick="App.showInventory()">
+                    <td class="p-3"><i class="fas fa-box text-orange-500 mr-2"></i><strong>${this.escapeHtml(it.name)}</strong>
+                      <div class="text-xs text-gray-400">per ${this.escapeHtml(it.unit || 'pcs')}</div></td>
+                    <td class="p-3 text-gray-600">${this.escapeHtml(it.sku || '-')}</td>
+                    <td class="p-3 text-gray-600">${this.escapeHtml(it.category || '-')}</td>
+                    <td class="text-right p-3 ${lowStock ? 'text-red-600 font-semibold' : 'text-green-700 font-semibold'}">${this.fmt(qty)} <span class="text-xs text-gray-400">${this.escapeHtml(it.unit || '')}</span></td>
+                    <td class="text-right p-3 text-orange-600">${cost > 0 ? 'PKR ' + this.fmt(cost) : '<span class="text-gray-400">—</span>'}</td>
+                    <td class="text-right p-3 font-medium">PKR ${this.fmt(rate)}</td>
+                    <td class="text-right p-3 text-blue-700 font-semibold">${this.fmt(unitsSold)}</td>
+                  </tr>`;
+                }).join('')}
+              </tbody></table></div>
+          `}
+        </div>
+
         <!-- Manufacturing Summary -->
         <div class="bg-white rounded-xl shadow-sm p-5">
           <h2 class="font-bold text-gray-800 mb-3 flex items-center justify-between">
@@ -1230,12 +1231,6 @@ const App = {
                 }).join('')}
               </tbody></table></div>
             ${mfgProducts.length > 15 ? `<p class="text-xs text-gray-400 text-center mt-2">Showing 15 of ${mfgProducts.length} products</p>` : ''}
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 text-xs">
-              <div class="bg-purple-50 rounded p-3"><p class="text-gray-500"><i class="fas fa-cogs mr-1"></i>Products</p><p class="font-bold text-purple-700 text-lg">${mfgProducts.length}</p></div>
-              <div class="bg-orange-50 rounded p-3"><p class="text-gray-500"><i class="fas fa-cubes mr-1"></i>Raw Purchased</p><p class="font-bold text-orange-700 text-lg">PKR ${this.fmt(supplierStats.total_purchased || 0)}</p></div>
-              <div class="bg-green-50 rounded p-3"><p class="text-gray-500"><i class="fas fa-check-circle mr-1"></i>Paid to Suppliers</p><p class="font-bold text-green-700 text-lg">PKR ${this.fmt(supplierStats.total_paid || 0)}</p></div>
-              <div class="bg-red-50 rounded p-3"><p class="text-gray-500"><i class="fas fa-exclamation-circle mr-1"></i>Owed to Suppliers</p><p class="font-bold text-red-700 text-lg">PKR ${this.fmt(supplierStats.total_remaining || 0)}</p></div>
-            </div>
           `}
         </div>
 
@@ -1245,6 +1240,14 @@ const App = {
             <span><i class="fas fa-cubes text-orange-500 mr-2"></i>Raw Material Summary</span>
             <button onclick="App.showRawMaterials()" class="text-xs text-blue-600 hover:underline font-normal">View All <i class="fas fa-arrow-right ml-1"></i></button>
           </h2>
+
+          <!-- Supplier Stats (moved here from Manufacturing Summary) -->
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4 text-xs">
+            <div class="bg-orange-50 rounded p-3"><p class="text-gray-500"><i class="fas fa-cubes mr-1"></i>Raw Purchased</p><p class="font-bold text-orange-700 text-lg">PKR ${this.fmt(supplierStats.total_purchased || 0)}</p></div>
+            <div class="bg-green-50 rounded p-3"><p class="text-gray-500"><i class="fas fa-check-circle mr-1"></i>Paid to Suppliers</p><p class="font-bold text-green-700 text-lg">PKR ${this.fmt(supplierStats.total_paid || 0)}</p></div>
+            <div class="bg-red-50 rounded p-3"><p class="text-gray-500"><i class="fas fa-exclamation-circle mr-1"></i>Owed to Suppliers</p><p class="font-bold text-red-700 text-lg">PKR ${this.fmt(supplierStats.total_remaining || 0)}</p></div>
+          </div>
+
           ${(!rawList || rawList.length === 0) ? '<p class="text-gray-500 text-center py-4">No raw materials yet</p>' : `
             <div class="overflow-x-auto"><table class="w-full text-sm">
               <thead class="bg-gray-50"><tr>
