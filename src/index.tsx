@@ -1214,26 +1214,88 @@ app.delete('/api/employee-transactions/:id', requireAuth, async (c) => {
   return c.json({ success: true })
 })
 
+// ============ SIDE EXPENSE FOLDERS (Ledgers) ============
+app.get('/api/side-expense-folders', requireAuth, async (c) => {
+  const result = await c.env.DB.prepare(`
+    SELECT f.*,
+      (SELECT COUNT(*) FROM side_expenses WHERE folder_id = f.id) as expense_count,
+      (SELECT COALESCE(SUM(amount),0) FROM side_expenses WHERE folder_id = f.id) as total_amount
+    FROM side_expense_folders f
+    ORDER BY f.sort_order ASC, f.id ASC
+  `).all()
+  return c.json({ folders: result.results })
+})
+
+app.post('/api/side-expense-folders', requireAuth, async (c) => {
+  const { name, icon, color, description, sort_order } = await c.req.json()
+  if (!name || !String(name).trim()) {
+    return c.json({ error: 'Folder name required' }, 400)
+  }
+  const result = await c.env.DB.prepare(
+    'INSERT INTO side_expense_folders (name, icon, color, description, sort_order) VALUES (?, ?, ?, ?, ?)'
+  ).bind(String(name).trim(), icon || 'fa-folder', color || '#ef4444', description || '', sort_order || 0).run()
+  return c.json({ id: result.meta.last_row_id })
+})
+
+app.put('/api/side-expense-folders/:id', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const { name, icon, color, description, sort_order } = await c.req.json()
+  await c.env.DB.prepare(
+    'UPDATE side_expense_folders SET name=?, icon=?, color=?, description=?, sort_order=? WHERE id=?'
+  ).bind(String(name || '').trim(), icon || 'fa-folder', color || '#ef4444', description || '', sort_order || 0, id).run()
+  return c.json({ success: true })
+})
+
+app.delete('/api/side-expense-folders/:id', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  // Unlink any expenses inside this folder (do not delete the expenses themselves)
+  await c.env.DB.prepare('UPDATE side_expenses SET folder_id = NULL WHERE folder_id = ?').bind(id).run()
+  await c.env.DB.prepare('DELETE FROM side_expense_folders WHERE id = ?').bind(id).run()
+  return c.json({ success: true })
+})
+
 // ============ SIDE EXPENSES ============
 app.get('/api/side-expenses', requireAuth, async (c) => {
-  const result = await c.env.DB.prepare('SELECT * FROM side_expenses ORDER BY entry_date DESC, id DESC').all()
+  const folderId = c.req.query('folder_id')
+  let sql = `SELECT se.*, f.name as folder_name, f.icon as folder_icon, f.color as folder_color
+             FROM side_expenses se
+             LEFT JOIN side_expense_folders f ON f.id = se.folder_id`
+  const binds: any[] = []
+  if (folderId === 'null' || folderId === '0') {
+    sql += ' WHERE se.folder_id IS NULL'
+  } else if (folderId) {
+    sql += ' WHERE se.folder_id = ?'
+    binds.push(folderId)
+  }
+  sql += ' ORDER BY se.entry_date DESC, se.id DESC'
+  const result = await c.env.DB.prepare(sql).bind(...binds).all()
   return c.json({ expenses: result.results })
 })
 
 app.post('/api/side-expenses', requireAuth, async (c) => {
-  const { entry_date, category, description, amount, paid_to, notes } = await c.req.json()
+  const { entry_date, category, description, amount, paid_to, notes, folder_id } = await c.req.json()
   const result = await c.env.DB.prepare(
-    'INSERT INTO side_expenses (entry_date, category, description, amount, paid_to, notes) VALUES (?, ?, ?, ?, ?, ?)'
-  ).bind(entry_date || new Date().toISOString().slice(0, 10), category || '', description || '', parseFloat(amount) || 0, paid_to || '', notes || '').run()
+    'INSERT INTO side_expenses (entry_date, category, description, amount, paid_to, notes, folder_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).bind(
+    entry_date || new Date().toISOString().slice(0, 10),
+    category || '', description || '', parseFloat(amount) || 0,
+    paid_to || '', notes || '',
+    folder_id ? parseInt(folder_id) : null
+  ).run()
   return c.json({ id: result.meta.last_row_id })
 })
 
 app.put('/api/side-expenses/:id', requireAuth, async (c) => {
   const id = c.req.param('id')
-  const { entry_date, category, description, amount, paid_to, notes } = await c.req.json()
+  const { entry_date, category, description, amount, paid_to, notes, folder_id } = await c.req.json()
   await c.env.DB.prepare(
-    'UPDATE side_expenses SET entry_date=?, category=?, description=?, amount=?, paid_to=?, notes=? WHERE id=?'
-  ).bind(entry_date, category || '', description || '', parseFloat(amount) || 0, paid_to || '', notes || '', id).run()
+    'UPDATE side_expenses SET entry_date=?, category=?, description=?, amount=?, paid_to=?, notes=?, folder_id=? WHERE id=?'
+  ).bind(
+    entry_date, category || '', description || '', parseFloat(amount) || 0,
+    paid_to || '', notes || '',
+    folder_id ? parseInt(folder_id) : null,
+    id
+  ).run()
   return c.json({ success: true })
 })
 
@@ -1359,7 +1421,10 @@ app.get('/api/dashboard', requireAuth, async (c) => {
        COALESCE(SUM(CASE WHEN paid_amount IS NULL THEN 0 ELSE (amount - paid_amount) END),0) as total_remaining
        FROM employee_transactions WHERE type='salary'`).first(),
     c.env.DB.prepare(`SELECT COALESCE(SUM(amount),0) as a FROM employee_transactions WHERE type='advance'`).first(),
-    c.env.DB.prepare(`SELECT COUNT(*) as count, COALESCE(SUM(amount),0) as total FROM side_expenses`).first(),
+    c.env.DB.prepare(`SELECT COUNT(*) as count, COALESCE(SUM(amount),0) as total,
+       COALESCE(SUM(CASE WHEN entry_date = date('now') THEN amount ELSE 0 END), 0) as total_today,
+       COALESCE(SUM(CASE WHEN entry_date >= date('now','start of month') THEN amount ELSE 0 END), 0) as total_month
+       FROM side_expenses`).first(),
     c.env.DB.prepare(`SELECT COUNT(*) as count, COALESCE(SUM(total_value),0) as total, COALESCE(SUM(quantity),0) as qty FROM raw_materials`).first(),
     c.env.DB.prepare(`SELECT COUNT(*) as c FROM custom_sections`).first(),
     // Per-section breakdowns

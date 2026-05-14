@@ -22,6 +22,8 @@ const App = {
     currentEmployee: null,
     employeeTransactions: [],
     sideExpenses: [],
+    sideExpenseFolders: [],
+    currentSideExpenseFolderId: null,
     customSectionRows: [],
     currentCustomSection: null,
     branding: {
@@ -963,6 +965,14 @@ const App = {
     const totalProfit = profitStats?.total_profit || 0;
     const profitMonth = profitStats?.profit_this_month || 0;
     const profitToday = profitStats?.profit_today || 0;
+    // Side expense totals for final net profit calculation
+    const sideExpTotal = parseFloat(expenseStats?.total) || 0;
+    const sideExpToday = parseFloat(expenseStats?.total_today) || 0;
+    const sideExpMonth = parseFloat(expenseStats?.total_month) || 0;
+    // Final Net Profit = Gross Profit (from products) − Side Expenses
+    const finalProfitAll = totalProfit - sideExpTotal;
+    const finalProfitMonth = profitMonth - sideExpMonth;
+    const finalProfitToday = profitToday - sideExpToday;
     const products = productList || [];
     const invMfg = invMfgList || [];
     const supplierStats = data.supplierStats || {};
@@ -1050,22 +1060,44 @@ const App = {
             <button onclick="App.showBills && App.showBills()" class="text-xs text-blue-600 hover:underline font-normal">View Bills <i class="fas fa-arrow-right ml-1"></i></button>
           </h2>
 
-          <!-- Net Profit Cards (moved here from top) -->
+          <!-- Gross Profit Cards (Products only — Sell − Mfg. cost) — order: Today → Month → All Time -->
           <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-            <div class="rounded-lg p-4" style="background: linear-gradient(135deg,#ecfdf5,#d1fae5); border:1px solid #6ee7b7;">
-              <p class="text-xs text-green-800 font-semibold"><i class="fas fa-chart-line mr-1"></i>Net Profit (All Time)</p>
-              <p class="text-2xl font-extrabold text-green-700 mt-1">PKR ${this.fmt(totalProfit)}</p>
-              <p class="text-xs text-green-700 mt-1">From sold bills · (Sell − Mfg.) × Qty</p>
+            <div class="rounded-lg p-4" style="background:#eff6ff; border:1px solid #bfdbfe;">
+              <p class="text-xs text-blue-800 font-semibold"><i class="fas fa-sun mr-1"></i>Gross Profit Today</p>
+              <p class="text-2xl font-extrabold text-blue-700 mt-1">PKR ${this.fmt(profitToday)}</p>
+              <p class="text-xs text-blue-700 mt-1">Products only · (Sell − Mfg.) × Qty</p>
             </div>
             <div class="rounded-lg p-4" style="background:#f0fdfa; border:1px solid #99f6e4;">
-              <p class="text-xs text-teal-800 font-semibold"><i class="fas fa-calendar-alt mr-1"></i>Profit This Month</p>
+              <p class="text-xs text-teal-800 font-semibold"><i class="fas fa-calendar-alt mr-1"></i>Gross Profit This Month</p>
               <p class="text-2xl font-extrabold text-teal-700 mt-1">PKR ${this.fmt(profitMonth)}</p>
-              <p class="text-xs text-teal-700 mt-1">Auto-calculated from bills</p>
+              <p class="text-xs text-teal-700 mt-1">Products only · auto from bills</p>
             </div>
-            <div class="rounded-lg p-4" style="background:#eff6ff; border:1px solid #bfdbfe;">
-              <p class="text-xs text-blue-800 font-semibold"><i class="fas fa-sun mr-1"></i>Profit Today</p>
-              <p class="text-2xl font-extrabold text-blue-700 mt-1">PKR ${this.fmt(profitToday)}</p>
-              <p class="text-xs text-blue-700 mt-1">Updates as bills are made</p>
+            <div class="rounded-lg p-4" style="background: linear-gradient(135deg,#ecfdf5,#d1fae5); border:1px solid #6ee7b7;">
+              <p class="text-xs text-green-800 font-semibold"><i class="fas fa-chart-line mr-1"></i>Gross Profit (All Time)</p>
+              <p class="text-2xl font-extrabold text-green-700 mt-1">PKR ${this.fmt(totalProfit)}</p>
+              <p class="text-xs text-green-700 mt-1">Products only · before side expenses</p>
+            </div>
+          </div>
+
+          <!-- Final Net Profit (Gross Profit − Side Expenses) — order: Today → Month → All Time -->
+          <div class="mt-2 mb-1">
+            <h3 class="text-sm font-bold text-gray-700 mb-2"><i class="fas fa-coins text-amber-500 mr-1"></i>Final Net Profit <span class="text-xs font-normal text-gray-500">(Gross Profit − Side Expenses)</span></h3>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+            <div class="rounded-lg p-4" style="background:#fef3c7; border:1px solid #fcd34d;">
+              <p class="text-xs text-amber-800 font-semibold"><i class="fas fa-sun mr-1"></i>Final Net Profit Today</p>
+              <p class="text-2xl font-extrabold text-amber-700 mt-1">PKR ${this.fmt(finalProfitToday)}</p>
+              <p class="text-xs text-amber-700 mt-1">Gross ${this.fmt(profitToday)} − Side Exp. ${this.fmt(sideExpToday)}</p>
+            </div>
+            <div class="rounded-lg p-4" style="background:#ffedd5; border:1px solid #fdba74;">
+              <p class="text-xs text-orange-800 font-semibold"><i class="fas fa-calendar-alt mr-1"></i>Final Net Profit This Month</p>
+              <p class="text-2xl font-extrabold text-orange-700 mt-1">PKR ${this.fmt(finalProfitMonth)}</p>
+              <p class="text-xs text-orange-700 mt-1">Gross ${this.fmt(profitMonth)} − Side Exp. ${this.fmt(sideExpMonth)}</p>
+            </div>
+            <div class="rounded-lg p-4" style="background: linear-gradient(135deg,#fef9c3,#fde68a); border:1px solid #f59e0b;">
+              <p class="text-xs text-yellow-900 font-semibold"><i class="fas fa-trophy mr-1"></i>Final Net Profit (All Time)</p>
+              <p class="text-2xl font-extrabold text-yellow-700 mt-1">PKR ${this.fmt(finalProfitAll)}</p>
+              <p class="text-xs text-yellow-800 mt-1">Gross ${this.fmt(totalProfit)} − Side Exp. ${this.fmt(sideExpTotal)}</p>
             </div>
           </div>
 
@@ -2991,10 +3023,15 @@ const App = {
     } catch (e) { this.toast('Failed', 'error'); }
   },
 
-  // ========= SIDE EXPENSES =========
-  async showSideExpenses() {
+  // ========= SIDE EXPENSES (with Folders / Ledgers) =========
+  // currentSideExpenseFolderId:
+  //   null => folder grid (overview)
+  //   0    => uncategorized expense list
+  //   N    => expenses inside folder N
+  async showSideExpenses(folderId = null) {
     this.state.view = 'side-expenses';
     this.state.currentFolderId = null;
+    this.state.currentSideExpenseFolderId = folderId;
     this.setActiveNav('side-expenses');
     this.closeSidebarOnMobile();
     this.renderFolders();
@@ -3002,27 +3039,137 @@ const App = {
       <div class="page-header"><h1 class="page-title"><i class="fas fa-money-bill-wave text-red-500"></i>Side Expenses</h1></div>
       <div class="p-6"><div class="text-gray-400 text-center py-8"><i class="fas fa-spinner fa-spin text-2xl"></i></div></div>`;
     try {
-      const data = await this.api.get('/api/side-expenses');
-      this.state.sideExpenses = data.expenses || [];
-      this.renderSideExpenses();
+      // Load folders + expenses (filtered by folder if any)
+      const expenseUrl = (folderId === null) ? '/api/side-expenses' :
+                        (folderId === 0 ? '/api/side-expenses?folder_id=null' : `/api/side-expenses?folder_id=${folderId}`);
+      const [folderData, expenseData] = await Promise.all([
+        this.api.get('/api/side-expense-folders'),
+        this.api.get(expenseUrl)
+      ]);
+      this.state.sideExpenseFolders = folderData.folders || [];
+      this.state.sideExpenses = expenseData.expenses || [];
+      if (folderId === null) this.renderSideExpenseFolders();
+      else this.renderSideExpenses();
     } catch (e) {}
   },
 
-  renderSideExpenses() {
-    const items = this.state.sideExpenses;
-    const total = items.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
+  // Folder grid (entry view) — shows all "ledger" folders + uncategorized + create button
+  renderSideExpenseFolders() {
+    const folders = this.state.sideExpenseFolders || [];
+    const allExpenses = this.state.sideExpenses || [];
+    const totalAll = allExpenses.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
+    const uncategorized = allExpenses.filter(e => !e.folder_id);
+    const uncatTotal = uncategorized.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
+    const monthPrefix = new Date().toISOString().slice(0,7);
+    const monthTotal = allExpenses.filter(i => (i.entry_date || '').startsWith(monthPrefix))
+                                  .reduce((s,i) => s + (parseFloat(i.amount)||0), 0);
     const area = document.getElementById('content-area');
     area.innerHTML = `
       <div class="page-header">
         <div><h1 class="page-title"><i class="fas fa-money-bill-wave text-red-500"></i>Side Expenses</h1>
-          <p class="page-subtitle">${items.length} entry(ies) · Total: PKR ${this.fmt(total)}</p></div>
-        <button onclick="App.showSideExpenseEditor()" class="btn btn-primary"><i class="fas fa-plus"></i> Add Expense</button>
+          <p class="page-subtitle">${folders.length} ledger folder(s) · ${allExpenses.length} total entry(ies)</p></div>
+        <div class="flex gap-2">
+          <button onclick="App.showSideExpenseFolderEditor()" class="btn btn-secondary"><i class="fas fa-folder-plus"></i> New Folder</button>
+          <button onclick="App.showSideExpenseEditor()" class="btn btn-primary"><i class="fas fa-plus"></i> Add Expense</button>
+        </div>
+      </div>
+      <div class="p-4 md:p-6 space-y-5">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div class="stat-card"><p class="text-xs text-gray-500">Total Folders</p><p class="text-xl font-bold text-purple-600">${folders.length}</p></div>
+          <div class="stat-card"><p class="text-xs text-gray-500">Total Entries</p><p class="text-xl font-bold text-blue-600">${allExpenses.length}</p></div>
+          <div class="stat-card"><p class="text-xs text-gray-500">This Month</p><p class="text-xl font-bold text-orange-600">PKR ${this.fmt(monthTotal)}</p></div>
+          <div class="stat-card"><p class="text-xs text-gray-500">All Time Total</p><p class="text-xl font-bold text-red-600">PKR ${this.fmt(totalAll)}</p></div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow-sm p-5">
+          <h2 class="font-bold text-gray-800 mb-3"><i class="fas fa-folder-tree mr-2"></i>Ledger Folders <span class="text-xs font-normal text-gray-500">— click a folder to open</span></h2>
+          ${folders.length === 0 && uncategorized.length === 0 ? `
+            <div class="text-center py-10 text-gray-500">
+              <i class="fas fa-folder-open text-4xl mb-3 block"></i>
+              <p class="mb-3">No expense folders yet.</p>
+              <button onclick="App.showSideExpenseFolderEditor()" class="btn btn-primary"><i class="fas fa-folder-plus"></i> Create First Folder</button>
+            </div>` : `
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              ${folders.map(f => {
+                const countStr = `${f.expense_count || 0} entry(ies)`;
+                return `
+                <div class="border border-gray-200 rounded-lg p-4 hover:shadow-md cursor-pointer transition" style="border-left:4px solid ${f.color || '#ef4444'}" onclick="App.showSideExpenses(${f.id})">
+                  <div class="flex items-start justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                      <span class="w-9 h-9 rounded-lg flex items-center justify-center text-white" style="background:${f.color || '#ef4444'}">
+                        <i class="fas ${f.icon || 'fa-folder'}"></i>
+                      </span>
+                      <div>
+                        <p class="font-bold text-gray-800">${this.escapeHtml(f.name)}</p>
+                        <p class="text-xs text-gray-500">${countStr}</p>
+                      </div>
+                    </div>
+                    <button onclick="event.stopPropagation(); App.showSideExpenseFolderEditor(${f.id})" class="text-gray-400 hover:text-blue-600" title="Edit folder"><i class="fas fa-edit"></i></button>
+                  </div>
+                  ${f.description ? `<p class="text-xs text-gray-500 mb-2 italic">${this.escapeHtml(f.description)}</p>` : ''}
+                  <div class="flex items-center justify-between pt-2 border-t border-gray-100">
+                    <span class="text-xs text-gray-500">Total Spent</span>
+                    <span class="font-bold text-red-600">PKR ${this.fmt(f.total_amount || 0)}</span>
+                  </div>
+                </div>`;
+              }).join('')}
+              ${uncategorized.length > 0 ? `
+                <div class="border-2 border-dashed border-gray-300 rounded-lg p-4 hover:shadow-md cursor-pointer transition" onclick="App.showSideExpenses(0)">
+                  <div class="flex items-start justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                      <span class="w-9 h-9 rounded-lg flex items-center justify-center text-white bg-gray-400">
+                        <i class="fas fa-inbox"></i>
+                      </span>
+                      <div>
+                        <p class="font-bold text-gray-800">Uncategorized</p>
+                        <p class="text-xs text-gray-500">${uncategorized.length} entry(ies)</p>
+                      </div>
+                    </div>
+                  </div>
+                  <p class="text-xs text-gray-500 mb-2 italic">Expenses not assigned to any folder</p>
+                  <div class="flex items-center justify-between pt-2 border-t border-gray-100">
+                    <span class="text-xs text-gray-500">Total</span>
+                    <span class="font-bold text-red-600">PKR ${this.fmt(uncatTotal)}</span>
+                  </div>
+                </div>` : ''}
+            </div>`}
+        </div>
+      </div>`;
+  },
+
+  // Single-folder view (or uncategorized) — list of expenses inside it
+  renderSideExpenses() {
+    const items = this.state.sideExpenses;
+    const folderId = this.state.currentSideExpenseFolderId;
+    const folders = this.state.sideExpenseFolders || [];
+    const folder = folderId && folderId !== 0 ? folders.find(f => f.id === folderId) : null;
+    const headerTitle = folder ? folder.name : (folderId === 0 ? 'Uncategorized Expenses' : 'Side Expenses');
+    const headerIcon = folder ? (folder.icon || 'fa-folder') : (folderId === 0 ? 'fa-inbox' : 'fa-money-bill-wave');
+    const headerColor = folder ? (folder.color || '#ef4444') : '#ef4444';
+    const total = items.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
+    const monthPrefix = new Date().toISOString().slice(0,7);
+    const monthTotal = items.filter(i => (i.entry_date || '').startsWith(monthPrefix))
+                            .reduce((s,i) => s + (parseFloat(i.amount)||0), 0);
+    const area = document.getElementById('content-area');
+    area.innerHTML = `
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">
+            <button onclick="App.showSideExpenses()" class="text-gray-500 hover:text-gray-800 mr-2" title="Back to folders"><i class="fas fa-arrow-left"></i></button>
+            <i class="fas ${headerIcon}" style="color:${headerColor}"></i>${this.escapeHtml(headerTitle)}
+          </h1>
+          <p class="page-subtitle">${items.length} entry(ies) · Total: PKR ${this.fmt(total)} ${folder && folder.description ? '· ' + this.escapeHtml(folder.description) : ''}</p>
+        </div>
+        <div class="flex gap-2">
+          ${folder ? `<button onclick="App.showSideExpenseFolderEditor(${folder.id})" class="btn btn-secondary"><i class="fas fa-edit"></i> Edit Folder</button>` : ''}
+          <button onclick="App.showSideExpenseEditor(null, ${folderId || 'null'})" class="btn btn-primary"><i class="fas fa-plus"></i> Add Expense</button>
+        </div>
       </div>
       <div class="p-4 md:p-6 space-y-5">
         <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
-          <div class="stat-card"><p class="text-xs text-gray-500">Total Entries</p><p class="text-xl font-bold text-blue-600">${items.length}</p></div>
-          <div class="stat-card"><p class="text-xs text-gray-500">Total Amount</p><p class="text-xl font-bold text-red-600">PKR ${this.fmt(total)}</p></div>
-          <div class="stat-card"><p class="text-xs text-gray-500">This Month</p><p class="text-xl font-bold text-orange-600">PKR ${this.fmt(items.filter(i => (i.entry_date || '').startsWith(new Date().toISOString().slice(0,7))).reduce((s,i) => s + (parseFloat(i.amount)||0), 0))}</p></div>
+          <div class="stat-card"><p class="text-xs text-gray-500">Entries</p><p class="text-xl font-bold text-blue-600">${items.length}</p></div>
+          <div class="stat-card"><p class="text-xs text-gray-500">Folder Total</p><p class="text-xl font-bold text-red-600">PKR ${this.fmt(total)}</p></div>
+          <div class="stat-card"><p class="text-xs text-gray-500">This Month</p><p class="text-xl font-bold text-orange-600">PKR ${this.fmt(monthTotal)}</p></div>
         </div>
         <div class="bg-white rounded-xl shadow-sm overflow-hidden">
           <div class="overflow-x-auto"><table class="ledger-table">
@@ -3033,7 +3180,7 @@ const App = {
               <th style="width:100px;">Action</th>
             </tr></thead><tbody>
               ${items.length === 0 ? `<tr><td colspan="7" class="text-center py-8 text-gray-500">
-                <i class="fas fa-money-bill-wave text-3xl mb-2 block"></i>No expenses yet.</td></tr>` :
+                <i class="fas fa-money-bill-wave text-3xl mb-2 block"></i>No expenses in this folder yet.</td></tr>` :
                 items.map((it, i) => `<tr>
                   <td>${i + 1}</td>
                   <td>${it.entry_date}</td>
@@ -3051,17 +3198,120 @@ const App = {
       </div>`;
   },
 
-  showSideExpenseEditor(id = null) {
-    const it = id ? this.state.sideExpenses.find(x => x.id === id) : { entry_date: new Date().toISOString().slice(0,10), category:'', description:'', amount:0, paid_to:'', notes:'' };
+  // ----- Folder editor (Add / Edit folder) -----
+  showSideExpenseFolderEditor(id = null) {
+    const folders = this.state.sideExpenseFolders || [];
+    const f = id ? folders.find(x => x.id === id) : { name:'', icon:'fa-folder', color:'#ef4444', description:'', sort_order: 0 };
+    if (id && !f) return;
+    const iconOptions = ['fa-folder','fa-bolt','fa-utensils','fa-truck','fa-tools','fa-receipt','fa-fire','fa-tint','fa-wifi','fa-car','fa-shopping-cart','fa-briefcase','fa-gift','fa-medkit','fa-graduation-cap'];
+    const colorOptions = ['#ef4444','#f59e0b','#10b981','#3b82f6','#8b5cf6','#ec4899','#6b7280','#0ea5e9','#14b8a6'];
+    this.openModal(`
+      <h2 class="text-xl font-bold mb-4"><i class="fas fa-folder text-red-500 mr-2"></i>${id ? 'Edit' : 'New'} Expense Folder</h2>
+      <form id="sef-form" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Folder Name <span class="text-red-500">*</span></label>
+          <input id="sef-name" type="text" class="input-field" value="${this.escapeAttr(f.name || '')}" placeholder="e.g., Utility Bills, Workers Food" required></div>
+        <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Description (optional)</label>
+          <input id="sef-desc" type="text" class="input-field" value="${this.escapeAttr(f.description || '')}" placeholder="e.g., Gas, electricity, water bills"></div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Icon</label>
+          <div class="flex flex-wrap gap-2">
+            ${iconOptions.map(ic => `
+              <label class="cursor-pointer">
+                <input type="radio" name="sef-icon" value="${ic}" ${f.icon === ic ? 'checked' : ''} class="sef-icon-radio hidden">
+                <span class="w-9 h-9 rounded-lg border-2 flex items-center justify-center transition" data-icon-box="${ic}" style="border-color:${f.icon === ic ? '#3b82f6' : '#e5e7eb'};">
+                  <i class="fas ${ic}"></i>
+                </span>
+              </label>`).join('')}
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Color</label>
+          <div class="flex flex-wrap gap-2">
+            ${colorOptions.map(c => `
+              <label class="cursor-pointer">
+                <input type="radio" name="sef-color" value="${c}" ${f.color === c ? 'checked' : ''} class="sef-color-radio hidden">
+                <span class="w-9 h-9 rounded-lg border-2 flex items-center justify-center transition" data-color-box="${c}" style="background:${c}; border-color:${f.color === c ? '#1f2937' : '#e5e7eb'};">
+                  ${f.color === c ? '<i class="fas fa-check text-white"></i>' : ''}
+                </span>
+              </label>`).join('')}
+          </div>
+        </div>
+        <div class="md:col-span-2 flex gap-2 justify-end pt-2 border-t">
+          ${id ? `<button type="button" class="btn btn-danger mr-auto" onclick="App.deleteSideExpenseFolder(${id})"><i class="fas fa-trash"></i> Delete Folder</button>` : ''}
+          <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save</button>
+        </div>
+      </form>`, 'modal-lg');
+    // Wire icon/color visual selection
+    document.querySelectorAll('.sef-icon-radio').forEach(r => {
+      r.addEventListener('change', () => {
+        document.querySelectorAll('[data-icon-box]').forEach(b => b.style.borderColor = '#e5e7eb');
+        const box = document.querySelector(`[data-icon-box="${r.value}"]`);
+        if (box) box.style.borderColor = '#3b82f6';
+      });
+    });
+    document.querySelectorAll('.sef-color-radio').forEach(r => {
+      r.addEventListener('change', () => {
+        document.querySelectorAll('[data-color-box]').forEach(b => { b.style.borderColor = '#e5e7eb'; b.innerHTML = ''; });
+        const box = document.querySelector(`[data-color-box="${r.value}"]`);
+        if (box) { box.style.borderColor = '#1f2937'; box.innerHTML = '<i class="fas fa-check text-white"></i>'; }
+      });
+    });
+    document.getElementById('sef-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const name = document.getElementById('sef-name').value.trim();
+      if (!name) { this.toast('Folder name required', 'error'); return; }
+      const iconRadio = document.querySelector('.sef-icon-radio:checked');
+      const colorRadio = document.querySelector('.sef-color-radio:checked');
+      const payload = {
+        name,
+        icon: iconRadio ? iconRadio.value : (f.icon || 'fa-folder'),
+        color: colorRadio ? colorRadio.value : (f.color || '#ef4444'),
+        description: document.getElementById('sef-desc').value,
+        sort_order: f.sort_order || 0
+      };
+      try {
+        if (id) await this.api.put(`/api/side-expense-folders/${id}`, payload);
+        else await this.api.post('/api/side-expense-folders', payload);
+        this.closeModal();
+        await this.showSideExpenses(this.state.currentSideExpenseFolderId);
+        this.toast('Folder saved', 'success');
+      } catch (err) { this.toast('Failed to save folder', 'error'); }
+    });
+  },
+
+  async deleteSideExpenseFolder(id) {
+    if (!confirm('Delete this folder? Expenses inside it will be moved to "Uncategorized" (not deleted).')) return;
+    try {
+      await this.api.delete(`/api/side-expense-folders/${id}`);
+      this.closeModal();
+      await this.showSideExpenses();
+      this.toast('Folder deleted', 'success');
+    } catch (e) { this.toast('Failed to delete folder', 'error'); }
+  },
+
+  // ----- Expense editor (Add / Edit individual expense) -----
+  showSideExpenseEditor(id = null, defaultFolderId = null) {
+    const it = id ? this.state.sideExpenses.find(x => x.id === id)
+                  : { entry_date: new Date().toISOString().slice(0,10), category:'', description:'', amount:0, paid_to:'', notes:'', folder_id: defaultFolderId };
     if (id && !it) return;
+    // Ensure folders are loaded
+    const folders = this.state.sideExpenseFolders || [];
+    const currentFolderId = it.folder_id || (defaultFolderId && defaultFolderId !== 0 ? defaultFolderId : '');
     this.openModal(`
       <h2 class="text-xl font-bold mb-4"><i class="fas fa-money-bill-wave text-red-500 mr-2"></i>${id ? 'Edit' : 'Add'} Side Expense</h2>
       <form id="se-form" class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div><label class="block text-sm font-medium mb-1">Date</label><input id="se-date" type="date" class="input-field" value="${it.entry_date || ''}"></div>
-        <div><label class="block text-sm font-medium mb-1">Category</label>
-          <input id="se-cat" type="text" list="se-cat-list" class="input-field" value="${this.escapeAttr(it.category || '')}" placeholder="e.g., Workers Food, Travel, Repairs">
+        <div><label class="block text-sm font-medium mb-1">Folder / Ledger</label>
+          <select id="se-folder" class="input-field">
+            <option value="">— Uncategorized —</option>
+            ${folders.map(f => `<option value="${f.id}" ${String(currentFolderId) === String(f.id) ? 'selected' : ''}>${this.escapeHtml(f.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Category / Sub-Type</label>
+          <input id="se-cat" type="text" list="se-cat-list" class="input-field" value="${this.escapeAttr(it.category || '')}" placeholder="e.g., Gas, Electricity, Water, Internet">
           <datalist id="se-cat-list">
-            <option value="Workers Food"><option value="Travel"><option value="Repairs"><option value="Utility"><option value="Stationary"><option value="Tea/Snacks"><option value="Misc">
+            <option value="Gas"><option value="Electricity"><option value="Water"><option value="Internet"><option value="Workers Food"><option value="Travel"><option value="Repairs"><option value="Stationary"><option value="Tea/Snacks"><option value="Misc">
           </datalist></div>
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Description</label><input id="se-desc" type="text" class="input-field" value="${this.escapeAttr(it.description || '')}"></div>
         <div><label class="block text-sm font-medium mb-1">Amount (PKR)</label><input id="se-amt" type="number" step="any" class="input-field" value="${it.amount || 0}"></div>
@@ -3075,19 +3325,21 @@ const App = {
       </form>`, 'modal-lg');
     document.getElementById('se-form').addEventListener('submit', async (e) => {
       e.preventDefault();
+      const folderVal = document.getElementById('se-folder').value;
       const payload = {
         entry_date: document.getElementById('se-date').value,
         category: document.getElementById('se-cat').value,
         description: document.getElementById('se-desc').value,
         amount: parseFloat(document.getElementById('se-amt').value) || 0,
         paid_to: document.getElementById('se-to').value,
-        notes: document.getElementById('se-notes').value
+        notes: document.getElementById('se-notes').value,
+        folder_id: folderVal ? parseInt(folderVal) : null
       };
       try {
         if (id) await this.api.put(`/api/side-expenses/${id}`, payload);
         else await this.api.post('/api/side-expenses', payload);
         this.closeModal();
-        await this.showSideExpenses();
+        await this.showSideExpenses(this.state.currentSideExpenseFolderId);
         this.toast('Saved', 'success');
       } catch (err) { this.toast('Failed', 'error'); }
     });
@@ -3098,7 +3350,7 @@ const App = {
     try {
       await this.api.delete(`/api/side-expenses/${id}`);
       this.closeModal();
-      await this.showSideExpenses();
+      await this.showSideExpenses(this.state.currentSideExpenseFolderId);
       this.toast('Deleted', 'success');
     } catch (e) { this.toast('Failed', 'error'); }
   },

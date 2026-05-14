@@ -6,7 +6,26 @@
 - **Goal**: Complete business CRM for Two Star Industries — manage clients, ledgers, inventory, raw materials, manufacturing recipes, employees, side expenses, and bills with auto Net Profit tracking.
 - **Stack**: Hono (TypeScript) + Cloudflare Pages + Cloudflare D1 (SQLite) + TailwindCSS + Vanilla JS frontend
 
-## What's New (latest update — 2026-05-10)
+## What's New (latest update — 2026-05-14)
+
+### 1. Dashboard Sales Summary — Reordered (Day → Month → All Time)
+- Gross Profit cards on the Dashboard are now displayed in the natural order: **Today → This Month → All Time** (previously was All Time → Month → Today).
+- Sales Summary cards stay in the same Day / Month / All Time order for consistency.
+
+### 2. Side Expense Folders / Ledgers (NEW)
+- **Side Expenses** is now a folder-based system. You can create custom folders/ledgers (e.g. *Utility Bills*, *Workers Food*, *Travel*) and put related expenses inside them — for example, **Gas, Electricity, Water and Internet bills** can all live inside one *Utility Bills* folder.
+- New folder grid view shows each folder with icon, color, entry count and total spent.
+- 5 default folders are seeded: Utility Bills, Workers Food, Travel & Transport, Repairs & Maintenance, Miscellaneous.
+- Each expense can be assigned to a folder (or left Uncategorized).
+- New endpoints: `GET/POST/PUT/DELETE /api/side-expense-folders`, and `/api/side-expenses` now accepts `?folder_id=` filter.
+
+### 3. Final Net Profit Section (NEW — clearer naming)
+Two distinct profit concepts are now shown on the Dashboard to avoid confusion:
+- **Gross Profit** (Today / Month / All Time) — earnings from **products only**: (Sale Price − Manufacturing Cost) × Quantity Sold. *Previously labelled "Net Profit".*
+- **Final Net Profit** (Today / Month / All Time) — **Gross Profit minus all Side Expenses** for the same period. This is your real take-home figure after deducting utility bills, workers food, repairs, etc.
+- Each Final Net Profit card shows the math: `Gross − Side Exp.` so the user can see exactly how the number is computed.
+
+## What's New (previous update — 2026-05-10)
 
 ### Dashboard Enhancements
 - **New Inventory Summary section** on the Dashboard — shows for each product: Quantity in stock, Cost (Mfg.), Sale Price, and Sold units (clean overview, no extra columns).
