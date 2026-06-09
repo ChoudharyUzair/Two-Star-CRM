@@ -2823,7 +2823,7 @@ const App = {
         <div><label class="block text-sm font-medium mb-1">Date</label>
           <input id="ppl-date" type="date" class="input-field" value="${log ? log.entry_date : today}"></div>
         <div><label class="block text-sm font-medium mb-1">Worker</label>
-          <select id="ppl-emp" class="input-field" onchange="App._onPProdRecalc()" ${logId ? 'disabled' : ''}>${empOptions}</select>
+          <select id="ppl-emp" class="input-field" onchange="App._onPProdWorkerChange()" ${logId ? 'disabled' : ''}>${empOptions}</select>
           ${logId ? '<input type="hidden" id="ppl-emp-hidden" value="'+(log.employee_id||'')+'">' : ''}
         </div>
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Product *</label>
@@ -2893,24 +2893,68 @@ const App = {
     this._renderPProdStageHint();
   },
 
-  // Decide per-piece rate: product's stage default rate.
+  _onPProdWorkerChange() {
+    // Worker changed → if that worker has a saved per-piece rate for the selected
+    // product / stage, fill it automatically (Components Production jaisa behaviour).
+    this._autoFillPProdRate(true);
+    this._onPProdRecalc();
+  },
+
+  // Decide the per-piece rate. Priority (same idea as Components Production):
+  //   1. Selected WORKER's saved rate for this product/stage (employee_items, match by name)
+  //      - tries "<product> <stage>" (e.g. "Rack Paint"), then plain "<product>"
+  //   2. Product's stage default rate (assemble_rate / paint_rate / pack_rate)
+  // force=true overwrites the field; otherwise only fills if empty/zero.
   _autoFillPProdRate(force = false) {
     const prodSel = document.getElementById('ppl-prod');
     const stageSel = document.getElementById('ppl-stage');
+    const empSel = document.getElementById('ppl-emp');
     const rateInput = document.getElementById('ppl-rate');
     const srcLabel = document.getElementById('ppl-rate-src');
     if (!prodSel || !rateInput || !stageSel) return;
     const prodId = parseInt(prodSel.value) || null;
     const p = (this.state.products || []).find(x => x.id === prodId);
     const stage = stageSel.value;
+    const empId = empSel ? (parseInt(empSel.value) || null) : null;
+    const emp = (this.state.employees || []).find(e => e.id === empId);
+
     let rate = null;
-    if (p) {
-      const r = stage === 'assemble' ? p.assemble_rate : stage === 'paint' ? p.paint_rate : p.pack_rate;
-      if (parseFloat(r) > 0) rate = parseFloat(r);
+    let source = '';
+
+    // 1) Worker's saved rate for this product/stage (employee profile items).
+    if (emp && p && Array.isArray(emp.items)) {
+      const norm = (s) => (s || '').trim().toLowerCase();
+      const prodName = norm(p.name);
+      const stageName = norm(stage);
+      // Build candidate names in priority order (most specific first).
+      const candidates = [
+        prodName + ' ' + stageName,   // "rack paint"
+        stageName + ' ' + prodName,   // "paint rack"
+        prodName + ' - ' + stageName, // "rack - paint"
+        prodName                       // "rack" (any-stage rate)
+      ];
+      for (const cand of candidates) {
+        const it = emp.items.find(x => norm(x.item_name) === cand);
+        if (it && parseFloat(it.rate) > 0) {
+          rate = parseFloat(it.rate);
+          source = 'from worker profile';
+          break;
+        }
+      }
     }
+
+    // 2) Product's stage default rate.
+    if (rate === null && p) {
+      const r = stage === 'assemble' ? p.assemble_rate : stage === 'paint' ? p.paint_rate : p.pack_rate;
+      if (parseFloat(r) > 0) { rate = parseFloat(r); source = 'product default'; }
+    }
+
     if (rate !== null) {
       const cur = parseFloat(rateInput.value) || 0;
-      if (force || cur === 0) { rateInput.value = rate; if (srcLabel) srcLabel.textContent = '(product default)'; }
+      if (force || cur === 0) {
+        rateInput.value = rate;
+        if (srcLabel) srcLabel.textContent = source ? '(' + source + ')' : '';
+      }
     } else if (srcLabel) { srcLabel.textContent = ''; }
   },
 

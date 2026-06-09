@@ -6,7 +6,25 @@
 - **Goal**: Complete business CRM for Two Star Industries — manage clients, ledgers, inventory, raw materials, manufacturing recipes, employees, side expenses, and bills with auto Net Profit tracking.
 - **Stack**: Hono (TypeScript) + Cloudflare Pages + Cloudflare D1 (SQLite) + TailwindCSS + Vanilla JS frontend
 
-## What's New (latest update — 2026-06-09) — Products Manufacturing Worker Stages (Assemble → Paint → Pack)
+## What's New (latest update — 2026-06-09) — Products Manufacturing: auto per-pcs rate from worker profile
+
+**Products Manufacturing** ka **Log Production** ab bilkul **Components Production** jaisa kaam karta hai: jab aap **component/product select** karke phir **employee (worker) select** karte hain, to us worker ke **profile (Per Piece Items)** se per-pcs rate **automatically fetch** ho jata hai — bar bar rate likhne ki zaroorat nahi.
+
+### Rate auto-fill priority (Products Manufacturing — Assemble / Paint / Pack)
+1. **Worker profile rate** — selected worker ke "Per Piece Items" se rate match hota hai. Matching names (case-insensitive), most-specific first:
+   - `"<Product> <Stage>"` (e.g. `Rack Paint`)
+   - `"<Stage> <Product>"` (e.g. `Paint Rack`)
+   - `"<Product> - <Stage>"` (e.g. `Rack - Paint`)
+   - `"<Product>"` (any-stage rate, e.g. `Rack`)
+2. **Product stage default rate** — agar worker profile me match na mile, to product ka `assemble_rate` / `paint_rate` / `pack_rate` use hota hai.
+
+Rate field ke saath **source label** (`from worker profile` ya `product default`) bhi dikhta hai, taaki pata chale rate kahan se aaya. Worker change karne par rate dobara auto-fill ho jata hai (`_onPProdWorkerChange`).
+
+> Tip: kisi worker ko per-product/stage rate dene ke liye, **Employee editor → Salary Type: Per Piece → Items** me item name aise rakhein jaisa upar diya hai (e.g. `Rack Paint` with rate). Phir Products Manufacturing > Log Production me wahi rate auto aayega.
+
+---
+
+## Previous update (2026-06-09) — Products Manufacturing Worker Stages (Assemble → Paint → Pack)
 
 **Products Manufacturing** ab **Components Production** ki tarah worker production track karta hai, aur real-world flow ko model karta hai:
 
