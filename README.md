@@ -6,7 +6,41 @@
 - **Goal**: Complete business CRM for Two Star Industries — manage clients, ledgers, inventory, raw materials, manufacturing recipes, employees, side expenses, and bills with auto Net Profit tracking.
 - **Stack**: Hono (TypeScript) + Cloudflare Pages + Cloudflare D1 (SQLite) + TailwindCSS + Vanilla JS frontend
 
-## What's New (latest update — 2026-06-09) — Dashboard Restructure + Calendar "View Days" Fix
+## What's New (latest update — 2026-06-09) — Products Manufacturing Worker Stages (Assemble → Paint → Pack)
+
+**Products Manufacturing** ab **Components Production** ki tarah worker production track karta hai, aur real-world flow ko model karta hai:
+
+```
+Raw Material → Components → ASSEMBLE (non-painted) → PAINT → PACK (final finished product)
+```
+
+### What was added
+- **"Log Production" button** (header + per-row Action) in Products Manufacturing — exactly like Components Production.
+- **3-stage worker logging** with per-piece payout per stage:
+  - **Assemble** — components/raw material stock se non-painted product banta hai.
+  - **Paint** — assembled (un-painted) stock paint hota hai.
+  - **Pack** — painted stock + **Set Items** (e.g. tyres, rolling 460, tiers) box me pack ho kar **final finished product** banta hai (auto-added to Inventory).
+- **Stage stock columns** in the products table: Buildable · Assembled (un-painted) · Painted · Packed (final).
+- **Set Items** in the product editor — extra parts (component ya raw material) jo pack stage par lagte hain, with auto stock deduction.
+- **Per-stage default rates** (Assemble / Paint / Pack) in product editor — Log Production me auto-fill ho jate hain.
+- **"Recent Production Log"** table — kis worker ne kis stage par kitne pieces banaye, with payout. Har stage payout worker profile + weekly (Thu→Wed) total me automatically add hota hai.
+- **Stock guards**: paint > assembled ya pack > painted ya set-item shortage par clear error. **Delete** poora stock movement + set-item usage + payout reverse karta hai.
+
+#### DB migration `0013_product_manufacturing_stages.sql`
+- `products`: added `assembled_qty`, `painted_qty`, `packed_qty`, `assemble_rate`, `paint_rate`, `pack_rate`.
+- New tables: `product_set_items`, `product_production_logs`, `product_set_usage`.
+- `employee_transactions`: added `product_log_id` (reverse link to stage payout).
+
+#### New API Endpoints
+- `GET /api/product-production` — list stage logs (filters: employee_id, product_id, stage, from, to)
+- `POST /api/product-production` — record a stage (assemble/paint/pack); moves stock + records per-piece payout
+- `PUT /api/product-production/:id` — edit date/qty/rate/notes (adjusts stage stock by delta)
+- `DELETE /api/product-production/:id` — reverse stock movement, set-item usage, and payout
+- `GET/POST/PUT /api/products` extended to read/write `set_items` + stage rates
+
+---
+
+## Previous update (2026-06-09) — Dashboard Restructure + Calendar "View Days" Fix
 
 This update focuses on two requested improvements:
 

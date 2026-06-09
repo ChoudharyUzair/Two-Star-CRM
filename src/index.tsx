@@ -959,9 +959,20 @@ app.get('/api/products', requireAuth, async (c) => {
     compByProduct[pc.product_id].push(pc)
   }
 
+  // Set items (extra parts added at PACK stage), enriched with current stock.
+  const setItems = await c.env.DB.prepare(
+    `SELECT * FROM product_set_items ORDER BY product_id, sort_order, id`
+  ).all()
+  const setByProduct: Record<number, any[]> = {}
+  for (const si of (setItems.results as any[])) {
+    if (!setByProduct[si.product_id]) setByProduct[si.product_id] = []
+    setByProduct[si.product_id].push(si)
+  }
+
   const list = (products.results as any[]).map(p => {
     const ings = ingByProduct[p.id] || []
     const comps = compByProduct[p.id] || []
+    const set_items = setByProduct[p.id] || []
     // buildable = floor(min over all recipe lines of (available / qty_required))
     let buildable: number | null = null
     let cost_per_unit = 0
@@ -994,6 +1005,7 @@ app.get('/api/products', requireAuth, async (c) => {
       ...p,
       ingredients: ings,
       components: comps,
+      set_items,
       buildable_units: buildable === null ? 0 : Math.floor(buildable),
       cost_per_unit
     }
@@ -1019,7 +1031,13 @@ app.get('/api/products/:id', requireAuth, async (c) => {
      WHERE pc.product_id = ?
      ORDER BY pc.sort_order ASC, pc.id ASC`
   ).bind(id).all()
-  return c.json({ product, ingredients: ingredients.results, components: components.results })
+  const setItems = await c.env.DB.prepare(
+    `SELECT * FROM product_set_items WHERE product_id = ? ORDER BY sort_order ASC, id ASC`
+  ).bind(id).all()
+  const prodLogs = await c.env.DB.prepare(
+    `SELECT * FROM product_production_logs WHERE product_id = ? ORDER BY entry_date DESC, id DESC LIMIT 50`
+  ).bind(id).all()
+  return c.json({ product, ingredients: ingredients.results, components: components.results, set_items: setItems.results, production: prodLogs.results })
 })
 
 async function syncProductIngredients(env: any, productId: number, ingredients: any[]) {
@@ -1056,27 +1074,62 @@ async function syncProductComponents(env: any, productId: number, components: an
   }
 }
 
+// Sync the SET ITEMS of a product (extra parts added at PACK stage)
+async function syncProductSetItems(env: any, productId: number, setItems: any[]) {
+  await env.DB.prepare('DELETE FROM product_set_items WHERE product_id = ?').bind(productId).run()
+  if (!Array.isArray(setItems)) return
+  for (let i = 0; i < setItems.length; i++) {
+    const si = setItems[i]
+    if (!si) continue
+    const qty = parseFloat(si.quantity_required) || 0
+    if (qty <= 0) continue
+    const sourceType = si.source_type || 'component'
+    let name = si.item_name || ''
+    let unit = si.unit || 'pcs'
+    let sourceId = si.source_id || null
+    // Resolve snapshot name + unit from the source table when possible
+    if (sourceType === 'component' && sourceId) {
+      const cp = await env.DB.prepare('SELECT name, unit FROM components WHERE id = ?').bind(sourceId).first() as any
+      if (cp) { name = name || cp.name; unit = cp.unit || unit }
+    } else if (sourceType === 'raw' && sourceId) {
+      const rm = await env.DB.prepare('SELECT name, unit FROM raw_materials WHERE id = ?').bind(sourceId).first() as any
+      if (rm) { name = name || rm.name; unit = rm.unit || unit }
+    } else {
+      sourceId = null
+    }
+    if (!name) continue
+    await env.DB.prepare(
+      `INSERT INTO product_set_items (product_id, source_type, source_id, item_name, unit, quantity_required, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).bind(productId, sourceType, sourceId, name, unit, qty, i).run()
+  }
+}
+
 app.post('/api/products', requireAuth, async (c) => {
-  const { name, unit, category, notes, sale_rate, ingredients, components } = await c.req.json()
+  const { name, unit, category, notes, sale_rate, ingredients, components, set_items, assemble_rate, paint_rate, pack_rate } = await c.req.json()
   if (!name) return c.json({ error: 'Name required' }, 400)
   const result = await c.env.DB.prepare(
-    `INSERT INTO products (name, unit, category, notes, sale_rate) VALUES (?, ?, ?, ?, ?)`
-  ).bind(name, unit || 'pcs', category || '', notes || '', parseFloat(sale_rate) || 0).run()
+    `INSERT INTO products (name, unit, category, notes, sale_rate, assemble_rate, paint_rate, pack_rate) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(name, unit || 'pcs', category || '', notes || '', parseFloat(sale_rate) || 0,
+    parseFloat(assemble_rate) || 0, parseFloat(paint_rate) || 0, parseFloat(pack_rate) || 0).run()
   const productId = result.meta.last_row_id as number
   await syncProductIngredients(c.env, productId, ingredients || [])
   await syncProductComponents(c.env, productId, components || [])
+  await syncProductSetItems(c.env, productId, set_items || [])
   return c.json({ id: productId })
 })
 
 app.put('/api/products/:id', requireAuth, async (c) => {
   const id = parseInt(c.req.param('id'))
-  const { name, unit, category, notes, sale_rate, ingredients, components } = await c.req.json()
+  const { name, unit, category, notes, sale_rate, ingredients, components, set_items, assemble_rate, paint_rate, pack_rate } = await c.req.json()
   if (!name) return c.json({ error: 'Name required' }, 400)
   await c.env.DB.prepare(
-    `UPDATE products SET name=?, unit=?, category=?, notes=?, sale_rate=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
-  ).bind(name, unit || 'pcs', category || '', notes || '', parseFloat(sale_rate) || 0, id).run()
+    `UPDATE products SET name=?, unit=?, category=?, notes=?, sale_rate=?, assemble_rate=?, paint_rate=?, pack_rate=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
+  ).bind(name, unit || 'pcs', category || '', notes || '', parseFloat(sale_rate) || 0,
+    parseFloat(assemble_rate) || 0, parseFloat(paint_rate) || 0, parseFloat(pack_rate) || 0, id).run()
   await syncProductIngredients(c.env, id, ingredients || [])
   await syncProductComponents(c.env, id, components || [])
+  await syncProductSetItems(c.env, id, set_items || [])
   return c.json({ success: true })
 })
 
@@ -1163,6 +1216,259 @@ app.post('/api/products/:id/build', requireAuth, async (c) => {
   }
 
   return c.json({ success: true, units_built: u, added_to_inventory: !!add_to_inventory })
+})
+
+// =====================================================
+// ===== PRODUCT MANUFACTURING STAGE PRODUCTION ========
+//   Flow:  COMPONENTS  ->  ASSEMBLE  ->  PAINT  ->  PACK (final)
+//   Each stage logged by a worker who is paid per piece.
+// =====================================================
+
+// List product production logs (optional filters)
+app.get('/api/product-production', requireAuth, async (c) => {
+  const empId = c.req.query('employee_id')
+  const prodId = c.req.query('product_id')
+  const stage = c.req.query('stage')
+  const from = c.req.query('from')
+  const to = c.req.query('to')
+  let sql = 'SELECT * FROM product_production_logs WHERE 1=1'
+  const binds: any[] = []
+  if (empId) { sql += ' AND employee_id = ?'; binds.push(empId) }
+  if (prodId) { sql += ' AND product_id = ?'; binds.push(prodId) }
+  if (stage) { sql += ' AND stage = ?'; binds.push(stage) }
+  if (from) { sql += ' AND entry_date >= ?'; binds.push(from) }
+  if (to) { sql += ' AND entry_date <= ?'; binds.push(to) }
+  sql += ' ORDER BY entry_date DESC, id DESC'
+  const res = await c.env.DB.prepare(sql).bind(...binds).all()
+  return c.json({ production: res.results })
+})
+
+// Record a product stage production entry.
+// body: { entry_date, stage('assemble'|'paint'|'pack'), product_id, employee_id, quantity, rate, deduct, notes }
+app.post('/api/product-production', requireAuth, async (c) => {
+  const body = await c.req.json()
+  const { entry_date, stage, product_id, employee_id, quantity, rate, deduct, notes } = body
+  const qty = parseFloat(quantity) || 0
+  const validStages = ['assemble', 'paint', 'pack']
+  if (!product_id) return c.json({ error: 'Product required' }, 400)
+  if (!validStages.includes(stage)) return c.json({ error: 'Invalid stage' }, 400)
+  if (qty <= 0) return c.json({ error: 'Quantity must be > 0' }, 400)
+
+  const product = await c.env.DB.prepare('SELECT * FROM products WHERE id = ?').bind(product_id).first() as any
+  if (!product) return c.json({ error: 'Product not found' }, 404)
+
+  let emp: any = null
+  if (employee_id) emp = await c.env.DB.prepare('SELECT * FROM employees WHERE id = ?').bind(employee_id).first()
+
+  // Default rate by stage if rate not given
+  const stageDefaultRate = stage === 'assemble' ? (parseFloat(product.assemble_rate) || 0)
+    : stage === 'paint' ? (parseFloat(product.paint_rate) || 0)
+    : (parseFloat(product.pack_rate) || 0)
+  const r = (rate === undefined || rate === null || rate === '') ? stageDefaultRate : (parseFloat(rate) || 0)
+  const payout = qty * r
+  const doDeduct = deduct === false ? 0 : 1
+  const dateStr = entry_date || new Date().toISOString().slice(0, 10)
+
+  const assembled = parseFloat(product.assembled_qty) || 0
+  const painted = parseFloat(product.painted_qty) || 0
+
+  // ---- Stock movement checks + apply ----
+  if (stage === 'assemble') {
+    // Consume the recipe COMPONENTS (and raw materials) for `qty` products.
+    if (doDeduct) {
+      const compRes = await c.env.DB.prepare(
+        `SELECT pc.*, cp.name as comp_name, cp.quantity as comp_quantity
+         FROM product_components pc LEFT JOIN components cp ON cp.id = pc.component_id
+         WHERE pc.product_id = ?`
+      ).bind(product_id).all()
+      const comps = compRes.results as any[]
+      const ingRes = await c.env.DB.prepare(
+        `SELECT pi.*, rm.name as raw_name, rm.quantity as raw_quantity
+         FROM product_ingredients pi LEFT JOIN raw_materials rm ON rm.id = pi.raw_material_id
+         WHERE pi.product_id = ?`
+      ).bind(product_id).all()
+      const ings = ingRes.results as any[]
+      const shortages: string[] = []
+      for (const pc of comps) {
+        const need = (parseFloat(pc.quantity_required) || 0) * qty
+        const have = parseFloat(pc.comp_quantity) || 0
+        if (need > have + 1e-9) shortages.push(`${pc.comp_name || 'Component'}: need ${+need.toFixed(3)}, have ${+have.toFixed(3)}`)
+      }
+      for (const ing of ings) {
+        const need = (parseFloat(ing.quantity_required) || 0) * qty
+        const have = parseFloat(ing.raw_quantity) || 0
+        if (need > have + 1e-9) shortages.push(`${ing.raw_name || 'Raw material'}: need ${+need.toFixed(3)}, have ${+have.toFixed(3)}`)
+      }
+      if (shortages.length > 0) return c.json({ error: 'Not enough stock to assemble this quantity.', shortages }, 400)
+      for (const pc of comps) {
+        const need = (parseFloat(pc.quantity_required) || 0) * qty
+        if (need > 0) await c.env.DB.prepare('UPDATE components SET quantity = MAX(0, quantity - ?), updated_at=CURRENT_TIMESTAMP WHERE id = ?').bind(need, pc.component_id).run()
+      }
+      for (const ing of ings) {
+        const need = (parseFloat(ing.quantity_required) || 0) * qty
+        if (need > 0) await c.env.DB.prepare('UPDATE raw_materials SET quantity = MAX(0, quantity - ?), total_value = MAX(0, quantity - ?) * rate, updated_at=CURRENT_TIMESTAMP WHERE id = ?').bind(need, need, ing.raw_material_id).run()
+      }
+    }
+    await c.env.DB.prepare('UPDATE products SET assembled_qty = assembled_qty + ?, updated_at=CURRENT_TIMESTAMP WHERE id = ?').bind(qty, product_id).run()
+  } else if (stage === 'paint') {
+    if (doDeduct && qty > assembled + 1e-9) {
+      return c.json({ error: `Not enough assembled stock to paint. Assembled = ${+assembled.toFixed(3)}, requested = ${qty}` }, 400)
+    }
+    await c.env.DB.prepare('UPDATE products SET assembled_qty = MAX(0, assembled_qty - ?), painted_qty = painted_qty + ?, updated_at=CURRENT_TIMESTAMP WHERE id = ?').bind(doDeduct ? qty : 0, qty, product_id).run()
+  }
+
+  // Insert the log (we get id; pack stage records set-usage detail after)
+  const insLog = await c.env.DB.prepare(
+    `INSERT INTO product_production_logs (entry_date, stage, product_id, product_name, employee_id, employee_name, quantity, rate, payout, deducted, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(dateStr, stage, product_id, product.name, employee_id || null, emp?.name || '', qty, r, payout, doDeduct, notes || '').run()
+  const logId = insLog.meta.last_row_id as number
+
+  if (stage === 'pack') {
+    if (doDeduct && qty > painted + 1e-9) {
+      // rollback the log we just created
+      await c.env.DB.prepare('DELETE FROM product_production_logs WHERE id = ?').bind(logId).run()
+      return c.json({ error: `Not enough painted stock to pack. Painted = ${+painted.toFixed(3)}, requested = ${qty}` }, 400)
+    }
+    // Consume set items (tyres, rolling, tiers, etc.)
+    if (doDeduct) {
+      const setRes = await c.env.DB.prepare('SELECT * FROM product_set_items WHERE product_id = ?').bind(product_id).all()
+      const setItems = setRes.results as any[]
+      // pre-check stock
+      const shortages: string[] = []
+      for (const si of setItems) {
+        const need = (parseFloat(si.quantity_required) || 0) * qty
+        if (need <= 0) continue
+        if (si.source_type === 'component' && si.source_id) {
+          const cp = await c.env.DB.prepare('SELECT quantity FROM components WHERE id = ?').bind(si.source_id).first() as any
+          const have = cp ? (parseFloat(cp.quantity) || 0) : 0
+          if (need > have + 1e-9) shortages.push(`${si.item_name}: need ${+need.toFixed(3)}, have ${+have.toFixed(3)}`)
+        } else if (si.source_type === 'raw' && si.source_id) {
+          const rm = await c.env.DB.prepare('SELECT quantity FROM raw_materials WHERE id = ?').bind(si.source_id).first() as any
+          const have = rm ? (parseFloat(rm.quantity) || 0) : 0
+          if (need > have + 1e-9) shortages.push(`${si.item_name}: need ${+need.toFixed(3)}, have ${+have.toFixed(3)}`)
+        }
+      }
+      if (shortages.length > 0) {
+        await c.env.DB.prepare('DELETE FROM product_production_logs WHERE id = ?').bind(logId).run()
+        return c.json({ error: 'Not enough set-item stock to pack this quantity.', shortages }, 400)
+      }
+      for (const si of setItems) {
+        const need = (parseFloat(si.quantity_required) || 0) * qty
+        if (need <= 0) continue
+        if (si.source_type === 'component' && si.source_id) {
+          await c.env.DB.prepare('UPDATE components SET quantity = MAX(0, quantity - ?), updated_at=CURRENT_TIMESTAMP WHERE id = ?').bind(need, si.source_id).run()
+        } else if (si.source_type === 'raw' && si.source_id) {
+          await c.env.DB.prepare('UPDATE raw_materials SET quantity = MAX(0, quantity - ?), total_value = MAX(0, quantity - ?) * rate, updated_at=CURRENT_TIMESTAMP WHERE id = ?').bind(need, need, si.source_id).run()
+        }
+        await c.env.DB.prepare('INSERT INTO product_set_usage (product_log_id, source_type, source_id, item_name, qty_used) VALUES (?, ?, ?, ?, ?)').bind(logId, si.source_type, si.source_id || null, si.item_name || '', need).run()
+      }
+    }
+    // Move painted -> packed (final finished product). Also add to inventory.
+    await c.env.DB.prepare('UPDATE products SET painted_qty = MAX(0, painted_qty - ?), packed_qty = packed_qty + ?, updated_at=CURRENT_TIMESTAMP WHERE id = ?').bind(doDeduct ? qty : 0, qty, product_id).run()
+    const existing = await c.env.DB.prepare('SELECT id FROM inventory WHERE name = ? COLLATE NOCASE').bind(product.name).first() as any
+    if (existing) {
+      await c.env.DB.prepare('UPDATE inventory SET quantity = quantity + ?, updated_at=CURRENT_TIMESTAMP WHERE id = ?').bind(qty, existing.id).run()
+    } else {
+      await c.env.DB.prepare('INSERT INTO inventory (name, unit, rate, quantity, category, notes) VALUES (?, ?, ?, ?, ?, ?)').bind(product.name, product.unit || 'pcs', parseFloat(product.sale_rate) || 0, qty, product.category || '', product.notes || '').run()
+    }
+  }
+
+  // Per-piece worker payout (shows in worker profile + weekly total)
+  let empTxId: number | null = null
+  if (employee_id && payout > 0) {
+    const stageLabel = stage === 'assemble' ? 'Assemble' : stage === 'paint' ? 'Paint' : 'Pack'
+    const insTx = await c.env.DB.prepare(
+      `INSERT INTO employee_transactions
+        (employee_id, entry_date, type, amount, description, entry_type, item_id, item_name, quantity, rate, paid_amount, product_log_id)
+       VALUES (?, ?, 'salary', ?, ?, 'per_piece', NULL, ?, ?, ?, 0, ?)`
+    ).bind(employee_id, dateStr, payout, `${stageLabel}: ${product.name}`, `${product.name} (${stageLabel})`, qty, r, logId).run()
+    empTxId = insTx.meta.last_row_id as number
+    await c.env.DB.prepare('UPDATE product_production_logs SET emp_tx_id = ? WHERE id = ?').bind(empTxId, logId).run()
+  }
+
+  return c.json({ id: logId, payout, emp_tx_id: empTxId })
+})
+
+// Edit a product production log (only safe fields: date, quantity, rate, notes).
+app.put('/api/product-production/:id', requireAuth, async (c) => {
+  const id = parseInt(c.req.param('id'))
+  const body = await c.req.json()
+  const old = await c.env.DB.prepare('SELECT * FROM product_production_logs WHERE id = ?').bind(id).first() as any
+  if (!old) return c.json({ error: 'Not found' }, 404)
+
+  const newQty = parseFloat(body.quantity)
+  const finalQty = isNaN(newQty) ? (parseFloat(old.quantity) || 0) : newQty
+  const newRate = (body.rate === undefined || body.rate === null || body.rate === '') ? (parseFloat(old.rate) || 0) : (parseFloat(body.rate) || 0)
+  const newDate = body.entry_date || old.entry_date
+  const newNotes = body.notes !== undefined ? body.notes : old.notes
+  const payout = finalQty * newRate
+  const qtyDelta = finalQty - (parseFloat(old.quantity) || 0)
+
+  // Adjust the stage stock counters by the delta (does NOT re-adjust consumed
+  // components/set-items to keep edits simple & predictable).
+  if (old.product_id && qtyDelta !== 0) {
+    if (old.stage === 'assemble') {
+      await c.env.DB.prepare('UPDATE products SET assembled_qty = MAX(0, assembled_qty + ?) WHERE id = ?').bind(qtyDelta, old.product_id).run()
+    } else if (old.stage === 'paint') {
+      await c.env.DB.prepare('UPDATE products SET painted_qty = MAX(0, painted_qty + ?) WHERE id = ?').bind(qtyDelta, old.product_id).run()
+    } else if (old.stage === 'pack') {
+      await c.env.DB.prepare('UPDATE products SET packed_qty = MAX(0, packed_qty + ?) WHERE id = ?').bind(qtyDelta, old.product_id).run()
+    }
+  }
+
+  await c.env.DB.prepare('UPDATE product_production_logs SET entry_date=?, quantity=?, rate=?, payout=?, notes=? WHERE id=?')
+    .bind(newDate, finalQty, newRate, payout, newNotes, id).run()
+  if (old.emp_tx_id) {
+    await c.env.DB.prepare('UPDATE employee_transactions SET entry_date=?, amount=?, quantity=?, rate=? WHERE id=?')
+      .bind(newDate, payout, finalQty, newRate, old.emp_tx_id).run()
+  }
+  return c.json({ success: true, payout })
+})
+
+// Delete a product production log (reverses stock movement + set-item usage + payout).
+app.delete('/api/product-production/:id', requireAuth, async (c) => {
+  const id = parseInt(c.req.param('id'))
+  const old = await c.env.DB.prepare('SELECT * FROM product_production_logs WHERE id = ?').bind(id).first() as any
+  if (!old) return c.json({ error: 'Not found' }, 404)
+  const qty = parseFloat(old.quantity) || 0
+
+  if (old.product_id) {
+    if (old.stage === 'assemble') {
+      // remove assembled units; if it had deducted recipe stock, restore it
+      await c.env.DB.prepare('UPDATE products SET assembled_qty = MAX(0, assembled_qty - ?) WHERE id = ?').bind(qty, old.product_id).run()
+      if (old.deducted) {
+        const compRes = await c.env.DB.prepare('SELECT * FROM product_components WHERE product_id = ?').bind(old.product_id).all()
+        for (const pc of (compRes.results as any[])) {
+          const back = (parseFloat(pc.quantity_required) || 0) * qty
+          if (back > 0) await c.env.DB.prepare('UPDATE components SET quantity = quantity + ? WHERE id = ?').bind(back, pc.component_id).run()
+        }
+        const ingRes = await c.env.DB.prepare('SELECT * FROM product_ingredients WHERE product_id = ?').bind(old.product_id).all()
+        for (const ing of (ingRes.results as any[])) {
+          const back = (parseFloat(ing.quantity_required) || 0) * qty
+          if (back > 0) await c.env.DB.prepare('UPDATE raw_materials SET quantity = quantity + ?, total_value = (quantity + ?) * rate WHERE id = ?').bind(back, back, ing.raw_material_id).run()
+        }
+      }
+    } else if (old.stage === 'paint') {
+      await c.env.DB.prepare('UPDATE products SET painted_qty = MAX(0, painted_qty - ?), assembled_qty = assembled_qty + ? WHERE id = ?').bind(qty, old.deducted ? qty : 0, old.product_id).run()
+    } else if (old.stage === 'pack') {
+      await c.env.DB.prepare('UPDATE products SET packed_qty = MAX(0, packed_qty - ?), painted_qty = painted_qty + ? WHERE id = ?').bind(qty, old.deducted ? qty : 0, old.product_id).run()
+      // restore set-item usage
+      const usage = await c.env.DB.prepare('SELECT * FROM product_set_usage WHERE product_log_id = ?').bind(id).all()
+      for (const u of (usage.results as any[])) {
+        const back = parseFloat(u.qty_used) || 0
+        if (back <= 0 || !u.source_id) continue
+        if (u.source_type === 'component') await c.env.DB.prepare('UPDATE components SET quantity = quantity + ? WHERE id = ?').bind(back, u.source_id).run()
+        else if (u.source_type === 'raw') await c.env.DB.prepare('UPDATE raw_materials SET quantity = quantity + ?, total_value = (quantity + ?) * rate WHERE id = ?').bind(back, back, u.source_id).run()
+      }
+      // reverse inventory
+      const inv = await c.env.DB.prepare('SELECT id, quantity FROM inventory WHERE name = ? COLLATE NOCASE').bind(old.product_name).first() as any
+      if (inv) await c.env.DB.prepare('UPDATE inventory SET quantity = MAX(0, quantity - ?), updated_at=CURRENT_TIMESTAMP WHERE id = ?').bind(qty, inv.id).run()
+    }
+  }
+  if (old.emp_tx_id) await c.env.DB.prepare('DELETE FROM employee_transactions WHERE id = ?').bind(old.emp_tx_id).run()
+  await c.env.DB.prepare('DELETE FROM product_production_logs WHERE id = ?').bind(id).run()
+  return c.json({ success: true })
 })
 
 // =====================================================

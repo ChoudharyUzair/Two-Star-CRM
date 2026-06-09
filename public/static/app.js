@@ -2118,14 +2118,18 @@ const App = {
       <div class="page-header"><h1 class="page-title"><i class="fas fa-industry text-purple-600"></i>Products Manufacturing</h1></div>
       <div class="p-6"><div class="text-gray-400 text-center py-8"><i class="fas fa-spinner fa-spin text-2xl"></i></div></div>`;
     try {
-      const [pData, rmData, cData] = await Promise.all([
+      const [pData, rmData, cData, eData, ppData] = await Promise.all([
         this.api.get('/api/products'),
         this.api.get('/api/raw-materials'),
-        this.api.get('/api/components')
+        this.api.get('/api/components'),
+        this.api.get('/api/employees'),
+        this.api.get('/api/product-production')
       ]);
       this.state.products = pData.products || [];
       this.state.rawMaterials = rmData.items || [];
       this.state.componentsList = cData.components || [];
+      this.state.employees = eData.employees || [];
+      this.state.productProductionLogs = ppData.production || [];
       this.renderProducts();
     } catch (e) { this.toast('Failed to load', 'error'); }
   },
@@ -2136,39 +2140,49 @@ const App = {
       (p.name || '').toLowerCase().includes(f) ||
       (p.category || '').toLowerCase().includes(f)) : this.state.products;
     const totalBuildable = this.state.products.reduce((s, p) => s + (parseFloat(p.buildable_units) || 0), 0);
-    const totalCost = this.state.products.reduce((s, p) => s + (parseFloat(p.cost_per_unit) || 0) * (parseFloat(p.buildable_units) || 0), 0);
+    const totalPacked = this.state.products.reduce((s, p) => s + (parseFloat(p.packed_qty) || 0), 0);
+    const logs = this.state.productProductionLogs || [];
+    const today = new Date().toISOString().slice(0, 10);
+    const todayPayout = logs.filter(l => l.entry_date === today).reduce((s, l) => s + (parseFloat(l.payout) || 0), 0);
+    const stageLabel = (s) => s === 'assemble' ? 'Assemble' : s === 'paint' ? 'Paint' : 'Pack';
+    const stageBadge = (s) => {
+      const map = { assemble: 'bg-amber-100 text-amber-700 border-amber-200', paint: 'bg-indigo-100 text-indigo-700 border-indigo-200', pack: 'bg-green-100 text-green-700 border-green-200' };
+      const ic = { assemble: 'fa-screwdriver-wrench', paint: 'fa-fill-drip', pack: 'fa-box' };
+      return `<span class="inline-block px-2 py-0.5 rounded text-xs border ${map[s] || 'bg-gray-100 text-gray-700'}"><i class="fas ${ic[s] || 'fa-circle'} mr-1"></i>${stageLabel(s)}</span>`;
+    };
     const area = document.getElementById('content-area');
     area.innerHTML = `
       <div class="page-header">
         <div>
           <h1 class="page-title"><i class="fas fa-industry text-purple-600"></i>Products Manufacturing</h1>
-          <p class="page-subtitle">${this.state.products.length} product(s) · Recipes linked to Raw Material stock</p>
+          <p class="page-subtitle">${this.state.products.length} product(s) · Components → Assemble → Paint → Pack</p>
         </div>
         <div class="flex gap-2 flex-wrap">
-          <input type="text" id="prod-search" placeholder="Search products..." class="input-field" style="max-width:240px;" oninput="App.renderProducts(this.value)" value="${this.escapeAttr(filter)}">
+          <input type="text" id="prod-search" placeholder="Search products..." class="input-field" style="max-width:200px;" oninput="App.renderProducts(this.value)" value="${this.escapeAttr(filter)}">
+          <button onclick="App.showProductProductionEditor()" class="btn btn-secondary"><i class="fas fa-hard-hat"></i> Log Production</button>
           <button onclick="App.showProductEditor()" class="btn btn-primary"><i class="fas fa-plus"></i> Add Product</button>
         </div>
       </div>
       <div class="p-4 md:p-6 space-y-5">
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div class="stat-card"><p class="text-xs text-gray-500">Products</p><p class="text-xl font-bold text-blue-600">${this.state.products.length}</p></div>
-          <div class="stat-card"><p class="text-xs text-gray-500">Buildable Now (sum)</p><p class="text-xl font-bold amount-running">${this.fmt(totalBuildable)}</p></div>
-          <div class="stat-card"><p class="text-xs text-gray-500">Material Cost (Buildable)</p><p class="text-xl font-bold text-purple-600">PKR ${this.fmt(totalCost)}</p></div>
-          <div class="stat-card"><p class="text-xs text-gray-500">Out of Stock</p><p class="text-xl font-bold text-red-600">${this.state.products.filter(p => (parseFloat(p.buildable_units)||0) === 0).length}</p></div>
+          <div class="stat-card"><p class="text-xs text-gray-500">Buildable Now (assemble)</p><p class="text-xl font-bold amount-running">${this.fmt(totalBuildable)}</p></div>
+          <div class="stat-card"><p class="text-xs text-gray-500">Packed (final) stock</p><p class="text-xl font-bold text-green-600">${this.fmt(totalPacked)}</p></div>
+          <div class="stat-card"><p class="text-xs text-gray-500">Worker Payout Today</p><p class="text-xl font-bold text-purple-600">PKR ${this.fmt(todayPayout)}</p></div>
         </div>
 
         <div class="bg-white rounded-xl shadow-sm overflow-hidden">
           <div class="overflow-x-auto"><table class="ledger-table">
             <thead><tr>
-              <th style="width:40px;">#</th>
+              <th style="width:36px;">#</th>
               <th>Product</th>
-              <th style="width:80px;">Unit</th>
               <th style="width:120px;">Category</th>
               <th>Recipe (Per 1 unit)</th>
-              <th style="width:140px;text-align:right;">Cost / Unit</th>
-              <th style="width:140px;text-align:right;">Sale Rate</th>
-              <th style="width:140px;text-align:center;">Buildable Now</th>
-              <th style="width:160px;">Action</th>
+              <th style="width:90px;text-align:center;" title="Components ready se kitne assemble ho sakte hain">Buildable</th>
+              <th style="width:80px;text-align:center;" title="Assembled, abhi paint nahi hue">Assembled<br><span class="text-xs font-normal text-gray-400">(un-painted)</span></th>
+              <th style="width:70px;text-align:center;" title="Paint ho chuke, pack ka intezaar">Painted</th>
+              <th style="width:80px;text-align:center;" title="Final finished product (packed)">Packed<br><span class="text-xs font-normal text-gray-400">(final)</span></th>
+              <th style="width:150px;">Action</th>
             </tr></thead><tbody>
               ${items.length === 0 ? `<tr><td colspan="9" class="text-center py-10 text-gray-500">
                 <i class="fas fa-industry text-4xl mb-2 block opacity-40"></i>
@@ -2177,6 +2191,7 @@ const App = {
               items.map((p, i) => {
                 const ings = p.ingredients || [];
                 const comps = p.components || [];
+                const sets = p.set_items || [];
                 const rawStr = ings.map(ing => {
                     const rmName = ing.raw_name || '(deleted)';
                     const have = parseFloat(ing.raw_quantity) || 0;
@@ -2197,26 +2212,32 @@ const App = {
                       <i class="fas fa-puzzle-piece opacity-60 mr-0.5"></i><strong>${this.escapeHtml(cName)}</strong>: ${this.fmt(need)} ${this.escapeHtml(unit)} <span class="opacity-70">(stock: ${this.fmt(have)})</span>
                     </span>`;
                   }).join('');
-                const recipeStr = (ings.length === 0 && comps.length === 0)
+                const setStr = sets.map(si => {
+                    const need = parseFloat(si.quantity_required) || 0;
+                    return `<span class="inline-block px-2 py-0.5 rounded text-xs mr-1 mb-1 bg-purple-50 text-purple-700 border border-purple-200" title="Pack stage par lagega">
+                      <i class="fas fa-box-open opacity-60 mr-0.5"></i><strong>${this.escapeHtml(si.item_name || '')}</strong>: ${this.fmt(need)} ${this.escapeHtml(si.unit || 'pcs')} <span class="opacity-70">(pack-set)</span></span>`;
+                  }).join('');
+                const recipeStr = (ings.length === 0 && comps.length === 0 && sets.length === 0)
                   ? '<span class="text-gray-400">No recipe</span>'
-                  : (rawStr + compStr);
+                  : (rawStr + compStr + setStr);
                 const buildable = parseFloat(p.buildable_units) || 0;
+                const assembled = parseFloat(p.assembled_qty) || 0;
+                const painted = parseFloat(p.painted_qty) || 0;
+                const packed = parseFloat(p.packed_qty) || 0;
                 const buildableClass = buildable > 0 ? 'text-green-600' : 'text-red-600';
+                const hasRecipe = (ings.length > 0 || comps.length > 0);
                 return `<tr>
                   <td class="text-gray-500">${i + 1}</td>
-                  <td class="font-semibold">${this.escapeHtml(p.name)}</td>
-                  <td>${this.escapeHtml(p.unit || 'pcs')}</td>
+                  <td class="font-semibold">${this.escapeHtml(p.name)} <span class="text-xs text-gray-400">${this.escapeHtml(p.unit || 'pcs')}</span></td>
                   <td>${this.escapeHtml(p.category || '')}</td>
-                  <td style="min-width: 320px;">${recipeStr}</td>
-                  <td class="text-right">PKR ${this.fmt(p.cost_per_unit)}</td>
-                  <td class="text-right">${parseFloat(p.sale_rate) > 0 ? 'PKR ' + this.fmt(p.sale_rate) : '<span class="text-gray-400">—</span>'}</td>
-                  <td class="text-center">
-                    <span class="text-2xl font-bold ${buildableClass}">${this.fmt(buildable)}</span>
-                    <div class="text-xs text-gray-500">${this.escapeHtml(p.unit || 'pcs')}</div>
-                  </td>
+                  <td style="min-width: 300px;">${recipeStr}</td>
+                  <td class="text-center"><span class="text-lg font-bold ${buildableClass}">${this.fmt(buildable)}</span></td>
+                  <td class="text-center"><span class="text-lg font-bold ${assembled>0?'text-amber-600':'text-gray-300'}">${this.fmt(assembled)}</span></td>
+                  <td class="text-center"><span class="text-lg font-bold ${painted>0?'text-indigo-600':'text-gray-300'}">${this.fmt(painted)}</span></td>
+                  <td class="text-center"><span class="text-lg font-bold ${packed>0?'text-green-600':'text-gray-300'}">${this.fmt(packed)}</span></td>
                   <td>
-                    <button onclick="App.showBuildProduct(${p.id})" class="btn btn-secondary btn-sm" title="Build / Produce" ${(ings.length === 0 && comps.length === 0) ? 'disabled' : ''}><i class="fas fa-hammer"></i></button>
-                    <button onclick="App.showProductEditor(${p.id})" class="btn btn-secondary btn-sm ml-1" title="Edit"><i class="fas fa-edit"></i></button>
+                    <button onclick="App.showProductProductionEditor(null, ${p.id})" class="btn btn-secondary btn-sm" title="Log Production (Assemble / Paint / Pack)"><i class="fas fa-hard-hat"></i></button>
+                    <button onclick="App.showProductEditor(${p.id})" class="btn btn-secondary btn-sm ml-1" title="Edit recipe"><i class="fas fa-edit"></i></button>
                     <button onclick="App.deleteProduct(${p.id})" class="text-red-500 hover:text-red-700 ml-1" title="Delete"><i class="fas fa-trash text-sm"></i></button>
                   </td>
                 </tr>`;
@@ -2224,13 +2245,43 @@ const App = {
             </tbody></table></div>
         </div>
 
-        ${items.length === 0 ? '' : `
-        <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-900">
+        <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+          <div class="px-4 py-3 border-b flex items-center justify-between">
+            <h2 class="font-bold text-gray-800"><i class="fas fa-hard-hat mr-2 text-purple-600"></i>Recent Production Log</h2>
+            <span class="text-xs text-gray-500">Latest ${Math.min(logs.length, 50)} entries · kis ne kitne assemble/paint/pack kiye</span>
+          </div>
+          <div class="overflow-x-auto"><table class="ledger-table">
+            <thead><tr>
+              <th style="width:40px;">#</th><th>Date</th><th>Stage</th><th>Worker</th><th>Product</th>
+              <th class="text-right">Pieces</th><th class="text-right">Rate</th><th class="text-right">Payout</th><th style="width:90px;">Action</th>
+            </tr></thead><tbody>
+              ${logs.length === 0 ? `<tr><td colspan="9" class="text-center py-8 text-gray-500"><i class="fas fa-inbox text-3xl mb-2 block"></i>No production logged yet. Use <strong>Log Production</strong> to record assemble / paint / pack work.</td></tr>` :
+                logs.slice(0, 50).map((l, i) => `<tr>
+                  <td>${i + 1}</td>
+                  <td>${l.entry_date}</td>
+                  <td>${stageBadge(l.stage)}</td>
+                  <td>${l.employee_name ? this.escapeHtml(l.employee_name) : '<span class="text-gray-400">—</span>'}</td>
+                  <td class="font-medium">${this.escapeHtml(l.product_name || '')}</td>
+                  <td class="text-right font-bold text-purple-700">${this.fmt(l.quantity)}</td>
+                  <td class="text-right">PKR ${this.fmt(l.rate)}</td>
+                  <td class="text-right amount-received">PKR ${this.fmt(l.payout)}</td>
+                  <td>
+                    <button onclick="App.showProductProductionEditor(${l.id})" class="btn btn-secondary btn-sm"><i class="fas fa-edit"></i></button>
+                    <button onclick="App.deleteProductProduction(${l.id})" class="text-red-500 ml-1"><i class="fas fa-trash text-sm"></i></button>
+                  </td>
+                </tr>`).join('')}
+            </tbody></table></div>
+        </div>
+
+        <div class="bg-purple-50 border border-purple-200 rounded-xl p-4 text-sm text-purple-900">
           <i class="fas fa-info-circle mr-1"></i>
-          <strong>How it works:</strong> Each product has a recipe (raw materials + quantities per 1 finished unit).
-          The system reads current Raw Material stock and shows how many finished products you can build right now.
-          Click <i class="fas fa-hammer"></i> to actually deduct raw materials and (optionally) add finished units to Inventory.
-        </div>`}
+          <strong>Manufacturing flow:</strong>
+          <span class="inline-block px-2 py-0.5 rounded bg-teal-100 text-teal-700 mx-0.5"><i class="fas fa-puzzle-piece mr-1"></i>Components</span> →
+          <span class="inline-block px-2 py-0.5 rounded bg-amber-100 text-amber-700 mx-0.5"><i class="fas fa-screwdriver-wrench mr-1"></i>Assemble</span> (non-painted) →
+          <span class="inline-block px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 mx-0.5"><i class="fas fa-fill-drip mr-1"></i>Paint</span> →
+          <span class="inline-block px-2 py-0.5 rounded bg-green-100 text-green-700 mx-0.5"><i class="fas fa-box mr-1"></i>Pack</span> (final finished product).
+          Har stage worker karta hai aur per-piece payout uski profile + weekly total mein add hota hai. Pack karte waqt "set items" (e.g. tyres, rolling 460, tiers) stock se minus hote hain.
+        </div>
       </div>`;
   },
 
@@ -2247,6 +2298,14 @@ const App = {
     this._editingProdComponents = (p.components || []).map(pc => ({
       component_id: pc.component_id,
       quantity_required: pc.quantity_required
+    }));
+    // Working copy of set items (extra parts added at PACK stage)
+    this._editingSetItems = (p.set_items || []).map(si => ({
+      source_type: si.source_type || 'component',
+      source_id: si.source_id,
+      item_name: si.item_name || '',
+      unit: si.unit || 'pcs',
+      quantity_required: si.quantity_required
     }));
 
     this.openModal(`
@@ -2271,9 +2330,22 @@ const App = {
             <label class="block text-sm font-medium mb-1">Sale Rate (PKR) — optional</label>
             <input id="p-rate" type="number" step="any" class="input-field" value="${p.sale_rate || 0}">
           </div>
-          <div>
+          <div class="md:col-span-2">
             <label class="block text-sm font-medium mb-1">Notes</label>
             <input id="p-notes" type="text" class="input-field" value="${this.escapeAttr(p.notes || '')}">
+          </div>
+        </div>
+
+        <div class="border-t pt-4">
+          <h3 class="text-base font-bold text-gray-800 mb-2"><i class="fas fa-hard-hat text-purple-500 mr-1"></i>Per-Piece Worker Rates (stage defaults)</h3>
+          <p class="text-xs text-gray-500 mb-2">Log Production karte waqt yeh rate auto-fill hoga (optional).</p>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div><label class="block text-xs text-gray-500 mb-1"><i class="fas fa-screwdriver-wrench text-amber-500 mr-1"></i>Assemble Rate</label>
+              <input id="p-asm-rate" type="number" step="any" class="input-field" value="${p.assemble_rate || 0}"></div>
+            <div><label class="block text-xs text-gray-500 mb-1"><i class="fas fa-fill-drip text-indigo-500 mr-1"></i>Paint Rate</label>
+              <input id="p-paint-rate" type="number" step="any" class="input-field" value="${p.paint_rate || 0}"></div>
+            <div><label class="block text-xs text-gray-500 mb-1"><i class="fas fa-box text-green-500 mr-1"></i>Pack Rate</label>
+              <input id="p-pack-rate" type="number" step="any" class="input-field" value="${p.pack_rate || 0}"></div>
           </div>
         </div>
 
@@ -2305,6 +2377,15 @@ const App = {
           <div id="prod-components-list" class="space-y-2"></div>
         </div>
 
+        <div class="border-t pt-4">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-base font-bold text-gray-800"><i class="fas fa-box-open text-purple-500 mr-1"></i>Set Items — added at PACK stage</h3>
+            <button type="button" onclick="App._addSetItemRow()" class="btn btn-secondary btn-sm"><i class="fas fa-plus"></i> Add Set Item</button>
+          </div>
+          <p class="text-xs text-gray-500 mb-2">Jo extra parts pack karte waqt lagte hain (e.g. tyres, rolling 460, tiers). Yeh component ya raw material stock se aate hain aur Pack stage par minus hote hain.</p>
+          <div id="set-items-list" class="space-y-2"></div>
+        </div>
+
         <div class="flex gap-2 justify-end pt-2 border-t">
           ${id ? `<button type="button" class="btn btn-danger mr-auto" onclick="App.deleteProduct(${id})"><i class="fas fa-trash"></i> Delete</button>` : ''}
           <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
@@ -2315,22 +2396,29 @@ const App = {
 
     this._renderIngredientRows();
     this._renderProdComponentRows();
+    this._renderSetItemRows();
 
     document.getElementById('prod-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       // Read latest values from rows
       this._collectIngredientRows();
       this._collectProdComponentRows();
+      this._collectSetItemRows();
       const ings = (this._editingIngredients || []).filter(i => i.raw_material_id && parseFloat(i.quantity_required) > 0);
       const comps = (this._editingProdComponents || []).filter(i => i.component_id && parseFloat(i.quantity_required) > 0);
+      const sets = (this._editingSetItems || []).filter(i => i.source_id && parseFloat(i.quantity_required) > 0);
       const payload = {
         name: document.getElementById('p-name').value.trim(),
         unit: document.getElementById('p-unit').value || 'pcs',
         category: document.getElementById('p-cat').value,
         notes: document.getElementById('p-notes').value,
         sale_rate: parseFloat(document.getElementById('p-rate').value) || 0,
+        assemble_rate: parseFloat(document.getElementById('p-asm-rate').value) || 0,
+        paint_rate: parseFloat(document.getElementById('p-paint-rate').value) || 0,
+        pack_rate: parseFloat(document.getElementById('p-pack-rate').value) || 0,
         ingredients: ings,
-        components: comps
+        components: comps,
+        set_items: sets
       };
       if (!payload.name) { this.toast('Product name required', 'error'); return; }
       try {
@@ -2525,6 +2613,84 @@ const App = {
     this._renderProdComponentRows();
   },
 
+  // ----- Product SET ITEMS (extra parts at PACK stage) -----
+  _addSetItemRow() {
+    this._collectSetItemRows();
+    if (!this._editingSetItems) this._editingSetItems = [];
+    this._editingSetItems.push({ source_type: 'component', source_id: null, item_name: '', unit: 'pcs', quantity_required: 0 });
+    this._renderSetItemRows();
+  },
+  _removeSetItemRow(idx) {
+    this._collectSetItemRows();
+    this._editingSetItems.splice(idx, 1);
+    this._renderSetItemRows();
+  },
+  _collectSetItemRows() {
+    const list = document.getElementById('set-items-list');
+    if (!list) return;
+    const rows = list.querySelectorAll('.setitem-row');
+    const arr = [];
+    rows.forEach(row => {
+      const sourceType = row.querySelector('.si-type').value || 'component';
+      const sourceId = parseInt(row.querySelector('.si-source').value) || null;
+      const qty = parseFloat(row.querySelector('.si-qty').value) || 0;
+      let name = '', unit = 'pcs';
+      if (sourceType === 'component') {
+        const c = (this.state.componentsList || []).find(x => x.id === sourceId);
+        if (c) { name = c.name; unit = c.unit || 'pcs'; }
+      } else {
+        const r = (this.state.rawMaterials || []).find(x => x.id === sourceId);
+        if (r) { name = r.name; unit = r.unit || ''; }
+      }
+      arr.push({ source_type: sourceType, source_id: sourceId, item_name: name, unit, quantity_required: qty });
+    });
+    this._editingSetItems = arr;
+  },
+  _renderSetItemRows() {
+    const list = document.getElementById('set-items-list');
+    if (!list) return;
+    const rows = this._editingSetItems || [];
+    if (rows.length === 0) {
+      list.innerHTML = `<div class="text-gray-400 text-sm text-center py-4 border-2 border-dashed rounded-lg">Koi set item nahi. <strong>Add Set Item</strong> daba kar tyres / rolling / tiers link karein (optional).</div>`;
+      return;
+    }
+    const comps = this.state.componentsList || [];
+    const rms = this.state.rawMaterials || [];
+    list.innerHTML = rows.map((si, idx) => {
+      const isComp = (si.source_type || 'component') === 'component';
+      const srcOptions = isComp
+        ? `<option value="">-- Select Component --</option>` + comps.map(x => `<option value="${x.id}" ${x.id === si.source_id ? 'selected' : ''}>${this.escapeHtml(x.name)} (Stock: ${this.fmt(x.quantity)} ${this.escapeHtml(x.unit||'pcs')})</option>`).join('')
+        : `<option value="">-- Select Raw Material --</option>` + rms.map(x => `<option value="${x.id}" ${x.id === si.source_id ? 'selected' : ''}>${this.escapeHtml(x.name)} (Stock: ${this.fmt(x.quantity)} ${this.escapeHtml(x.unit||'')})</option>`).join('');
+      return `
+        <div class="setitem-row grid grid-cols-12 gap-2 items-center bg-white border rounded-lg p-2">
+          <div class="col-span-12 md:col-span-3">
+            <label class="block text-xs text-gray-500 mb-1">Source</label>
+            <select class="input-field si-type" onchange="App._onSetItemTypeChange(${idx})">
+              <option value="component" ${isComp ? 'selected' : ''}>Component</option>
+              <option value="raw" ${!isComp ? 'selected' : ''}>Raw Material</option>
+            </select>
+          </div>
+          <div class="col-span-12 md:col-span-6">
+            <label class="block text-xs text-gray-500 mb-1">Item</label>
+            <select class="input-field si-source">${srcOptions}</select>
+          </div>
+          <div class="col-span-9 md:col-span-2">
+            <label class="block text-xs text-gray-500 mb-1">Qty / product</label>
+            <input type="number" step="any" class="input-field si-qty" value="${si.quantity_required || ''}">
+          </div>
+          <div class="col-span-3 md:col-span-1 text-right">
+            <button type="button" onclick="App._removeSetItemRow(${idx})" class="text-red-500 hover:text-red-700 mt-5" title="Remove"><i class="fas fa-trash"></i></button>
+          </div>
+        </div>`;
+    }).join('');
+  },
+  _onSetItemTypeChange(idx) {
+    this._collectSetItemRows();
+    // reset source_id when switching type
+    if (this._editingSetItems[idx]) { this._editingSetItems[idx].source_id = null; }
+    this._renderSetItemRows();
+  },
+
   async deleteProduct(id) {
     if (!confirm('Delete this product and its recipe?')) return;
     try {
@@ -2627,6 +2793,167 @@ const App = {
     }
     html += `<div class="mt-2 text-sm"><span class="text-gray-600">Total recipe cost:</span> <strong class="text-purple-700">PKR ${this.fmt(totalCost)}</strong></div>`;
     preview.innerHTML = html;
+  },
+
+  // ========= PRODUCT STAGE PRODUCTION (Assemble / Paint / Pack) =========
+  // Worker logs how many pieces of a product they assembled, painted, or packed.
+  showProductProductionEditor(logId = null, presetProductId = null) {
+    const log = logId ? (this.state.productProductionLogs || []).find(l => l.id === logId) : null;
+    if (logId && !log) return;
+    const prods = this.state.products || [];
+    const emps = (this.state.employees || []).filter(e => e.active);
+    const today = new Date().toISOString().slice(0, 10);
+    const selProd = log ? log.product_id : presetProductId;
+    const selStage = log ? log.stage : 'assemble';
+
+    const prodOptions = `<option value="">-- Select Product --</option>` +
+      prods.map(p => `<option value="${p.id}" ${selProd == p.id ? 'selected' : ''}>${this.escapeHtml(p.name)} (Buildable: ${this.fmt(p.buildable_units)} · Asm: ${this.fmt(p.assembled_qty)} · Paint: ${this.fmt(p.painted_qty)} · Packed: ${this.fmt(p.packed_qty)})</option>`).join('');
+    const empOptions = `<option value="">-- (Optional) Select Worker --</option>` +
+      emps.map(e => `<option value="${e.id}" ${log && log.employee_id == e.id ? 'selected' : ''}>${this.escapeHtml(e.name)}</option>`).join('');
+    const stageOptions = [
+      { v: 'assemble', l: 'Assemble (components → non-painted product)' },
+      { v: 'paint', l: 'Paint (assembled → painted)' },
+      { v: 'pack', l: 'Pack (painted + set items → final product)' }
+    ].map(s => `<option value="${s.v}" ${selStage === s.v ? 'selected' : ''}>${s.l}</option>`).join('');
+
+    this.openModal(`
+      <h2 class="text-xl font-bold mb-1"><i class="fas fa-hard-hat text-purple-600 mr-2"></i>${logId ? 'Edit' : 'Log'} Product Production</h2>
+      <p class="text-sm text-gray-600 mb-4">Kis worker ne kitne pieces banaye / paint kiye / pack kiye. Stock stage-wise move hoga + worker payout add hoga.</p>
+      <form id="pprod-log-form" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div><label class="block text-sm font-medium mb-1">Date</label>
+          <input id="ppl-date" type="date" class="input-field" value="${log ? log.entry_date : today}"></div>
+        <div><label class="block text-sm font-medium mb-1">Worker</label>
+          <select id="ppl-emp" class="input-field" onchange="App._onPProdRecalc()" ${logId ? 'disabled' : ''}>${empOptions}</select>
+          ${logId ? '<input type="hidden" id="ppl-emp-hidden" value="'+(log.employee_id||'')+'">' : ''}
+        </div>
+        <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Product *</label>
+          <select id="ppl-prod" class="input-field" required onchange="App._onPProdChange()" ${logId ? 'disabled' : ''}>${prodOptions}</select>
+          ${logId ? '<input type="hidden" id="ppl-prod-hidden" value="'+(log.product_id||'')+'">' : ''}
+        </div>
+        <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Stage *</label>
+          <select id="ppl-stage" class="input-field" required onchange="App._onPProdChange()" ${logId ? 'disabled' : ''}>${stageOptions}</select>
+          ${logId ? '<input type="hidden" id="ppl-stage-hidden" value="'+log.stage+'">' : ''}
+        </div>
+        <div class="md:col-span-2" id="ppl-stage-hint"></div>
+        <div><label class="block text-sm font-medium mb-1">Pieces *</label>
+          <input id="ppl-qty" type="number" step="any" min="0.01" required class="input-field" value="${log ? log.quantity : ''}" oninput="App._onPProdRecalc()"></div>
+        <div><label class="block text-sm font-medium mb-1">Per-Piece Rate (PKR) <span id="ppl-rate-src" class="text-xs font-normal text-purple-600"></span></label>
+          <input id="ppl-rate" type="number" step="any" class="input-field" value="${log ? log.rate : 0}" oninput="App._onPProdRecalc()"></div>
+        ${logId ? '' : `<div class="md:col-span-2 flex items-center"><label class="flex items-center gap-2 text-sm"><input id="ppl-deduct" type="checkbox" checked> Auto-deduct previous-stage stock / set items</label></div>`}
+        <div class="md:col-span-2" id="ppl-payout-box"></div>
+        <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Notes</label>
+          <input id="ppl-notes" type="text" class="input-field" value="${log ? this.escapeAttr(log.notes||'') : ''}"></div>
+        <div class="md:col-span-2 flex gap-2 justify-end pt-2 border-t">
+          ${logId ? `<button type="button" class="btn btn-danger mr-auto" onclick="App.deleteProductProduction(${logId})"><i class="fas fa-trash"></i> Delete</button>` : ''}
+          <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save</button>
+        </div>
+      </form>
+    `, 'modal-lg');
+
+    if (!logId) this._autoFillPProdRate(true);
+    this._onPProdRecalc();
+    this._renderPProdStageHint();
+
+    document.getElementById('pprod-log-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const prodId = logId ? document.getElementById('ppl-prod-hidden').value : document.getElementById('ppl-prod').value;
+      const stage = logId ? document.getElementById('ppl-stage-hidden').value : document.getElementById('ppl-stage').value;
+      const empId = logId ? (document.getElementById('ppl-emp-hidden')?.value || null) : (document.getElementById('ppl-emp').value || null);
+      const qty = parseFloat(document.getElementById('ppl-qty').value) || 0;
+      const rate = parseFloat(document.getElementById('ppl-rate').value) || 0;
+      const notes = document.getElementById('ppl-notes').value;
+      const deduct = logId ? undefined : document.getElementById('ppl-deduct').checked;
+      const date = document.getElementById('ppl-date').value || today;
+      if (!prodId) { this.toast('Select a product', 'error'); return; }
+      if (qty <= 0) { this.toast('Pieces must be greater than 0', 'error'); return; }
+      try {
+        if (logId) {
+          await this.api.put(`/api/product-production/${logId}`, { entry_date: date, quantity: qty, rate, notes });
+        } else {
+          const res = await this.api.post('/api/product-production', { entry_date: date, stage, employee_id: empId, product_id: prodId, quantity: qty, rate, deduct, notes });
+          if (res.error) {
+            let msg = res.error;
+            if (res.shortages) msg += '\n' + res.shortages.join('\n');
+            this.toast(msg, 'error');
+            return;
+          }
+        }
+        this.closeModal();
+        if (this.state.view === 'products') await this.showProducts();
+        else if (this.state.currentEmployee) await this.openEmployee(this.state.currentEmployee.id);
+        this.toast('Production saved', 'success');
+      } catch (err) { this.toast('Failed to save', 'error'); }
+    });
+  },
+
+  _onPProdChange() {
+    this._autoFillPProdRate(true);
+    this._onPProdRecalc();
+    this._renderPProdStageHint();
+  },
+
+  // Decide per-piece rate: product's stage default rate.
+  _autoFillPProdRate(force = false) {
+    const prodSel = document.getElementById('ppl-prod');
+    const stageSel = document.getElementById('ppl-stage');
+    const rateInput = document.getElementById('ppl-rate');
+    const srcLabel = document.getElementById('ppl-rate-src');
+    if (!prodSel || !rateInput || !stageSel) return;
+    const prodId = parseInt(prodSel.value) || null;
+    const p = (this.state.products || []).find(x => x.id === prodId);
+    const stage = stageSel.value;
+    let rate = null;
+    if (p) {
+      const r = stage === 'assemble' ? p.assemble_rate : stage === 'paint' ? p.paint_rate : p.pack_rate;
+      if (parseFloat(r) > 0) rate = parseFloat(r);
+    }
+    if (rate !== null) {
+      const cur = parseFloat(rateInput.value) || 0;
+      if (force || cur === 0) { rateInput.value = rate; if (srcLabel) srcLabel.textContent = '(product default)'; }
+    } else if (srcLabel) { srcLabel.textContent = ''; }
+  },
+
+  _renderPProdStageHint() {
+    const box = document.getElementById('ppl-stage-hint');
+    if (!box) return;
+    const prodId = parseInt(document.getElementById('ppl-prod')?.value) || null;
+    const stage = document.getElementById('ppl-stage')?.value;
+    const p = (this.state.products || []).find(x => x.id === prodId);
+    if (!p || !stage) { box.innerHTML = ''; return; }
+    let html = '';
+    if (stage === 'assemble') {
+      const parts = [...(p.components||[]).map(c => `${this.escapeHtml(c.comp_name||'')} ×${this.fmt(c.quantity_required)}`), ...(p.ingredients||[]).map(i => `${this.escapeHtml(i.raw_name||'')} ×${this.fmt(i.quantity_required)}`)];
+      html = `<div class="bg-amber-50 border border-amber-200 rounded p-2 text-xs text-amber-800"><i class="fas fa-screwdriver-wrench mr-1"></i>Assemble: per piece consumes ${parts.length ? parts.join(', ') : '(no recipe)'}. Buildable now: <strong>${this.fmt(p.buildable_units)}</strong>.</div>`;
+    } else if (stage === 'paint') {
+      html = `<div class="bg-indigo-50 border border-indigo-200 rounded p-2 text-xs text-indigo-800"><i class="fas fa-fill-drip mr-1"></i>Paint: assembled stock se minus hoga. Available assembled: <strong>${this.fmt(p.assembled_qty)}</strong>.</div>`;
+    } else if (stage === 'pack') {
+      const sets = (p.set_items||[]).map(s => `${this.escapeHtml(s.item_name||'')} ×${this.fmt(s.quantity_required)}`);
+      html = `<div class="bg-green-50 border border-green-200 rounded p-2 text-xs text-green-800"><i class="fas fa-box mr-1"></i>Pack: painted stock se minus + set items lagenge (${sets.length ? sets.join(', ') : 'koi set item nahi'}). Available painted: <strong>${this.fmt(p.painted_qty)}</strong>. Final packed inventory mein add hoga.</div>`;
+    }
+    box.innerHTML = html;
+  },
+
+  _onPProdRecalc() {
+    const box = document.getElementById('ppl-payout-box');
+    if (!box) return;
+    const qty = parseFloat(document.getElementById('ppl-qty')?.value) || 0;
+    const rate = parseFloat(document.getElementById('ppl-rate')?.value) || 0;
+    const payout = qty * rate;
+    box.innerHTML = `<div class="bg-purple-50 border border-purple-200 rounded-lg px-3 py-2 flex items-center justify-between">
+      <span class="text-sm text-purple-800"><i class="fas fa-coins mr-1"></i>Worker Payout (${this.fmt(qty)} × PKR ${this.fmt(rate)})</span>
+      <span class="text-lg font-bold text-purple-700">PKR ${this.fmt(payout)}</span></div>`;
+  },
+
+  async deleteProductProduction(id) {
+    if (!confirm('Delete this production log? Stock movement, set-item usage and worker payout will be reversed.')) return;
+    try {
+      await this.api.delete(`/api/product-production/${id}`);
+      this.closeModal();
+      if (this.state.view === 'products') await this.showProducts();
+      else if (this.state.currentEmployee) await this.openEmployee(this.state.currentEmployee.id);
+      this.toast('Deleted', 'success');
+    } catch (e) { this.toast('Failed', 'error'); }
   },
 
   // ========= COMPONENTS / PRODUCTION =========
