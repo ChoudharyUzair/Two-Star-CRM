@@ -18,6 +18,7 @@ const App = {
     allClients: [],
     rawMaterials: [],
     products: [],
+    components: [],
     employees: [],
     currentEmployee: null,
     employeeTransactions: [],
@@ -206,6 +207,9 @@ const App = {
           <button class="nav-btn ${this.state.view === 'raw' ? 'active' : ''}" id="nav-raw" onclick="App.showRawMaterials()">
             <i class="fas fa-cubes"></i><span>Raw Material</span>
           </button>
+          <button class="nav-btn ${this.state.view === 'components' ? 'active' : ''}" id="nav-components" onclick="App.showComponents()">
+            <i class="fas fa-puzzle-piece"></i><span>Components / Production</span>
+          </button>
           <button class="nav-btn ${this.state.view === 'products' ? 'active' : ''}" id="nav-products" onclick="App.showProducts()">
             <i class="fas fa-industry"></i><span>Products / Manufacturing</span>
           </button>
@@ -244,7 +248,7 @@ const App = {
     if (window.innerWidth <= 768) document.getElementById('sidebar')?.classList.remove('open');
   },
   setActiveNav(name) {
-    ['dashboard','bills','inventory','raw','products','employees','side-expenses','branding'].forEach(n => {
+    ['dashboard','bills','inventory','raw','components','products','employees','side-expenses','branding'].forEach(n => {
       const el = document.getElementById('nav-' + n);
       if (el) el.classList.toggle('active', n === name);
     });
@@ -2504,6 +2508,370 @@ const App = {
     preview.innerHTML = html;
   },
 
+  // ========= COMPONENTS / PRODUCTION =========
+  // A "component" is an intermediate part workers make from raw material
+  // (e.g. Rings, Bottom Jaali). Workers are paid PER PIECE. When a worker
+  // reports production, the component stock increases, raw material is
+  // (optionally) deducted, scrap is recorded, and a per-piece payout line
+  // is added to that worker's profile + weekly (Thu-Thu) total.
+  async showComponents() {
+    this.state.view = 'components';
+    this.state.currentFolderId = null;
+    this.state.currentClientId = null;
+    this.setActiveNav('components');
+    this.closeSidebarOnMobile();
+    this.renderFolders();
+    document.getElementById('content-area').innerHTML = `
+      <div class="page-header"><h1 class="page-title"><i class="fas fa-puzzle-piece text-teal-600"></i>Components / Production</h1></div>
+      <div class="p-6"><div class="text-gray-400 text-center py-8"><i class="fas fa-spinner fa-spin text-2xl"></i></div></div>`;
+    try {
+      const [cData, rmData, eData, pData] = await Promise.all([
+        this.api.get('/api/components'),
+        this.api.get('/api/raw-materials'),
+        this.api.get('/api/employees'),
+        this.api.get('/api/production')
+      ]);
+      this.state.components = cData.components || [];
+      this.state.rawMaterials = rmData.items || [];
+      this.state.employees = eData.employees || [];
+      this.state.productionLogs = pData.production || [];
+      this.renderComponents();
+    } catch (e) { this.toast('Failed to load components', 'error'); }
+  },
+
+  renderComponents(filter = '') {
+    const f = (filter || '').toLowerCase();
+    const items = f ? this.state.components.filter(c =>
+      (c.name || '').toLowerCase().includes(f) ||
+      (c.category || '').toLowerCase().includes(f)) : this.state.components;
+    const totalStock = this.state.components.reduce((s, c) => s + (parseFloat(c.quantity) || 0), 0);
+    const logs = this.state.productionLogs || [];
+    const today = new Date().toISOString().slice(0, 10);
+    const todayPieces = logs.filter(l => l.entry_date === today).reduce((s, l) => s + (parseFloat(l.quantity) || 0), 0);
+    const todayPayout = logs.filter(l => l.entry_date === today).reduce((s, l) => s + (parseFloat(l.payout) || 0), 0);
+    const totalScrap = logs.reduce((s, l) => s + (parseFloat(l.scrap_qty) || 0), 0);
+    const area = document.getElementById('content-area');
+    area.innerHTML = `
+      <div class="page-header">
+        <div>
+          <h1 class="page-title"><i class="fas fa-puzzle-piece text-teal-600"></i>Components / Production</h1>
+          <p class="page-subtitle">${this.state.components.length} component(s) · Raw Material → Components → Product</p>
+        </div>
+        <div class="flex gap-2 flex-wrap">
+          <input type="text" id="comp-search" placeholder="Search components..." class="input-field" style="max-width:220px;" oninput="App.renderComponents(this.value)" value="${this.escapeAttr(filter)}">
+          <button onclick="App.showProductionEditor()" class="btn btn-secondary"><i class="fas fa-hard-hat"></i> Log Production</button>
+          <button onclick="App.showComponentEditor()" class="btn btn-primary"><i class="fas fa-plus"></i> Add Component</button>
+        </div>
+      </div>
+      <div class="p-4 md:p-6 space-y-5">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div class="stat-card"><p class="text-xs text-gray-500">Components</p><p class="text-xl font-bold text-blue-600">${this.state.components.length}</p></div>
+          <div class="stat-card"><p class="text-xs text-gray-500">Total Stock (pieces)</p><p class="text-xl font-bold amount-running">${this.fmt(totalStock)}</p></div>
+          <div class="stat-card"><p class="text-xs text-gray-500">Produced Today</p><p class="text-xl font-bold text-teal-600">${this.fmt(todayPieces)}</p><p class="text-xs text-gray-400 mt-1">Payout PKR ${this.fmt(todayPayout)}</p></div>
+          <div class="stat-card"><p class="text-xs text-gray-500">Total Scrap / Waste</p><p class="text-xl font-bold text-red-600">${this.fmt(totalScrap)}</p></div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+          <div class="px-4 py-3 border-b"><h2 class="font-bold text-gray-800"><i class="fas fa-puzzle-piece mr-2 text-teal-600"></i>Components & Current Stock</h2></div>
+          <div class="overflow-x-auto"><table class="ledger-table">
+            <thead><tr>
+              <th style="width:40px;">#</th>
+              <th>Component</th>
+              <th style="width:110px;">Category</th>
+              <th>Made From (per 1 piece)</th>
+              <th style="width:130px;text-align:right;">Per-Piece Rate</th>
+              <th style="width:120px;text-align:center;">In Stock</th>
+              <th style="width:150px;">Action</th>
+            </tr></thead><tbody>
+              ${items.length === 0 ? `<tr><td colspan="7" class="text-center py-10 text-gray-500">
+                <i class="fas fa-puzzle-piece text-4xl mb-2 block opacity-40"></i>
+                ${filter ? 'No matching components.' : 'No components yet. Click "Add Component" to define your first part (e.g. Rings, Bottom Jaali).'}
+              </td></tr>` :
+              items.map((c, i) => {
+                const ings = c.ingredients || [];
+                const recipeStr = ings.length === 0 ? '<span class="text-gray-400">Manual (no recipe)</span>' :
+                  ings.map(ing => {
+                    const rmName = ing.raw_name || '(deleted)';
+                    const need = parseFloat(ing.quantity_required) || 0;
+                    const unit = ing.unit || ing.raw_unit || '';
+                    return `<span class="inline-block px-2 py-0.5 rounded text-xs mr-1 mb-1 bg-orange-50 text-orange-700 border border-orange-200">
+                      <strong>${this.escapeHtml(rmName)}</strong>: ${this.fmt(need)} ${this.escapeHtml(unit)}</span>`;
+                  }).join('');
+                const stock = parseFloat(c.quantity) || 0;
+                return `<tr>
+                  <td class="text-gray-500">${i + 1}</td>
+                  <td class="font-semibold">${this.escapeHtml(c.name)} <span class="text-xs text-gray-400">${this.escapeHtml(c.unit || 'pcs')}</span></td>
+                  <td>${this.escapeHtml(c.category || '')}</td>
+                  <td style="min-width:280px;">${recipeStr}</td>
+                  <td class="text-right">${parseFloat(c.default_rate) > 0 ? 'PKR ' + this.fmt(c.default_rate) : '<span class="text-gray-400">—</span>'}</td>
+                  <td class="text-center"><span class="text-2xl font-bold ${stock > 0 ? 'text-green-600' : 'text-gray-400'}">${this.fmt(stock)}</span></td>
+                  <td>
+                    <button onclick="App.showProductionEditor(null, ${c.id})" class="btn btn-secondary btn-sm" title="Log Production"><i class="fas fa-hard-hat"></i></button>
+                    <button onclick="App.showComponentEditor(${c.id})" class="btn btn-secondary btn-sm ml-1" title="Edit"><i class="fas fa-edit"></i></button>
+                    <button onclick="App.deleteComponent(${c.id})" class="text-red-500 hover:text-red-700 ml-1" title="Delete"><i class="fas fa-trash text-sm"></i></button>
+                  </td>
+                </tr>`;
+              }).join('')}
+            </tbody></table></div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+          <div class="px-4 py-3 border-b flex items-center justify-between">
+            <h2 class="font-bold text-gray-800"><i class="fas fa-hard-hat mr-2 text-teal-600"></i>Recent Production Log</h2>
+            <span class="text-xs text-gray-500">Latest ${Math.min(logs.length, 50)} entries</span>
+          </div>
+          <div class="overflow-x-auto"><table class="ledger-table">
+            <thead><tr>
+              <th style="width:40px;">#</th><th>Date</th><th>Worker</th><th>Component</th>
+              <th class="text-right">Pieces</th><th class="text-right">Rate</th><th class="text-right">Payout</th>
+              <th class="text-right">Raw Used</th><th class="text-right">Scrap</th><th style="width:90px;">Action</th>
+            </tr></thead><tbody>
+              ${logs.length === 0 ? `<tr><td colspan="10" class="text-center py-8 text-gray-500"><i class="fas fa-inbox text-3xl mb-2 block"></i>No production logged yet.</td></tr>` :
+                logs.slice(0, 50).map((l, i) => `<tr>
+                  <td>${i + 1}</td>
+                  <td>${l.entry_date}</td>
+                  <td>${l.employee_name ? this.escapeHtml(l.employee_name) : '<span class="text-gray-400">—</span>'}</td>
+                  <td class="font-medium">${this.escapeHtml(l.component_name || '')}</td>
+                  <td class="text-right font-bold text-teal-700">${this.fmt(l.quantity)}</td>
+                  <td class="text-right">PKR ${this.fmt(l.rate)}</td>
+                  <td class="text-right amount-received">PKR ${this.fmt(l.payout)}</td>
+                  <td class="text-right text-gray-500">${parseFloat(l.raw_used) > 0 ? this.fmt(l.raw_used) : '—'}</td>
+                  <td class="text-right ${parseFloat(l.scrap_qty) > 0 ? 'text-red-600' : 'text-gray-400'}">${parseFloat(l.scrap_qty) > 0 ? this.fmt(l.scrap_qty) : '—'}</td>
+                  <td>
+                    <button onclick="App.showProductionEditor(${l.id})" class="btn btn-secondary btn-sm"><i class="fas fa-edit"></i></button>
+                    <button onclick="App.deleteProduction(${l.id})" class="text-red-500 ml-1"><i class="fas fa-trash text-sm"></i></button>
+                  </td>
+                </tr>`).join('')}
+            </tbody></table></div>
+        </div>
+
+        <div class="bg-teal-50 border border-teal-200 rounded-xl p-4 text-sm text-teal-900">
+          <i class="fas fa-info-circle mr-1"></i>
+          <strong>Kaise kaam karta hai:</strong> Pehle component banao (e.g. "Rings") aur uska raw-material recipe + per-piece rate set karo.
+          Jab koi worker bole "aaj maine itne pieces banaye", to <strong>Log Production</strong> daba kar worker + component + quantity daalo.
+          System component stock barhaega, raw material kam karega (agar recipe linked hai), scrap record karega, aur worker ki profile + weekly (Thursday→Wednesday) total mein per-piece payout add karega.
+        </div>
+      </div>`;
+  },
+
+  showComponentEditor(id = null) {
+    const c = id ? this.state.components.find(x => x.id === id) : { name:'', unit:'pcs', category:'', notes:'', default_rate:0, quantity:0, ingredients: [] };
+    if (id && !c) return;
+    this._editingIngredients = (c.ingredients || []).map(ing => ({
+      raw_material_id: ing.raw_material_id,
+      quantity_required: ing.quantity_required,
+      unit: ing.unit || ing.raw_unit || ''
+    }));
+
+    this.openModal(`
+      <h2 class="text-xl font-bold mb-4"><i class="fas fa-puzzle-piece text-teal-600 mr-2"></i>${id ? 'Edit' : 'Add'} Component</h2>
+      <form id="comp-form" class="space-y-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div class="md:col-span-2">
+            <label class="block text-sm font-medium mb-1">Component Name *</label>
+            <input id="c-name" type="text" required class="input-field" value="${this.escapeAttr(c.name || '')}" placeholder="e.g. Trolley Basket Rings">
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">Unit</label>
+            <select id="c-unit" class="input-field">
+              ${['pcs','set','box','dozen','pair','kg','meter','foot'].map(u => `<option value="${u}" ${ (c.unit || 'pcs') === u ? 'selected' : ''}>${u}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">Category</label>
+            <input id="c-cat" type="text" class="input-field" value="${this.escapeAttr(c.category || '')}" placeholder="e.g. Trolley, Sink Rack">
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">Default Per-Piece Rate (PKR)</label>
+            <input id="c-rate" type="number" step="any" class="input-field" value="${c.default_rate || 0}" placeholder="Worker pay per piece">
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">Current Stock ${id ? '(manual correction)' : ''}</label>
+            <input id="c-qty" type="number" step="any" class="input-field" value="${c.quantity || 0}">
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-sm font-medium mb-1">Notes</label>
+            <input id="c-notes" type="text" class="input-field" value="${this.escapeAttr(c.notes || '')}">
+          </div>
+        </div>
+
+        <div class="border-t pt-4">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-base font-bold text-gray-800"><i class="fas fa-cubes text-orange-500 mr-1"></i>Recipe — Raw Material per 1 piece (optional)</h3>
+            <button type="button" onclick="App._addIngredientRow()" class="btn btn-secondary btn-sm"><i class="fas fa-plus"></i> Add Raw Material</button>
+          </div>
+          <p class="text-xs text-gray-500 mb-2">Agar recipe set karoge, to production log karte waqt raw material apne aap kam ho jayega. Khaali chhod sakte ho (manual).</p>
+          ${this.state.rawMaterials.length === 0 ? `
+            <div class="bg-yellow-50 border border-yellow-200 rounded p-3 text-sm text-yellow-800">
+              <i class="fas fa-exclamation-triangle mr-1"></i> No raw materials found. Add raw materials first if you want auto-deduction.
+            </div>` : ''}
+          <div id="ingredients-list" class="space-y-2"></div>
+          <div id="ingredients-summary" class="mt-3 p-3 rounded-lg bg-gray-50 border text-sm"></div>
+        </div>
+
+        <div class="flex gap-2 justify-end pt-2 border-t">
+          ${id ? `<button type="button" class="btn btn-danger mr-auto" onclick="App.deleteComponent(${id})"><i class="fas fa-trash"></i> Delete</button>` : ''}
+          <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save</button>
+        </div>
+      </form>
+    `, 'modal-lg');
+
+    this._renderIngredientRows();
+
+    document.getElementById('comp-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      this._collectIngredientRows();
+      const ings = (this._editingIngredients || []).filter(i => i.raw_material_id && parseFloat(i.quantity_required) > 0);
+      const payload = {
+        name: document.getElementById('c-name').value.trim(),
+        unit: document.getElementById('c-unit').value || 'pcs',
+        category: document.getElementById('c-cat').value,
+        notes: document.getElementById('c-notes').value,
+        default_rate: parseFloat(document.getElementById('c-rate').value) || 0,
+        quantity: parseFloat(document.getElementById('c-qty').value) || 0,
+        ingredients: ings
+      };
+      if (!payload.name) { this.toast('Component name required', 'error'); return; }
+      try {
+        if (id) await this.api.put(`/api/components/${id}`, payload);
+        else await this.api.post('/api/components', payload);
+        this.closeModal();
+        await this.showComponents();
+        this.toast('Saved', 'success');
+      } catch (err) { this.toast('Failed to save', 'error'); }
+    });
+  },
+
+  async deleteComponent(id) {
+    if (!confirm('Delete this component? Production history rows will keep their snapshot but stock is removed.')) return;
+    try {
+      await this.api.delete(`/api/components/${id}`);
+      this.closeModal();
+      await this.showComponents();
+      this.toast('Deleted', 'success');
+    } catch (e) { this.toast('Failed', 'error'); }
+  },
+
+  // Log production: worker reports how many pieces of a component they made.
+  showProductionEditor(logId = null, presetComponentId = null) {
+    const log = logId ? (this.state.productionLogs || []).find(l => l.id === logId) : null;
+    if (logId && !log) return;
+    const comps = this.state.components || [];
+    const emps = (this.state.employees || []).filter(e => e.active);
+    const today = new Date().toISOString().slice(0, 10);
+    const selComp = log ? log.component_id : presetComponentId;
+
+    const compOptions = `<option value="">-- Select Component --</option>` +
+      comps.map(c => `<option value="${c.id}" data-rate="${c.default_rate || 0}" ${selComp == c.id ? 'selected' : ''}>${this.escapeHtml(c.name)} (Stock: ${this.fmt(c.quantity)})</option>`).join('');
+    const empOptions = `<option value="">-- (Optional) Select Worker --</option>` +
+      emps.map(e => `<option value="${e.id}" ${log && log.employee_id == e.id ? 'selected' : ''}>${this.escapeHtml(e.name)}</option>`).join('');
+
+    const initComp = comps.find(c => c.id == selComp);
+    const hasRecipe = initComp && (initComp.ingredients || []).length > 0;
+
+    this.openModal(`
+      <h2 class="text-xl font-bold mb-1"><i class="fas fa-hard-hat text-teal-600 mr-2"></i>${logId ? 'Edit' : 'Log'} Production</h2>
+      <p class="text-sm text-gray-600 mb-4">Worker ne jitne pieces banaye uska record. Component stock barhega + worker payout add hoga.</p>
+      <form id="prod-log-form" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div><label class="block text-sm font-medium mb-1">Date</label>
+          <input id="pl-date" type="date" class="input-field" value="${log ? log.entry_date : today}"></div>
+        <div><label class="block text-sm font-medium mb-1">Worker</label>
+          <select id="pl-emp" class="input-field" ${logId ? 'disabled' : ''}>${empOptions}</select>
+          ${logId ? '<input type="hidden" id="pl-emp-hidden" value="'+(log.employee_id||'')+'">' : ''}
+        </div>
+        <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Component *</label>
+          <select id="pl-comp" class="input-field" required onchange="App._onProdCompChange()" ${logId ? 'disabled' : ''}>${compOptions}</select>
+          ${logId ? '<input type="hidden" id="pl-comp-hidden" value="'+(log.component_id||'')+'">' : ''}
+        </div>
+        <div><label class="block text-sm font-medium mb-1">Pieces Made *</label>
+          <input id="pl-qty" type="number" step="any" min="0.01" required class="input-field" value="${log ? log.quantity : ''}" oninput="App._onProdRecalc()"></div>
+        <div><label class="block text-sm font-medium mb-1">Per-Piece Rate (PKR)</label>
+          <input id="pl-rate" type="number" step="any" class="input-field" value="${log ? log.rate : (initComp ? (initComp.default_rate||0) : 0)}" oninput="App._onProdRecalc()"></div>
+        <div><label class="block text-sm font-medium mb-1">Scrap / Waste (raw units)</label>
+          <input id="pl-scrap" type="number" step="any" class="input-field" value="${log ? (log.scrap_qty||0) : 0}" placeholder="0"></div>
+        <div class="flex items-end">
+          <label class="flex items-center gap-2 text-sm pb-2">
+            <input id="pl-deduct" type="checkbox" ${log ? (log.deducted_raw ? 'checked' : '') : 'checked'} ${logId ? 'disabled' : ''}>
+            Auto-deduct raw material ${hasRecipe ? '' : '(no recipe linked)'}
+          </label>
+        </div>
+        <div class="md:col-span-2" id="pl-payout-box"></div>
+        <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Notes</label>
+          <input id="pl-notes" type="text" class="input-field" value="${log ? this.escapeAttr(log.notes||'') : ''}"></div>
+        <div class="md:col-span-2 flex gap-2 justify-end pt-2 border-t">
+          ${logId ? `<button type="button" class="btn btn-danger mr-auto" onclick="App.deleteProduction(${logId})"><i class="fas fa-trash"></i> Delete</button>` : ''}
+          <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save</button>
+        </div>
+      </form>
+    `, 'modal-lg');
+
+    this._onProdRecalc();
+
+    document.getElementById('prod-log-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const compId = logId ? document.getElementById('pl-comp-hidden').value : document.getElementById('pl-comp').value;
+      const empId = logId ? (document.getElementById('pl-emp-hidden')?.value || null) : (document.getElementById('pl-emp').value || null);
+      const qty = parseFloat(document.getElementById('pl-qty').value) || 0;
+      const rate = parseFloat(document.getElementById('pl-rate').value) || 0;
+      const scrap = parseFloat(document.getElementById('pl-scrap').value) || 0;
+      const notes = document.getElementById('pl-notes').value;
+      const deduct = logId ? undefined : document.getElementById('pl-deduct').checked;
+      const date = document.getElementById('pl-date').value || today;
+      if (!compId) { this.toast('Select a component', 'error'); return; }
+      if (qty <= 0) { this.toast('Pieces must be greater than 0', 'error'); return; }
+      try {
+        if (logId) {
+          await this.api.put(`/api/production/${logId}`, { entry_date: date, quantity: qty, rate, scrap_qty: scrap, notes });
+        } else {
+          const res = await this.api.post('/api/production', { entry_date: date, employee_id: empId, component_id: compId, quantity: qty, rate, deduct_raw: deduct, scrap_qty: scrap, notes });
+          if (res.error) { this.toast(res.error, 'error'); return; }
+        }
+        this.closeModal();
+        if (this.state.view === 'components') await this.showComponents();
+        else if (this.state.currentEmployee) await this.openEmployee(this.state.currentEmployee.id);
+        this.toast('Production saved', 'success');
+      } catch (err) { this.toast('Failed to save', 'error'); }
+    });
+  },
+
+  _onProdCompChange() {
+    const sel = document.getElementById('pl-comp');
+    if (!sel) return;
+    const compId = parseInt(sel.value) || null;
+    const comp = (this.state.components || []).find(c => c.id === compId);
+    const rateInput = document.getElementById('pl-rate');
+    if (comp && rateInput && (!rateInput.value || parseFloat(rateInput.value) === 0)) {
+      rateInput.value = comp.default_rate || 0;
+    }
+    this._onProdRecalc();
+  },
+
+  _onProdRecalc() {
+    const box = document.getElementById('pl-payout-box');
+    if (!box) return;
+    const qty = parseFloat(document.getElementById('pl-qty')?.value) || 0;
+    const rate = parseFloat(document.getElementById('pl-rate')?.value) || 0;
+    const payout = qty * rate;
+    box.innerHTML = `
+      <div class="bg-green-50 border border-green-200 rounded-lg p-3 flex items-center justify-between">
+        <span class="text-sm text-gray-700"><i class="fas fa-coins text-green-600 mr-1"></i>Worker Payout (${this.fmt(qty)} × PKR ${this.fmt(rate)})</span>
+        <span class="text-xl font-bold text-green-700">PKR ${this.fmt(payout)}</span>
+      </div>`;
+  },
+
+  async deleteProduction(id) {
+    if (!confirm('Delete this production entry? Component stock and worker payout will be reversed.')) return;
+    try {
+      await this.api.delete(`/api/production/${id}`);
+      this.closeModal();
+      if (this.state.view === 'components') await this.showComponents();
+      else if (this.state.currentEmployee) await this.openEmployee(this.state.currentEmployee.id);
+      this.toast('Deleted', 'success');
+    } catch (e) { this.toast('Failed', 'error'); }
+  },
+
   // ========= EMPLOYEES =========
   async showEmployees() {
     this.state.view = 'employees';
@@ -2721,10 +3089,14 @@ const App = {
 
   async openEmployee(id) {
     try {
-      const data = await this.api.get(`/api/employees/${id}`);
+      const [data, weekly] = await Promise.all([
+        this.api.get(`/api/employees/${id}`),
+        this.api.get(`/api/production/weekly?employee_id=${id}`)
+      ]);
       this.state.currentEmployee = data.employee;
       this.state.employeeTransactions = data.transactions || [];
       this.state.currentEmployeeItems = data.items || [];
+      this.state.employeeWeeks = weekly.weeks || [];
       this.renderEmployeeDetail();
     } catch (e) {}
   },
@@ -2757,6 +3129,7 @@ const App = {
         </div>
         <div class="flex gap-2">
           <button onclick="App.showEmployeeEditor(${e.id})" class="btn btn-secondary btn-sm"><i class="fas fa-edit"></i> Edit</button>
+          <button onclick="App.showProductionForWorker(${e.id})" class="btn btn-secondary btn-sm"><i class="fas fa-hard-hat"></i> Log Production</button>
           <button onclick="App.showEmployeeTxEditor(${e.id})" class="btn btn-primary btn-sm"><i class="fas fa-plus"></i> New Entry</button>
         </div>
       </div>
@@ -2769,6 +3142,9 @@ const App = {
           <div class="balance-box"><p class="text-xs opacity-90">Remaining</p><p class="text-2xl font-bold mt-1">PKR ${this.fmt(salaryRemaining)}</p>
             <p class="text-xs opacity-80 mt-1">${salaryRemaining > 0 ? 'You owe employee' : salaryRemaining < 0 ? 'Employee owes you' : 'Settled'}</p></div>
         </div>
+        <!-- Weekly Production Payout (Thursday -> Wednesday) -->
+        ${this._renderWeeklyPayout()}
+
         <!-- Employee Calendar -->
         <div id="employee-calendar"></div>
 
@@ -2811,6 +3187,87 @@ const App = {
       </div>`;
     // Render calendar for this employee
     this.renderCalendar('employee-calendar', { employeeId: e.id });
+  },
+
+  // Weekly production payout grouped Thursday -> Wednesday.
+  // Each Thursday a new week starts; the per-piece earnings of that week are totalled.
+  _renderWeeklyPayout() {
+    const weeks = this.state.employeeWeeks || [];
+    if (weeks.length === 0) {
+      return `
+        <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+          <div class="px-4 py-3 border-b flex items-center justify-between">
+            <h2 class="font-bold text-gray-800"><i class="fas fa-calendar-week mr-2 text-teal-600"></i>Weekly Production Payout <span class="text-xs font-normal text-gray-500">(Thursday → Wednesday)</span></h2>
+          </div>
+          <div class="p-6 text-center text-gray-500"><i class="fas fa-puzzle-piece text-3xl mb-2 block opacity-40"></i>
+            No production logged for this worker yet. Use <strong>Log Production</strong> to record the pieces they make.</div>
+        </div>`;
+    }
+    const fmtDate = (s) => {
+      try { const d = new Date(s + 'T00:00:00'); return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }); } catch { return s; }
+    };
+    const grandPieces = weeks.reduce((s, w) => s + (parseFloat(w.total_pieces) || 0), 0);
+    const grandPayout = weeks.reduce((s, w) => s + (parseFloat(w.total_payout) || 0), 0);
+    return `
+      <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+        <div class="px-4 py-3 border-b flex items-center justify-between flex-wrap gap-2">
+          <h2 class="font-bold text-gray-800"><i class="fas fa-calendar-week mr-2 text-teal-600"></i>Weekly Production Payout <span class="text-xs font-normal text-gray-500">(Thursday → Wednesday)</span></h2>
+          <div class="text-sm text-gray-600">Total: <strong class="text-teal-700">${this.fmt(grandPieces)}</strong> pieces · <strong class="amount-received">PKR ${this.fmt(grandPayout)}</strong></div>
+        </div>
+        <div class="divide-y">
+          ${weeks.map((w, wi) => {
+            const comps = (w.components || []).map(c =>
+              `<span class="inline-block px-2 py-0.5 rounded text-xs mr-1 mb-1 bg-teal-50 text-teal-700 border border-teal-200">${this.escapeHtml(c.name)}: <strong>${this.fmt(c.pieces)}</strong> pcs · PKR ${this.fmt(c.payout)}</span>`
+            ).join('');
+            const days = (w.days || []).map(d =>
+              `<div class="flex items-center justify-between text-xs py-0.5 px-2"><span class="text-gray-600">${fmtDate(d.date)} <span class="text-gray-400">(${new Date(d.date+'T00:00:00').toLocaleDateString('en-GB',{weekday:'short'})})</span></span><span><strong>${this.fmt(d.pieces)}</strong> pcs · PKR ${this.fmt(d.payout)}</span></div>`
+            ).join('');
+            const open = wi === 0 ? 'open' : '';
+            return `
+            <details ${open} class="group">
+              <summary class="cursor-pointer list-none px-4 py-3 hover:bg-gray-50 flex items-center justify-between">
+                <div>
+                  <span class="font-semibold text-gray-800"><i class="fas fa-chevron-right text-xs text-gray-400 mr-2 transition-transform group-open:rotate-90"></i>Week: ${fmtDate(w.week_start)} → ${fmtDate(w.week_end)}</span>
+                  ${wi === 0 ? '<span class="ml-2 text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full">Current Week</span>' : ''}
+                </div>
+                <div class="text-right">
+                  <div class="font-bold text-teal-700">${this.fmt(w.total_pieces)} pcs</div>
+                  <div class="text-sm amount-received">PKR ${this.fmt(w.total_payout)}</div>
+                </div>
+              </summary>
+              <div class="px-4 pb-3 pt-1 bg-gray-50/50">
+                <div class="mb-2">${comps || '<span class="text-xs text-gray-400">No components</span>'}</div>
+                <div class="bg-white rounded-lg border divide-y">${days}</div>
+                ${parseFloat(w.total_scrap) > 0 ? `<div class="text-xs text-red-600 mt-2"><i class="fas fa-recycle mr-1"></i>Scrap this week: ${this.fmt(w.total_scrap)} units</div>` : ''}
+              </div>
+            </details>`;
+          }).join('')}
+        </div>
+      </div>`;
+  },
+
+  // Open the production logger pre-filled for this worker (loads components first if needed)
+  async showProductionForWorker(empId) {
+    try {
+      if (!this.state.components || this.state.components.length === 0) {
+        const cData = await this.api.get('/api/components');
+        this.state.components = cData.components || [];
+      }
+      if (!this.state.components || this.state.components.length === 0) {
+        this.toast('No components yet. Add a component first (Components / Production section).', 'error');
+        return;
+      }
+      // Ensure the current employee is selectable
+      if (!this.state.employees || this.state.employees.length === 0) {
+        const eData = await this.api.get('/api/employees');
+        this.state.employees = eData.employees || [];
+      }
+      this._prefillWorkerForProduction = empId;
+      this.showProductionEditor();
+      // pre-select the worker
+      const empSel = document.getElementById('pl-emp');
+      if (empSel) empSel.value = String(empId);
+    } catch (e) { this.toast('Failed to open', 'error'); }
   },
 
   showEmployeeTxEditor(empId, txId = null) {

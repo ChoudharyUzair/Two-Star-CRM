@@ -1090,6 +1090,364 @@ app.post('/api/products/:id/build', requireAuth, async (c) => {
   return c.json({ success: true, units_built: u, added_to_inventory: !!add_to_inventory })
 })
 
+// =====================================================
+// ============ COMPONENTS (Raw -> Components -> Product) ============
+// =====================================================
+
+// List all components with their recipe + buildable info
+app.get('/api/components', requireAuth, async (c) => {
+  const comps = await c.env.DB.prepare('SELECT * FROM components ORDER BY name ASC').all()
+  const ings = await c.env.DB.prepare(
+    `SELECT ci.*, rm.name as raw_name, rm.unit as raw_unit, rm.quantity as raw_quantity, rm.rate as raw_rate
+     FROM component_ingredients ci
+     LEFT JOIN raw_materials rm ON rm.id = ci.raw_material_id
+     ORDER BY ci.component_id, ci.sort_order, ci.id`
+  ).all()
+  const ingBy: Record<number, any[]> = {}
+  for (const ing of (ings.results as any[])) {
+    if (!ingBy[ing.component_id]) ingBy[ing.component_id] = []
+    ingBy[ing.component_id].push(ing)
+  }
+  const list = (comps.results as any[]).map(comp => {
+    const list2 = ingBy[comp.id] || []
+    let buildable: number | null = null
+    let material_cost = 0
+    for (const ing of list2) {
+      const need = parseFloat(ing.quantity_required) || 0
+      const have = parseFloat(ing.raw_quantity) || 0
+      const rate = parseFloat(ing.raw_rate) || 0
+      material_cost += need * rate
+      if (need <= 0) continue
+      if (ing.raw_material_id == null) { buildable = 0; continue }
+      const can = have / need
+      if (buildable === null || can < buildable) buildable = can
+    }
+    return {
+      ...comp,
+      ingredients: list2,
+      buildable_units: buildable === null ? null : Math.floor(buildable),
+      material_cost_per_unit: material_cost
+    }
+  })
+  return c.json({ components: list })
+})
+
+app.get('/api/components/:id', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const comp = await c.env.DB.prepare('SELECT * FROM components WHERE id = ?').bind(id).first()
+  if (!comp) return c.json({ error: 'Not found' }, 404)
+  const ings = await c.env.DB.prepare(
+    `SELECT ci.*, rm.name as raw_name, rm.unit as raw_unit, rm.quantity as raw_quantity, rm.rate as raw_rate
+     FROM component_ingredients ci
+     LEFT JOIN raw_materials rm ON rm.id = ci.raw_material_id
+     WHERE ci.component_id = ? ORDER BY ci.sort_order ASC, ci.id ASC`
+  ).bind(id).all()
+  // recent production for this component
+  const prod = await c.env.DB.prepare(
+    'SELECT * FROM production_logs WHERE component_id = ? ORDER BY entry_date DESC, id DESC LIMIT 50'
+  ).bind(id).all()
+  return c.json({ component: comp, ingredients: ings.results, production: prod.results })
+})
+
+async function syncComponentIngredients(env: any, componentId: number, ingredients: any[]) {
+  await env.DB.prepare('DELETE FROM component_ingredients WHERE component_id = ?').bind(componentId).run()
+  if (!Array.isArray(ingredients)) return
+  for (let i = 0; i < ingredients.length; i++) {
+    const ing = ingredients[i]
+    if (!ing || !ing.raw_material_id) continue
+    const qty = parseFloat(ing.quantity_required) || 0
+    if (qty <= 0) continue
+    const rm = await env.DB.prepare('SELECT unit FROM raw_materials WHERE id = ?').bind(ing.raw_material_id).first() as any
+    const unit = ing.unit || rm?.unit || ''
+    await env.DB.prepare(
+      `INSERT INTO component_ingredients (component_id, raw_material_id, quantity_required, unit, sort_order)
+       VALUES (?, ?, ?, ?, ?)`
+    ).bind(componentId, ing.raw_material_id, qty, unit, i).run()
+  }
+}
+
+app.post('/api/components', requireAuth, async (c) => {
+  const { name, unit, category, notes, default_rate, quantity, ingredients } = await c.req.json()
+  if (!name) return c.json({ error: 'Name required' }, 400)
+  const result = await c.env.DB.prepare(
+    `INSERT INTO components (name, unit, category, notes, default_rate, quantity) VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(name, unit || 'pcs', category || '', notes || '', parseFloat(default_rate) || 0, parseFloat(quantity) || 0).run()
+  const cid = result.meta.last_row_id as number
+  await syncComponentIngredients(c.env, cid, ingredients || [])
+  return c.json({ id: cid })
+})
+
+app.put('/api/components/:id', requireAuth, async (c) => {
+  const id = parseInt(c.req.param('id'))
+  const { name, unit, category, notes, default_rate, quantity, ingredients } = await c.req.json()
+  if (!name) return c.json({ error: 'Name required' }, 400)
+  // quantity can be edited manually (correction). If undefined, keep existing.
+  if (quantity === undefined || quantity === null || quantity === '') {
+    await c.env.DB.prepare(
+      `UPDATE components SET name=?, unit=?, category=?, notes=?, default_rate=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
+    ).bind(name, unit || 'pcs', category || '', notes || '', parseFloat(default_rate) || 0, id).run()
+  } else {
+    await c.env.DB.prepare(
+      `UPDATE components SET name=?, unit=?, category=?, notes=?, default_rate=?, quantity=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
+    ).bind(name, unit || 'pcs', category || '', notes || '', parseFloat(default_rate) || 0, parseFloat(quantity) || 0, id).run()
+  }
+  await syncComponentIngredients(c.env, id, ingredients || [])
+  return c.json({ success: true })
+})
+
+app.delete('/api/components/:id', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  await c.env.DB.prepare('DELETE FROM components WHERE id = ?').bind(id).run()
+  return c.json({ success: true })
+})
+
+// =====================================================
+// ============ PRODUCTION LOGS (Worker reports production) ============
+// =====================================================
+
+// List production logs with optional filters: ?employee_id= &component_id= &from= &to=
+app.get('/api/production', requireAuth, async (c) => {
+  const empId = c.req.query('employee_id')
+  const compId = c.req.query('component_id')
+  const from = c.req.query('from')
+  const to = c.req.query('to')
+  let sql = 'SELECT * FROM production_logs WHERE 1=1'
+  const binds: any[] = []
+  if (empId) { sql += ' AND employee_id = ?'; binds.push(empId) }
+  if (compId) { sql += ' AND component_id = ?'; binds.push(compId) }
+  if (from) { sql += ' AND entry_date >= ?'; binds.push(from) }
+  if (to) { sql += ' AND entry_date <= ?'; binds.push(to) }
+  sql += ' ORDER BY entry_date DESC, id DESC'
+  const res = await c.env.DB.prepare(sql).bind(...binds).all()
+  return c.json({ production: res.results })
+})
+
+// Record a new production entry
+// body: { entry_date, employee_id, component_id, quantity, rate, deduct_raw, scrap_qty, notes }
+app.post('/api/production', requireAuth, async (c) => {
+  const body = await c.req.json()
+  const { entry_date, employee_id, component_id, quantity, rate, deduct_raw, scrap_qty, notes } = body
+  const qty = parseFloat(quantity) || 0
+  if (!component_id) return c.json({ error: 'Component required' }, 400)
+  if (qty <= 0) return c.json({ error: 'Quantity must be > 0' }, 400)
+
+  const comp = await c.env.DB.prepare('SELECT * FROM components WHERE id = ?').bind(component_id).first() as any
+  if (!comp) return c.json({ error: 'Component not found' }, 404)
+
+  let emp: any = null
+  if (employee_id) {
+    emp = await c.env.DB.prepare('SELECT * FROM employees WHERE id = ?').bind(employee_id).first()
+  }
+
+  const r = (rate === undefined || rate === null || rate === '') ? (parseFloat(comp.default_rate) || 0) : (parseFloat(rate) || 0)
+  const payout = qty * r
+  const doDeduct = deduct_raw ? 1 : 0
+  const dateStr = entry_date || new Date().toISOString().slice(0, 10)
+  const totalScrap = parseFloat(scrap_qty) || 0
+
+  // Recipe (raw material per 1 component)
+  const ingsRes = await c.env.DB.prepare(
+    `SELECT ci.*, rm.name as raw_name, rm.quantity as raw_quantity
+     FROM component_ingredients ci LEFT JOIN raw_materials rm ON rm.id = ci.raw_material_id
+     WHERE ci.component_id = ?`
+  ).bind(component_id).all()
+  const ings = ingsRes.results as any[]
+
+  let totalRawUsed = 0
+
+  // Insert production log first (to get id)
+  const insLog = await c.env.DB.prepare(
+    `INSERT INTO production_logs
+      (entry_date, employee_id, employee_name, component_id, component_name, quantity, rate, payout, raw_used, scrap_qty, deducted_raw, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    dateStr, employee_id || null, emp?.name || '', component_id, comp.name,
+    qty, r, payout, 0, totalScrap, doDeduct, notes || ''
+  ).run()
+  const logId = insLog.meta.last_row_id as number
+
+  // Deduct raw material (recipe-based) + record usage detail
+  if (doDeduct && ings.length > 0) {
+    for (const ing of ings) {
+      const need = (parseFloat(ing.quantity_required) || 0) * qty
+      if (need <= 0) continue
+      totalRawUsed += need
+      await c.env.DB.prepare(
+        `UPDATE raw_materials SET quantity = MAX(0, quantity - ?), total_value = MAX(0, quantity - ?) * rate, updated_at=CURRENT_TIMESTAMP WHERE id = ?`
+      ).bind(need, need, ing.raw_material_id).run()
+      await c.env.DB.prepare(
+        `INSERT INTO production_raw_usage (production_log_id, raw_material_id, raw_name, qty_used, scrap_qty) VALUES (?, ?, ?, ?, ?)`
+      ).bind(logId, ing.raw_material_id, ing.raw_name || '', need, 0).run()
+    }
+  }
+
+  // If scrap entered AND there is a single ingredient, deduct scrap from that raw material too
+  if (doDeduct && totalScrap > 0 && ings.length === 1) {
+    const ing = ings[0]
+    await c.env.DB.prepare(
+      `UPDATE raw_materials SET quantity = MAX(0, quantity - ?), total_value = MAX(0, quantity - ?) * rate, updated_at=CURRENT_TIMESTAMP WHERE id = ?`
+    ).bind(totalScrap, totalScrap, ing.raw_material_id).run()
+  }
+
+  // Update raw_used on the log
+  await c.env.DB.prepare('UPDATE production_logs SET raw_used = ? WHERE id = ?').bind(totalRawUsed, logId).run()
+
+  // Add produced quantity to component stock
+  await c.env.DB.prepare(
+    'UPDATE components SET quantity = quantity + ?, updated_at=CURRENT_TIMESTAMP WHERE id = ?'
+  ).bind(qty, component_id).run()
+
+  // Record the worker's per-piece payout in employee_transactions (so it shows in profile + weekly total)
+  let empTxId: number | null = null
+  if (employee_id && payout > 0) {
+    const insTx = await c.env.DB.prepare(
+      `INSERT INTO employee_transactions
+        (employee_id, entry_date, type, amount, description, entry_type, item_id, item_name, quantity, rate, paid_amount, production_log_id)
+       VALUES (?, ?, 'salary', ?, ?, 'per_piece', NULL, ?, ?, ?, 0, ?)`
+    ).bind(
+      employee_id, dateStr, payout,
+      `Production: ${comp.name}`, comp.name, qty, r, logId
+    ).run()
+    empTxId = insTx.meta.last_row_id as number
+    await c.env.DB.prepare('UPDATE production_logs SET emp_tx_id = ? WHERE id = ?').bind(empTxId, logId).run()
+  }
+
+  return c.json({ id: logId, payout, raw_used: totalRawUsed, emp_tx_id: empTxId })
+})
+
+// Edit a production log (re-applies stock/payout deltas)
+app.put('/api/production/:id', requireAuth, async (c) => {
+  const id = parseInt(c.req.param('id'))
+  const body = await c.req.json()
+  const old = await c.env.DB.prepare('SELECT * FROM production_logs WHERE id = ?').bind(id).first() as any
+  if (!old) return c.json({ error: 'Not found' }, 404)
+
+  const newQty = parseFloat(body.quantity)
+  const finalQty = isNaN(newQty) ? (parseFloat(old.quantity) || 0) : newQty
+  const newRate = (body.rate === undefined || body.rate === null || body.rate === '') ? (parseFloat(old.rate) || 0) : (parseFloat(body.rate) || 0)
+  const newDate = body.entry_date || old.entry_date
+  const newScrap = (body.scrap_qty === undefined || body.scrap_qty === null || body.scrap_qty === '') ? (parseFloat(old.scrap_qty) || 0) : (parseFloat(body.scrap_qty) || 0)
+  const newNotes = body.notes !== undefined ? body.notes : old.notes
+  const payout = finalQty * newRate
+
+  // Adjust component stock by the delta (newQty - oldQty)
+  const qtyDelta = finalQty - (parseFloat(old.quantity) || 0)
+  if (old.component_id) {
+    await c.env.DB.prepare(
+      'UPDATE components SET quantity = MAX(0, quantity + ?), updated_at=CURRENT_TIMESTAMP WHERE id = ?'
+    ).bind(qtyDelta, old.component_id).run()
+  }
+
+  await c.env.DB.prepare(
+    `UPDATE production_logs SET entry_date=?, quantity=?, rate=?, payout=?, scrap_qty=?, notes=? WHERE id=?`
+  ).bind(newDate, finalQty, newRate, payout, newScrap, newNotes, id).run()
+
+  // Update linked employee transaction (payout)
+  if (old.emp_tx_id) {
+    await c.env.DB.prepare(
+      `UPDATE employee_transactions SET entry_date=?, amount=?, quantity=?, rate=? WHERE id=?`
+    ).bind(newDate, payout, finalQty, newRate, old.emp_tx_id).run()
+  }
+  return c.json({ success: true, payout })
+})
+
+// Delete a production log (reverses stock + removes linked payout)
+app.delete('/api/production/:id', requireAuth, async (c) => {
+  const id = parseInt(c.req.param('id'))
+  const old = await c.env.DB.prepare('SELECT * FROM production_logs WHERE id = ?').bind(id).first() as any
+  if (!old) return c.json({ error: 'Not found' }, 404)
+  // reverse component stock
+  if (old.component_id) {
+    await c.env.DB.prepare(
+      'UPDATE components SET quantity = MAX(0, quantity - ?), updated_at=CURRENT_TIMESTAMP WHERE id = ?'
+    ).bind(parseFloat(old.quantity) || 0, old.component_id).run()
+  }
+  // restore deducted raw materials
+  if (old.deducted_raw) {
+    const usage = await c.env.DB.prepare('SELECT * FROM production_raw_usage WHERE production_log_id = ?').bind(id).all()
+    for (const u of (usage.results as any[])) {
+      if (!u.raw_material_id) continue
+      await c.env.DB.prepare(
+        'UPDATE raw_materials SET quantity = quantity + ?, total_value = (quantity + ?) * rate, updated_at=CURRENT_TIMESTAMP WHERE id = ?'
+      ).bind(parseFloat(u.qty_used) || 0, parseFloat(u.qty_used) || 0, u.raw_material_id).run()
+    }
+  }
+  // remove linked employee transaction
+  if (old.emp_tx_id) {
+    await c.env.DB.prepare('DELETE FROM employee_transactions WHERE id = ?').bind(old.emp_tx_id).run()
+  }
+  await c.env.DB.prepare('DELETE FROM production_logs WHERE id = ?').bind(id).run()
+  return c.json({ success: true })
+})
+
+// Weekly payout summary for a worker (Thursday -> Wednesday weeks)
+// ?employee_id=  (required)  optional ?weeks=  number of recent weeks (default 12)
+app.get('/api/production/weekly', requireAuth, async (c) => {
+  const empId = c.req.query('employee_id')
+  if (!empId) return c.json({ error: 'employee_id required' }, 400)
+  const logs = await c.env.DB.prepare(
+    'SELECT * FROM production_logs WHERE employee_id = ? ORDER BY entry_date ASC, id ASC'
+  ).bind(empId).all()
+
+  // Group into weeks that START on Thursday.
+  // Helper: given a date, find the Thursday on/before it.
+  const weekStartOf = (dateStr: string): string => {
+    const d = new Date(dateStr + 'T00:00:00Z')
+    const dow = d.getUTCDay() // 0=Sun ... 4=Thu
+    // days since last Thursday
+    let diff = (dow - 4 + 7) % 7
+    d.setUTCDate(d.getUTCDate() - diff)
+    return d.toISOString().slice(0, 10)
+  }
+  const addDays = (dateStr: string, n: number): string => {
+    const d = new Date(dateStr + 'T00:00:00Z')
+    d.setUTCDate(d.getUTCDate() + n)
+    return d.toISOString().slice(0, 10)
+  }
+
+  const weekMap: Record<string, any> = {}
+  for (const log of (logs.results as any[])) {
+    const ws = weekStartOf(log.entry_date)
+    if (!weekMap[ws]) {
+      weekMap[ws] = {
+        week_start: ws,            // Thursday
+        week_end: addDays(ws, 6),  // Wednesday
+        total_pieces: 0,
+        total_payout: 0,
+        total_scrap: 0,
+        components: {} as Record<string, any>,
+        days: {} as Record<string, any>,
+        logs: []
+      }
+    }
+    const w = weekMap[ws]
+    const q = parseFloat(log.quantity) || 0
+    const p = parseFloat(log.payout) || 0
+    w.total_pieces += q
+    w.total_payout += p
+    w.total_scrap += parseFloat(log.scrap_qty) || 0
+    const cn = log.component_name || 'Unknown'
+    if (!w.components[cn]) w.components[cn] = { name: cn, pieces: 0, payout: 0 }
+    w.components[cn].pieces += q
+    w.components[cn].payout += p
+    if (!w.days[log.entry_date]) w.days[log.entry_date] = { date: log.entry_date, pieces: 0, payout: 0 }
+    w.days[log.entry_date].pieces += q
+    w.days[log.entry_date].payout += p
+    w.logs.push(log)
+  }
+
+  const weeks = Object.values(weekMap)
+    .map((w: any) => ({
+      ...w,
+      components: Object.values(w.components),
+      days: Object.values(w.days).sort((a: any, b: any) => a.date.localeCompare(b.date))
+    }))
+    .sort((a: any, b: any) => b.week_start.localeCompare(a.week_start))
+
+  const limit = parseInt(c.req.query('weeks') || '12')
+  return c.json({ weeks: weeks.slice(0, limit) })
+})
+
 // ============ EMPLOYEES ============
 app.get('/api/employees', requireAuth, async (c) => {
   const result = await c.env.DB.prepare(

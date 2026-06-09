@@ -6,7 +6,50 @@
 - **Goal**: Complete business CRM for Two Star Industries — manage clients, ledgers, inventory, raw materials, manufacturing recipes, employees, side expenses, and bills with auto Net Profit tracking.
 - **Stack**: Hono (TypeScript) + Cloudflare Pages + Cloudflare D1 (SQLite) + TailwindCSS + Vanilla JS frontend
 
-## What's New (latest update — 2026-05-14)
+## What's New (latest update — 2026-06-09) — COMPONENTS + WORKER PRODUCTION
+
+### NEW middle layer: Raw Material → **Components** → Final Product
+Pehle system tha: Raw Material → Product. Ab beech mein ek naya layer add hua hai — **Components / Production** — jisse factory ke contract (per-piece) workers ka kaam track hota hai.
+
+A **component** is an intermediate part workers make from raw material — e.g. *Trolley Basket Rings*, *Bottom Jaali*, *Assembled Basket*. Workers are paid **per piece**.
+
+#### 1. New "Components / Production" Section (sidebar)
+- **Add Component**: name, unit, category, **default per-piece rate** (worker pay/piece), current stock, and an optional **recipe** (raw material × qty per 1 piece).
+- The components table shows each component, what it's made from, the per-piece rate and **current stock**.
+- A live **Recent Production Log** table shows every entry (date, worker, component, pieces, rate, payout, raw used, scrap).
+- Summary cards: total components, total stock, produced today, total scrap/waste.
+
+#### 2. Worker Production Logging (per-piece counting)
+- Click **Log Production** → pick worker + component + pieces made (+ optional scrap).
+- On save the system automatically:
+  1. **Increases the component's stock** by the pieces produced.
+  2. **Deducts raw material** from stock (recipe-based) — so you can see how much raw was used.
+  3. **Records scrap/wastage** (single-ingredient components also deduct scrap from raw stock).
+  4. **Adds a per-piece payout line** (`pieces × rate`) into that worker's profile so it counts toward their salary.
+- Example: 2 workers make rings. Worker A makes 100 rings, Worker B makes 200 rings → log both → component stock = 300, raw material reduced, both workers paid for their pieces.
+
+#### 3. Weekly Payout — Thursday → Wednesday (per worker)
+- Each worker's profile now has a **Weekly Production Payout** section that groups all production into weeks that **start every Thursday and end on Wednesday** (matching the factory's "Thursday ka Thursday" payout cycle).
+- Each week shows: total pieces, total payout, per-component breakdown, and a day-by-day list.
+- The current week is highlighted. Grand total (all weeks) is shown at the top.
+
+#### 4. Raw Material Usage & Scrap Visibility
+- Every production log stores `raw_used` and `scrap_qty`, so you can see exactly how much raw material was consumed and how much was wasted per batch.
+- Deleting/editing a production log correctly reverses or re-applies stock, raw material and worker payout.
+
+#### New API Endpoints
+- `GET/POST/PUT/DELETE /api/components` — manage components + their recipe
+- `GET /api/components/:id` — component detail + recent production
+- `GET /api/production` — list production logs (filters: `employee_id`, `component_id`, `from`, `to`)
+- `POST /api/production` — log a worker's production (auto stock + raw deduct + scrap + payout)
+- `PUT/DELETE /api/production/:id` — edit/delete a log (reverses stock & payout)
+- `GET /api/production/weekly?employee_id=` — Thursday→Wednesday weekly payout summary
+
+#### New DB tables (migration `0011`)
+- `components`, `component_ingredients`, `production_logs`, `production_raw_usage`, `product_components`
+- `employee_transactions.production_log_id` (reverse link to production)
+
+## What's New (previous update — 2026-05-14)
 
 ### 1. Dashboard Sales Summary — Reordered (Day → Month → All Time)
 - Gross Profit cards on the Dashboard are now displayed in the natural order: **Today → This Month → All Time** (previously was All Time → Month → Today).
@@ -145,7 +188,7 @@ Calendar widget redesigned to be ~30% smaller (cells, gaps, fonts, paddings) whi
 - **Platform**: Cloudflare Pages
 - **Status**: ✅ Active
 - **Tech Stack**: Hono + TypeScript + Vite + Cloudflare D1 + TailwindCSS
-- **Last Updated**: 2026-05-09
+- **Last Updated**: 2026-06-09
 
 ## Local Development
 ```bash
