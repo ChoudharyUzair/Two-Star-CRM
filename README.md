@@ -6,7 +6,26 @@
 - **Goal**: Complete business CRM for Two Star Industries — manage clients, ledgers, inventory, raw materials, manufacturing recipes, employees, side expenses, and bills with auto Net Profit tracking.
 - **Stack**: Hono (TypeScript) + Cloudflare Pages + Cloudflare D1 (SQLite) + TailwindCSS + Vanilla JS frontend
 
-## What's New (latest update — 2026-06-09) — 6 FIXES (Production, Products, Worker Rate, Calendar, Advances)
+## What's New (latest update — 2026-06-09) — Dashboard Restructure + Calendar "View Days" Fix
+
+This update focuses on two requested improvements:
+
+### A. Professional Dashboard restructure
+The dashboard is now organised into clear, labelled sections instead of a long flat list of cards:
+1. **Key Metrics** — all 8 KPI cards (Received, Remaining Balance, Bills, Clients/Sections, Raw Materials, Products/Mfg., Employees, Side Expenses) combined into one clean responsive grid.
+2. **Profit Overview** — the previous **6 large coloured cards** (3× Gross Profit + 3× Final Net Profit) are now combined into a **single compact table** (rows: Today / This Month / All Time; columns: Gross Profit · Side Expenses · Net Profit). Much less clutter, same information.
+3. **Sales Summary** — daily / monthly / all-time units, revenue and product breakdown.
+4. **Detailed Summaries** — Per-Section, Inventory, Manufacturing, Raw Material, Employees and Side Expenses tables grouped under one heading.
+5. **Activity & History** — Activity Calendar + Recent Transactions.
+
+Semantic `<section>` tags and consistent `dash-section-title` / `dash-card-title` / `dash-link-btn` styles are used throughout.
+
+### B. Calendar "View Days" button fixed
+The **"View Days"** toggle (on both the Dashboard and Employee calendars) did not open the month grid. Root cause: `renderCalendar()` rebuilt its internal state object on every render and **dropped the `expanded` flag**, so the grid was always re-collapsed immediately after toggling. Fixed by preserving previous calendar state (`{ ...cur, ... }`) so the expanded/collapsed state now persists correctly. Clicking **View Days** now opens the day grid, and **Hide** closes it.
+
+---
+
+## Previous update — 6 FIXES (Production, Products, Worker Rate, Calendar, Advances)
 
 This update fixes 6 reported issues:
 

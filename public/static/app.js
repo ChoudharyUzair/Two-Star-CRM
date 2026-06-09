@@ -1021,89 +1021,86 @@ const App = {
         <button onclick="App.showDashboard()" class="btn btn-secondary btn-sm"><i class="fas fa-sync-alt"></i> Refresh</button>
       </div>
 
-      <div class="p-4 md:p-6 space-y-5">
-        <div class="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-3">
-          <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-arrow-down mr-1"></i>Total Received</p>
-            <p class="text-xl font-bold mt-1 amount-received">PKR ${this.fmt(totals.total_received)}</p></div>
-          <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-balance-scale mr-1"></i>Remaining Balance</p>
-            <p class="text-xl font-bold mt-1 amount-running">PKR ${this.fmt((totals.total_pending||0) - (totals.total_received||0))}</p></div>
-          <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-file-invoice mr-1"></i>Bills</p>
-            <p class="text-xl font-bold text-purple-600 mt-1">${billStats?.count || 0}</p>
-            <p class="text-xs text-gray-400 mt-1">PKR ${this.fmt(billStats?.total_amount || 0)}</p></div>
-          <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-users mr-1"></i>Clients/Sections</p>
-            <p class="text-xl font-bold text-blue-600 mt-1">${clientCount} / ${folderCount}</p></div>
-        </div>
+      <div class="p-4 md:p-6 space-y-6">
 
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <div class="stat-card cursor-pointer" onclick="App.showRawMaterials()">
-            <p class="text-xs text-gray-500"><i class="fas fa-cubes mr-1"></i>Raw Materials</p>
-            <p class="text-xl font-bold text-orange-600 mt-1">${rawStats?.count || 0} items</p>
-            <p class="text-xs text-gray-400 mt-1">Stock Value: PKR ${this.fmt(rawStats?.total || 0)}</p>
+        <!-- ============ SECTION 1: KEY METRICS ============ -->
+        <section id="dash-kpis">
+          <h2 class="dash-section-title"><i class="fas fa-gauge-high text-purple-500"></i>Key Metrics</h2>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-arrow-down mr-1"></i>Total Received</p>
+              <p class="text-xl font-bold mt-1 amount-received">PKR ${this.fmt(totals.total_received)}</p></div>
+            <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-balance-scale mr-1"></i>Remaining Balance</p>
+              <p class="text-xl font-bold mt-1 amount-running">PKR ${this.fmt((totals.total_pending||0) - (totals.total_received||0))}</p></div>
+            <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-file-invoice mr-1"></i>Bills</p>
+              <p class="text-xl font-bold text-purple-600 mt-1">${billStats?.count || 0}</p>
+              <p class="text-xs text-gray-400 mt-1">PKR ${this.fmt(billStats?.total_amount || 0)}</p></div>
+            <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-users mr-1"></i>Clients / Sections</p>
+              <p class="text-xl font-bold text-blue-600 mt-1">${clientCount} / ${folderCount}</p></div>
+            <div class="stat-card cursor-pointer" onclick="App.showRawMaterials()">
+              <p class="text-xs text-gray-500"><i class="fas fa-cubes mr-1"></i>Raw Materials</p>
+              <p class="text-xl font-bold text-orange-600 mt-1">${rawStats?.count || 0} items</p>
+              <p class="text-xs text-gray-400 mt-1">Stock: PKR ${this.fmt(rawStats?.total || 0)}</p>
+            </div>
+            <div class="stat-card cursor-pointer" onclick="App.showProducts()">
+              <p class="text-xs text-gray-500"><i class="fas fa-industry mr-1"></i>Products / Mfg.</p>
+              <p class="text-xl font-bold text-purple-600 mt-1">${products.length} product(s)</p>
+              <p class="text-xs text-gray-400 mt-1">Recipes linked to raw</p>
+            </div>
+            <div class="stat-card cursor-pointer" onclick="App.showEmployees()">
+              <p class="text-xs text-gray-500"><i class="fas fa-user-tie mr-1"></i>Employees</p>
+              <p class="text-xl font-bold text-blue-600 mt-1">${empCount}</p>
+              <p class="text-xs text-gray-400 mt-1">Remaining: PKR ${this.fmt(empTotalRemaining)}</p>
+            </div>
+            <div class="stat-card cursor-pointer" onclick="App.showSideExpenses()">
+              <p class="text-xs text-gray-500"><i class="fas fa-money-bill-wave mr-1"></i>Side Expenses</p>
+              <p class="text-xl font-bold text-red-600 mt-1">${expenseStats?.count || 0}</p>
+              <p class="text-xs text-gray-400 mt-1">Total: PKR ${this.fmt(expenseStats?.total || 0)}</p>
+            </div>
           </div>
-          <div class="stat-card cursor-pointer" onclick="App.showProducts()">
-            <p class="text-xs text-gray-500"><i class="fas fa-industry mr-1"></i>Products / Mfg.</p>
-            <p class="text-xl font-bold text-purple-600 mt-1">${products.length} product(s)</p>
-            <p class="text-xs text-gray-400 mt-1">Recipes linked to Raw Material</p>
-          </div>
-          <div class="stat-card cursor-pointer" onclick="App.showEmployees()">
-            <p class="text-xs text-gray-500"><i class="fas fa-user-tie mr-1"></i>Employees</p>
-            <p class="text-xl font-bold text-blue-600 mt-1">${empCount}</p>
-            <p class="text-xs text-gray-400 mt-1">Paid: PKR ${this.fmt(empTotalPaid)} | Remaining Amount: PKR ${this.fmt(empTotalRemaining)}</p>
-          </div>
-          <div class="stat-card cursor-pointer" onclick="App.showSideExpenses()">
-            <p class="text-xs text-gray-500"><i class="fas fa-money-bill-wave mr-1"></i>Side Expenses</p>
-            <p class="text-xl font-bold text-red-600 mt-1">${expenseStats?.count || 0}</p>
-            <p class="text-xs text-gray-400 mt-1">Total: PKR ${this.fmt(expenseStats?.total || 0)}</p>
-          </div>
-        </div>
+        </section>
 
-        <!-- Sales Summary (Daily / Monthly / All-Time) + Net Profit -->
-        <div class="bg-white rounded-xl shadow-sm p-5">
-          <h2 class="font-bold text-gray-800 mb-3 flex items-center justify-between">
+        <!-- ============ SECTION 2: PROFIT OVERVIEW (combined Gross + Net into one compact table) ============ -->
+        <section id="dash-profit" class="bg-white rounded-xl shadow-sm p-5">
+          <h2 class="dash-card-title"><span><i class="fas fa-coins text-amber-500 mr-2"></i>Profit Overview</span></h2>
+          <p class="text-xs text-gray-500 mb-3">Gross Profit = (Sell − Mfg. cost) × Qty (products only). &nbsp;Net Profit = Gross − Side Expenses.</p>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm profit-table">
+              <thead class="bg-gray-50"><tr>
+                <th class="text-left p-3">Period</th>
+                <th class="text-right p-3" title="Profit from products before side expenses">Gross Profit</th>
+                <th class="text-right p-3" title="All side / running expenses">Side Expenses</th>
+                <th class="text-right p-3" title="Final profit after side expenses">Net Profit</th>
+              </tr></thead>
+              <tbody>
+                <tr class="border-t">
+                  <td class="p-3 font-semibold text-blue-700"><i class="fas fa-sun mr-1"></i>Today</td>
+                  <td class="text-right p-3 amount-received">PKR ${this.fmt(profitToday)}</td>
+                  <td class="text-right p-3 text-red-600">PKR ${this.fmt(sideExpToday)}</td>
+                  <td class="text-right p-3 font-bold ${finalProfitToday >= 0 ? 'text-green-700' : 'text-red-700'}">PKR ${this.fmt(finalProfitToday)}</td>
+                </tr>
+                <tr class="border-t">
+                  <td class="p-3 font-semibold text-teal-700"><i class="fas fa-calendar-alt mr-1"></i>This Month</td>
+                  <td class="text-right p-3 amount-received">PKR ${this.fmt(profitMonth)}</td>
+                  <td class="text-right p-3 text-red-600">PKR ${this.fmt(sideExpMonth)}</td>
+                  <td class="text-right p-3 font-bold ${finalProfitMonth >= 0 ? 'text-green-700' : 'text-red-700'}">PKR ${this.fmt(finalProfitMonth)}</td>
+                </tr>
+                <tr class="border-t-2 bg-amber-50 font-bold">
+                  <td class="p-3 text-amber-800"><i class="fas fa-trophy mr-1"></i>All Time</td>
+                  <td class="text-right p-3 amount-received">PKR ${this.fmt(totalProfit)}</td>
+                  <td class="text-right p-3 text-red-600">PKR ${this.fmt(sideExpTotal)}</td>
+                  <td class="text-right p-3 ${finalProfitAll >= 0 ? 'text-green-700' : 'text-red-700'}" style="font-size:1.05rem;">PKR ${this.fmt(finalProfitAll)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- ============ SECTION 3: SALES SUMMARY (Daily / Monthly / All-Time) ============ -->
+        <section id="dash-sales" class="bg-white rounded-xl shadow-sm p-5">
+          <h2 class="dash-card-title">
             <span><i class="fas fa-chart-bar text-green-500 mr-2"></i>Sales Summary</span>
-            <button onclick="App.showBills && App.showBills()" class="text-xs text-blue-600 hover:underline font-normal">View Bills <i class="fas fa-arrow-right ml-1"></i></button>
+            <button onclick="App.showBills && App.showBills()" class="dash-link-btn">View Bills <i class="fas fa-arrow-right ml-1"></i></button>
           </h2>
-
-          <!-- Gross Profit Cards (Products only — Sell − Mfg. cost) — order: Today → Month → All Time -->
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-            <div class="rounded-lg p-4" style="background:#eff6ff; border:1px solid #bfdbfe;">
-              <p class="text-xs text-blue-800 font-semibold"><i class="fas fa-sun mr-1"></i>Gross Profit Today</p>
-              <p class="text-2xl font-extrabold text-blue-700 mt-1">PKR ${this.fmt(profitToday)}</p>
-              <p class="text-xs text-blue-700 mt-1">Products only · (Sell − Mfg.) × Qty</p>
-            </div>
-            <div class="rounded-lg p-4" style="background:#f0fdfa; border:1px solid #99f6e4;">
-              <p class="text-xs text-teal-800 font-semibold"><i class="fas fa-calendar-alt mr-1"></i>Gross Profit This Month</p>
-              <p class="text-2xl font-extrabold text-teal-700 mt-1">PKR ${this.fmt(profitMonth)}</p>
-              <p class="text-xs text-teal-700 mt-1">Products only · auto from bills</p>
-            </div>
-            <div class="rounded-lg p-4" style="background: linear-gradient(135deg,#ecfdf5,#d1fae5); border:1px solid #6ee7b7;">
-              <p class="text-xs text-green-800 font-semibold"><i class="fas fa-chart-line mr-1"></i>Gross Profit (All Time)</p>
-              <p class="text-2xl font-extrabold text-green-700 mt-1">PKR ${this.fmt(totalProfit)}</p>
-              <p class="text-xs text-green-700 mt-1">Products only · before side expenses</p>
-            </div>
-          </div>
-
-          <!-- Final Net Profit (Gross Profit − Side Expenses) — order: Today → Month → All Time -->
-          <div class="mt-2 mb-1">
-            <h3 class="text-sm font-bold text-gray-700 mb-2"><i class="fas fa-coins text-amber-500 mr-1"></i>Final Net Profit <span class="text-xs font-normal text-gray-500">(Gross Profit − Side Expenses)</span></h3>
-          </div>
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-            <div class="rounded-lg p-4" style="background:#fef3c7; border:1px solid #fcd34d;">
-              <p class="text-xs text-amber-800 font-semibold"><i class="fas fa-sun mr-1"></i>Final Net Profit Today</p>
-              <p class="text-2xl font-extrabold text-amber-700 mt-1">PKR ${this.fmt(finalProfitToday)}</p>
-              <p class="text-xs text-amber-700 mt-1">Gross ${this.fmt(profitToday)} − Side Exp. ${this.fmt(sideExpToday)}</p>
-            </div>
-            <div class="rounded-lg p-4" style="background:#ffedd5; border:1px solid #fdba74;">
-              <p class="text-xs text-orange-800 font-semibold"><i class="fas fa-calendar-alt mr-1"></i>Final Net Profit This Month</p>
-              <p class="text-2xl font-extrabold text-orange-700 mt-1">PKR ${this.fmt(finalProfitMonth)}</p>
-              <p class="text-xs text-orange-700 mt-1">Gross ${this.fmt(profitMonth)} − Side Exp. ${this.fmt(sideExpMonth)}</p>
-            </div>
-            <div class="rounded-lg p-4" style="background: linear-gradient(135deg,#fef9c3,#fde68a); border:1px solid #f59e0b;">
-              <p class="text-xs text-yellow-900 font-semibold"><i class="fas fa-trophy mr-1"></i>Final Net Profit (All Time)</p>
-              <p class="text-2xl font-extrabold text-yellow-700 mt-1">PKR ${this.fmt(finalProfitAll)}</p>
-              <p class="text-xs text-yellow-800 mt-1">Gross ${this.fmt(totalProfit)} − Side Exp. ${this.fmt(sideExpTotal)}</p>
-            </div>
-          </div>
 
           <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
             <!-- Today -->
@@ -1172,10 +1169,13 @@ const App = {
               </div>
             </div>
           </div>
-        </div>
+        </section>
 
-        <div class="bg-white rounded-xl shadow-sm p-5">
-          <h2 class="font-bold text-gray-800 mb-3"><i class="fas fa-folder-tree mr-2"></i>Per-Section Summary</h2>
+        <!-- ============ SECTION 4: DETAILED SUMMARIES ============ -->
+        <h2 class="dash-section-title"><i class="fas fa-table-list text-gray-500"></i>Detailed Summaries</h2>
+
+        <section class="bg-white rounded-xl shadow-sm p-5">
+          <h2 class="dash-card-title"><span><i class="fas fa-folder-tree text-blue-500 mr-2"></i>Per-Section Summary</span></h2>
           ${perFolder.length === 0 ? '<p class="text-gray-500 text-center py-4">No sections yet</p>' : `
             <div class="overflow-x-auto"><table class="w-full text-sm">
               <thead class="bg-gray-50"><tr>
@@ -1190,13 +1190,13 @@ const App = {
                     <td class="text-right p-3 amount-running">PKR ${this.fmt(f.total_pending - f.total_received)}</td>
                   </tr>`).join('')}
               </tbody></table></div>`}
-        </div>
+        </section>
 
         <!-- Inventory Summary -->
-        <div class="bg-white rounded-xl shadow-sm p-5">
-          <h2 class="font-bold text-gray-800 mb-3 flex items-center justify-between">
+        <section class="bg-white rounded-xl shadow-sm p-5">
+          <h2 class="dash-card-title">
             <span><i class="fas fa-boxes text-orange-500 mr-2"></i>Inventory Summary</span>
-            <button onclick="App.showInventory()" class="text-xs text-blue-600 hover:underline font-normal">View All <i class="fas fa-arrow-right ml-1"></i></button>
+            <button onclick="App.showInventory()" class="dash-link-btn">View All <i class="fas fa-arrow-right ml-1"></i></button>
           </h2>
           ${(!invMfg || invMfg.length === 0) ? '<p class="text-gray-500 text-center py-4">No inventory products yet. <a href="#" onclick="App.showInventory(); return false;" class="text-blue-600 hover:underline">Add a product →</a></p>' : `
             <div class="overflow-x-auto"><table class="w-full text-sm">
@@ -1230,15 +1230,15 @@ const App = {
                 }).join('')}
               </tbody></table></div>
           `}
-        </div>
+        </section>
 
         <!-- Manufacturing Summary -->
-        <div class="bg-white rounded-xl shadow-sm p-5">
-          <h2 class="font-bold text-gray-800 mb-3 flex items-center justify-between">
+        <section class="bg-white rounded-xl shadow-sm p-5">
+          <h2 class="dash-card-title">
             <span><i class="fas fa-industry text-purple-500 mr-2"></i>Manufacturing Summary</span>
             <div class="flex gap-2">
-              <button onclick="App.showProducts()" class="text-xs text-blue-600 hover:underline font-normal">Recipes <i class="fas fa-arrow-right ml-1"></i></button>
-              <button onclick="App.showRawMaterials()" class="text-xs text-blue-600 hover:underline font-normal">Raw Materials <i class="fas fa-arrow-right ml-1"></i></button>
+              <button onclick="App.showProducts()" class="dash-link-btn">Recipes <i class="fas fa-arrow-right ml-1"></i></button>
+              <button onclick="App.showRawMaterials()" class="dash-link-btn">Raw Materials <i class="fas fa-arrow-right ml-1"></i></button>
             </div>
           </h2>
           ${(mfgProducts.length === 0) ? '<p class="text-gray-500 text-center py-4">No manufactured products yet. <a href="#" onclick="App.showProducts(); return false;" class="text-blue-600 hover:underline">Add a product recipe →</a></p>' : `
@@ -1268,13 +1268,13 @@ const App = {
               </tbody></table></div>
             ${mfgProducts.length > 15 ? `<p class="text-xs text-gray-400 text-center mt-2">Showing 15 of ${mfgProducts.length} products</p>` : ''}
           `}
-        </div>
+        </section>
 
         <!-- Raw Material Summary -->
-        <div class="bg-white rounded-xl shadow-sm p-5">
-          <h2 class="font-bold text-gray-800 mb-3 flex items-center justify-between">
+        <section class="bg-white rounded-xl shadow-sm p-5">
+          <h2 class="dash-card-title">
             <span><i class="fas fa-cubes text-orange-500 mr-2"></i>Raw Material Summary</span>
-            <button onclick="App.showRawMaterials()" class="text-xs text-blue-600 hover:underline font-normal">View All <i class="fas fa-arrow-right ml-1"></i></button>
+            <button onclick="App.showRawMaterials()" class="dash-link-btn">View All <i class="fas fa-arrow-right ml-1"></i></button>
           </h2>
 
           <!-- Supplier Stats (moved here from Manufacturing Summary) -->
@@ -1306,13 +1306,13 @@ const App = {
                   <td class="text-right p-3 amount-running">PKR ${this.fmt(rawStats?.total || 0)}</td>
                 </tr>
               </tbody></table></div>`}
-        </div>
+        </section>
 
         <!-- Employees Summary -->
-        <div class="bg-white rounded-xl shadow-sm p-5">
-          <h2 class="font-bold text-gray-800 mb-3 flex items-center justify-between">
+        <section class="bg-white rounded-xl shadow-sm p-5">
+          <h2 class="dash-card-title">
             <span><i class="fas fa-user-tie text-blue-500 mr-2"></i>Employees Summary</span>
-            <button onclick="App.showEmployees()" class="text-xs text-blue-600 hover:underline font-normal">View All <i class="fas fa-arrow-right ml-1"></i></button>
+            <button onclick="App.showEmployees()" class="dash-link-btn">View All <i class="fas fa-arrow-right ml-1"></i></button>
           </h2>
           ${(!empList || empList.length === 0) ? '<p class="text-gray-500 text-center py-4">No employees yet</p>' : `
             <div class="overflow-x-auto"><table class="w-full text-sm">
@@ -1348,13 +1348,13 @@ const App = {
                   <td></td>
                 </tr>
               </tbody></table></div>`}
-        </div>
+        </section>
 
         <!-- Side Expenses Summary -->
-        <div class="bg-white rounded-xl shadow-sm p-5">
-          <h2 class="font-bold text-gray-800 mb-3 flex items-center justify-between">
+        <section class="bg-white rounded-xl shadow-sm p-5">
+          <h2 class="dash-card-title">
             <span><i class="fas fa-money-bill-wave text-red-500 mr-2"></i>Side Expenses Summary</span>
-            <button onclick="App.showSideExpenses()" class="text-xs text-blue-600 hover:underline font-normal">View All <i class="fas fa-arrow-right ml-1"></i></button>
+            <button onclick="App.showSideExpenses()" class="dash-link-btn">View All <i class="fas fa-arrow-right ml-1"></i></button>
           </h2>
           ${(!expenseList || expenseList.length === 0) ? '<p class="text-gray-500 text-center py-4">No side expenses yet</p>' : `
             <div class="overflow-x-auto"><table class="w-full text-sm">
@@ -1380,13 +1380,16 @@ const App = {
               </tbody></table></div>
             ${expenseList.length > 10 ? `<p class="text-xs text-gray-400 text-center mt-2">Showing latest 10 of ${expenseList.length} entries</p>` : ''}
           `}
-        </div>
+        </section>
+
+        <!-- ============ SECTION 5: ACTIVITY & HISTORY ============ -->
+        <h2 class="dash-section-title"><i class="fas fa-clock-rotate-left text-gray-500"></i>Activity &amp; History</h2>
 
         <!-- Activity Calendar -->
         <div id="dashboard-calendar"></div>
 
-        <div class="bg-white rounded-xl shadow-sm p-5">
-          <h2 class="font-bold text-gray-800 mb-3"><i class="fas fa-history mr-2"></i>Recent Transactions</h2>
+        <section class="bg-white rounded-xl shadow-sm p-5">
+          <h2 class="dash-card-title"><span><i class="fas fa-history text-gray-500 mr-2"></i>Recent Transactions</span></h2>
           ${recent.length === 0 ? '<p class="text-gray-500 text-center py-4">No transactions</p>' : `
             <div class="overflow-x-auto"><table class="w-full text-sm">
               <thead class="bg-gray-50"><tr>
@@ -1403,7 +1406,7 @@ const App = {
                     <td class="p-2"><span class="status-badge status-${(t.status||'').toLowerCase()}">${this.escapeHtml(t.status || '')}</span></td>
                   </tr>`).join('')}
               </tbody></table></div>`}
-        </div>
+        </section>
       </div>`;
 
     // Render calendar
@@ -4861,7 +4864,13 @@ const App = {
     // opts: { employeeId, month (YYYY-MM) }
     const cur = this._cal[containerId] || {};
     const month = opts.month || cur.month || new Date().toISOString().slice(0, 7);
-    this._cal[containerId] = { month, employeeId: opts.employeeId || cur.employeeId || null };
+    // IMPORTANT: preserve the previous state (especially `expanded`) instead of
+    // replacing the whole object — otherwise the "View Days" toggle is lost on re-render.
+    this._cal[containerId] = {
+      ...cur,
+      month,
+      employeeId: opts.employeeId || cur.employeeId || null
+    };
 
     const url = opts.employeeId
       ? `/api/calendar?month=${month}&employee_id=${opts.employeeId}`

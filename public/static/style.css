@@ -749,3 +749,48 @@ body {
   font-weight: 700;
   font-size: 0.95rem;
 }
+
+/* ========= Dashboard structure (professional grouping) ========= */
+.dash-section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0.25rem 0 0.1rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 2px solid #e2e8f0;
+}
+.dash-section-title i { color: #94a3b8; }
+
+.dash-card-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-weight: 700;
+  color: #1f2937;
+  font-size: 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.dash-link-btn {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #2563eb;
+  background: #eff6ff;
+  border: 1px solid #dbeafe;
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+  transition: background 0.15s, color 0.15s;
+}
+.dash-link-btn:hover { background: #dbeafe; color: #1d4ed8; }
+
+/* Combined profit table */
+.profit-table th { font-weight: 600; color: #64748b; font-size: 0.78rem; }
+.profit-table td { font-variant-numeric: tabular-nums; }
+.profit-table tbody tr:hover { background: #f8fafc; }
