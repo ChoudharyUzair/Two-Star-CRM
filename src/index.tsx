@@ -1787,8 +1787,24 @@ app.delete('/api/production/:id', requireAuth, async (c) => {
 app.get('/api/production/weekly', requireAuth, async (c) => {
   const empId = c.req.query('employee_id')
   if (!empId) return c.json({ error: 'employee_id required' }, 400)
-  const logs = await c.env.DB.prepare(
-    'SELECT * FROM production_logs WHERE employee_id = ? ORDER BY entry_date ASC, id ASC'
+
+  // Weekly payout is now based on ALL per-piece earnings recorded in
+  // employee_transactions. This covers BOTH:
+  //   - Components Production (production_logs -> per_piece salary tx)
+  //   - Products Manufacturing  Assemble/Paint/Pack (product_production_logs -> per_piece salary tx)
+  // Any per-piece earning (whatever field/stage the worker is in) shows here.
+  const txRows = await c.env.DB.prepare(
+    `SELECT entry_date, item_name, quantity, amount
+       FROM employee_transactions
+      WHERE employee_id = ? AND type = 'salary' AND entry_type = 'per_piece'
+      ORDER BY entry_date ASC, id ASC`
+  ).bind(empId).all()
+
+  // Scrap is only tracked for component production; fetch it separately so the
+  // weekly view can still show "Scrap this week".
+  const scrapRows = await c.env.DB.prepare(
+    `SELECT entry_date, COALESCE(scrap_qty,0) AS scrap_qty
+       FROM production_logs WHERE employee_id = ?`
   ).bind(empId).all()
 
   // Group into weeks that START on Thursday.
@@ -1808,8 +1824,7 @@ app.get('/api/production/weekly', requireAuth, async (c) => {
   }
 
   const weekMap: Record<string, any> = {}
-  for (const log of (logs.results as any[])) {
-    const ws = weekStartOf(log.entry_date)
+  const ensureWeek = (ws: string) => {
     if (!weekMap[ws]) {
       weekMap[ws] = {
         week_start: ws,            // Thursday
@@ -1822,13 +1837,19 @@ app.get('/api/production/weekly', requireAuth, async (c) => {
         logs: []
       }
     }
-    const w = weekMap[ws]
+    return weekMap[ws]
+  }
+
+  for (const log of (txRows.results as any[])) {
+    if (!log.entry_date) continue
+    const ws = weekStartOf(log.entry_date)
+    const w = ensureWeek(ws)
     const q = parseFloat(log.quantity) || 0
-    const p = parseFloat(log.payout) || 0
+    const p = parseFloat(log.amount) || 0
     w.total_pieces += q
     w.total_payout += p
-    w.total_scrap += parseFloat(log.scrap_qty) || 0
-    const cn = log.component_name || 'Unknown'
+    // item_name carries "Component" or "Product (Stage)" — use it as the grouping label.
+    const cn = log.item_name || 'Production'
     if (!w.components[cn]) w.components[cn] = { name: cn, pieces: 0, payout: 0 }
     w.components[cn].pieces += q
     w.components[cn].payout += p
@@ -1836,6 +1857,14 @@ app.get('/api/production/weekly', requireAuth, async (c) => {
     w.days[log.entry_date].pieces += q
     w.days[log.entry_date].payout += p
     w.logs.push(log)
+  }
+
+  // Fold scrap into the matching week (don't create a week just for scrap).
+  for (const s of (scrapRows.results as any[])) {
+    const scrap = parseFloat(s.scrap_qty) || 0
+    if (scrap <= 0 || !s.entry_date) continue
+    const ws = weekStartOf(s.entry_date)
+    if (weekMap[ws]) weekMap[ws].total_scrap += scrap
   }
 
   const weeks = Object.values(weekMap)
@@ -1858,6 +1887,7 @@ app.get('/api/employees', requireAuth, async (c) => {
        (SELECT COALESCE(SUM(CASE WHEN paid_amount IS NULL THEN amount ELSE paid_amount END),0)
           FROM employee_transactions WHERE employee_id = e.id AND type='salary') as total_paid,
        (SELECT COALESCE(SUM(amount),0) FROM employee_transactions WHERE employee_id = e.id AND type='advance') as total_advance,
+       (SELECT COALESCE(SUM(amount),0) FROM employee_transactions WHERE employee_id = e.id AND type='payment') as total_payment,
        (SELECT COALESCE(SUM(amount),0)
           FROM employee_transactions
           WHERE employee_id = e.id AND type='advance' AND COALESCE(deferred,0)=0) as advance_active,

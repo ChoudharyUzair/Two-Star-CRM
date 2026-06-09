@@ -6,7 +6,18 @@
 - **Goal**: Complete business CRM for Two Star Industries — manage clients, ledgers, inventory, raw materials, manufacturing recipes, employees, side expenses, and bills with auto Net Profit tracking.
 - **Stack**: Hono (TypeScript) + Cloudflare Pages + Cloudflare D1 (SQLite) + TailwindCSS + Vanilla JS frontend
 
-## What's New (latest update — 2026-06-09) — Products Manufacturing: auto per-pcs rate from worker profile
+## What's New (latest update — 2026-06-09) — Worker payout fixes + Payment type
+
+Char requested fixes:
+
+1. **Weekly Production Payout ab har production type dikhata hai.** Pehle "Weekly Production Payout (Thursday → Wednesday)" sirf **Components Production** ka data dikhata tha. Ab woh **employee_transactions** (saari per-piece earnings) par based hai — to **Products Manufacturing (Assemble / Paint / Pack)** aur kisi bhi field/stage ka kaam bhi automatically worker ke weekly payout + profile me show hota hai. (`GET /api/production/weekly` ko rewrite kiya.)
+2. **"Total Earned / Owed" card hata diya** employee profile se (clutter kam).
+3. **Naya "Payment" entry type** — jab aap worker ko paisa dete hain (salary paid) to **Type → Payment** choose karein. Ye sirf **Remaining se ghatata hai**, naya earning nahi banata. Pehle "Salary" entry total+paid dono add karti thi to remaining par farak nahi padta tha — ab payment se remaining sahi kam hota hai. (`type='payment'` employee_transactions me; remaining = earned − salary-paid − advance-active − **payments**.)
+4. **Weekly auto-reset clarified** — har **Thursday** naya week start hota hai (auto-reset), lekin **active advance / remaining balance reset nahi hota** (carry-forward). Sirf jo pay kar diya woh settle hota hai. Header me note add kiya.
+
+---
+
+## Previous update (2026-06-09) — Products Manufacturing: auto per-pcs rate from worker profile
 
 **Products Manufacturing** ka **Log Production** ab bilkul **Components Production** jaisa kaam karta hai: jab aap **component/product select** karke phir **employee (worker) select** karte hain, to us worker ke **profile (Per Piece Items)** se per-pcs rate **automatically fetch** ho jata hai — bar bar rate likhne ki zaroorat nahi.
 

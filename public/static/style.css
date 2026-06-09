@@ -247,7 +247,7 @@ body {
 .status-partial   { background: #dbeafe; color: #1e40af; }
 .status-overdue   { background: #fee2e2; color: #991b1b; }
 .status-cancelled { background: #e5e7eb; color: #374151; }
-.status-paid      { background: #d1fae5; color: #065f46; }
+.status-paid      { background: #dbeafe; color: #1e40af; }
 .status-unpaid    { background: #fee2e2; color: #991b1b; }
 
 /* Cards */

@@ -3425,16 +3425,17 @@ const App = {
   renderEmployeesList() {
     const emps = this.state.employees;
     const totalSalary = emps.reduce((s, e) => s + (parseFloat(e.monthly_salary) || 0), 0);
-    const totalPaid = emps.reduce((s, e) => s + (parseFloat(e.total_paid) || 0), 0);
-    // Remaining = (salary owed - salary paid) - ACTIVE advance (deferred advance not cut yet)
+    const totalPaid = emps.reduce((s, e) => s + (parseFloat(e.total_paid) || 0) + (parseFloat(e.total_payment) || 0), 0);
+    // Remaining = (salary owed - salary paid) - ACTIVE advance - standalone payments
     const calcEmpRemaining = (e) => {
       const tAmt = parseFloat(e.total_amount) || 0;
       const tPaid = parseFloat(e.total_paid) || 0;
+      const tPay = parseFloat(e.total_payment) || 0; // standalone payments reduce remaining
       // advance_active = advances that are NOT deferred (falls back to total_advance for old data)
       const adv = (e.advance_active !== undefined && e.advance_active !== null)
         ? (parseFloat(e.advance_active) || 0)
         : (parseFloat(e.total_advance) || 0);
-      return (tAmt - tPaid) - adv;
+      return (tAmt - tPaid) - adv - tPay;
     };
     const totalRemaining = emps.reduce((s, e) => s + calcEmpRemaining(e), 0);
     const area = document.getElementById('content-area');
@@ -3647,18 +3648,22 @@ const App = {
     }, 0);
     const salaryTotalAmount = sumByType('salary');
     const advance = sumByType('advance');
+    // Pure payments: cash handed to the worker that does NOT create a new earning.
+    // (type='payment' -> only reduces what's owed.)
+    const payments = sumByType('payment');
     // Active advance = advances NOT deferred. Deferred advance is parked for a later week.
     const advanceActive = tx.filter(x => x.type === 'advance' && !x.deferred)
       .reduce((s, x) => s + (parseFloat(x.amount) || 0), 0);
     const advanceDeferred = advance - advanceActive;
-    // Remaining = (Salary owed) - ACTIVE advance.
-    //   Salary owed = salary total - salary already paid.
-    //   Advance is money the worker already took, so an ACTIVE advance reduces what's
-    //   still owed (Remaining). A DEFERRED advance is not cut this week.
+    // Remaining = (Salary owed) - ACTIVE advance - standalone payments.
+    //   Salary owed   = salary earnings - amount already paid inside those entries.
+    //   Payment       = a standalone cash payment (no new earning) -> reduces remaining.
+    //   Active advance= money the worker already took -> reduces remaining.
+    //   Deferred advance is NOT cut this week.
     // Result CAN be negative (worker took more than earned -> employer is in credit).
-    const salaryRemaining = (salaryTotalAmount - salaryPaidActual) - advanceActive;
-    // Salary Paid (cash out the door) = salary paid + active advance already handed over.
-    const totalPaidOut = salaryPaidActual + advanceActive;
+    const salaryRemaining = (salaryTotalAmount - salaryPaidActual) - advanceActive - payments;
+    // Salary Paid (cash out the door) = salary paid + standalone payments + active advance.
+    const totalPaidOut = salaryPaidActual + payments + advanceActive;
     const area = document.getElementById('content-area');
     area.innerHTML = `
       <div class="page-header">
@@ -3674,9 +3679,8 @@ const App = {
         </div>
       </div>
       <div class="p-4 md:p-6 space-y-5">
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div class="stat-card"><p class="text-xs text-gray-500">Total Earned / Owed</p><p class="text-xl font-bold text-blue-600">PKR ${this.fmt(salaryTotalAmount)}</p></div>
-          <div class="stat-card"><p class="text-xs text-gray-500">Salary Paid (incl. advance)</p><p class="text-xl font-bold amount-received">PKR ${this.fmt(totalPaidOut)}</p><p class="text-xs text-gray-400 mt-1">Salary ${this.fmt(salaryPaidActual)} + Advance ${this.fmt(advanceActive)}</p></div>
+        <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <div class="stat-card"><p class="text-xs text-gray-500">Salary Paid (incl. advance)</p><p class="text-xl font-bold amount-received">PKR ${this.fmt(totalPaidOut)}</p><p class="text-xs text-gray-400 mt-1">Salary ${this.fmt(salaryPaidActual)}${payments > 0 ? ' + Payment ' + this.fmt(payments) : ''} + Advance ${this.fmt(advanceActive)}</p></div>
           <div class="stat-card"><p class="text-xs text-gray-500">Advance</p><p class="text-xl font-bold amount-pending">PKR ${this.fmt(advance)}</p>${advanceDeferred > 0 ? `<p class="text-xs text-orange-500 mt-1"><i class="fas fa-clock mr-1"></i>PKR ${this.fmt(advanceDeferred)} deferred (next week)</p>` : ''}</div>
           <div class="balance-box"><p class="text-xs opacity-90">Remaining</p><p class="text-2xl font-bold mt-1">PKR ${this.fmt(salaryRemaining)}</p>
             <p class="text-xs opacity-80 mt-1">${salaryRemaining > 0 ? 'You owe employee' : salaryRemaining < 0 ? 'Employee owes you' : 'Settled'}</p></div>
@@ -3704,19 +3708,21 @@ const App = {
                   const isPiece = t.entry_type === 'per_piece';
                   const isSalary = t.type === 'salary';
                   const isAdvance = t.type === 'advance';
+                  const isPayment = t.type === 'payment';
                   const isDeferred = isAdvance && !!t.deferred;
                   const totalAmt = parseFloat(t.amount) || 0;
                   const paidA = (t.paid_amount === null || t.paid_amount === undefined || t.paid_amount === '') ? totalAmt : (parseFloat(t.paid_amount) || 0);
                   const remainingA = Math.max(0, totalAmt - paidA);
+                  const badgeClass = isSalary ? 'status-received' : isPayment ? 'status-paid' : 'status-pending';
                   return `<tr>
                   <td>${i + 1}</td>
                   <td>${t.entry_date}</td>
-                  <td><span class="status-badge ${t.type === 'salary' ? 'status-received' : 'status-pending'}">${this.escapeHtml(t.type)}</span>${isPiece ? ' <i class="fas fa-cubes text-orange-500 ml-1" title="Per Piece"></i>' : ''}${isDeferred ? ' <span class="status-badge status-overdue" title="Deferred to next week"><i class="fas fa-clock"></i> deferred</span>' : ''}</td>
-                  <td>${isPiece ? `<strong>${this.escapeHtml(t.item_name || '')}</strong>${t.description ? `<div class="text-xs text-gray-500">${this.escapeHtml(t.description)}</div>` : ''}` : this.escapeHtml(t.description || '')}</td>
+                  <td><span class="status-badge ${badgeClass}">${this.escapeHtml(t.type)}</span>${isPiece ? ' <i class="fas fa-cubes text-orange-500 ml-1" title="Per Piece"></i>' : ''}${isDeferred ? ' <span class="status-badge status-overdue" title="Deferred to next week"><i class="fas fa-clock"></i> deferred</span>' : ''}</td>
+                  <td>${isPiece ? `<strong>${this.escapeHtml(t.item_name || '')}</strong>${t.description ? `<div class="text-xs text-gray-500">${this.escapeHtml(t.description)}</div>` : ''}` : this.escapeHtml(t.description || (isPayment ? 'Payment to worker' : ''))}</td>
                   <td class="text-right">${isPiece ? this.fmt(t.quantity) : '-'}</td>
                   <td class="text-right">${isPiece ? 'PKR ' + this.fmt(t.rate) : '-'}</td>
                   <td class="text-right font-bold">PKR ${this.fmt(totalAmt)}</td>
-                  <td class="text-right amount-received">${isSalary ? 'PKR ' + this.fmt(paidA) : '-'}</td>
+                  <td class="text-right amount-received">${isSalary ? 'PKR ' + this.fmt(paidA) : isPayment ? 'PKR ' + this.fmt(totalAmt) : '-'}</td>
                   <td class="text-right amount-pending font-semibold">${isSalary ? 'PKR ' + this.fmt(remainingA) : '-'}</td>
                   <td>
                     ${isAdvance ? `<button onclick="App.toggleDeferAdvance(${t.id})" class="text-${isDeferred ? 'orange' : 'gray'}-500 mr-1" title="${isDeferred ? 'Is week kaat lo (un-defer)' : 'Is week mat kaato, next week kaatna (defer)'}"><i class="fas fa-clock text-sm"></i></button>` : ''}
@@ -3753,7 +3759,10 @@ const App = {
     return `
       <div class="bg-white rounded-xl shadow-sm overflow-hidden">
         <div class="px-4 py-3 border-b flex items-center justify-between flex-wrap gap-2">
-          <h2 class="font-bold text-gray-800"><i class="fas fa-calendar-week mr-2 text-teal-600"></i>Weekly Production Payout <span class="text-xs font-normal text-gray-500">(Thursday → Wednesday)</span></h2>
+          <div>
+            <h2 class="font-bold text-gray-800"><i class="fas fa-calendar-week mr-2 text-teal-600"></i>Weekly Production Payout <span class="text-xs font-normal text-gray-500">(Thursday → Wednesday)</span></h2>
+            <p class="text-xs text-gray-400 mt-0.5"><i class="fas fa-rotate mr-1"></i>Har Thursday naya week shuru hota hai (auto-reset). Active advance / remaining balance reset nahi hota — woh carry-forward hota hai.</p>
+          </div>
           <div class="text-sm text-gray-600">Total: <strong class="text-teal-700">${this.fmt(grandPieces)}</strong> pieces · <strong class="amount-received">PKR ${this.fmt(grandPayout)}</strong></div>
         </div>
         <div class="divide-y">
@@ -3836,11 +3845,11 @@ const App = {
           <input id="etx-date" type="date" class="input-field" value="${tx.entry_date || ''}"></div>
         <div><label class="block text-sm font-medium mb-1">Type</label>
           <select id="etx-type" class="input-field" onchange="App._toggleEtxTypeChanged()">
-            ${['salary','advance'].map(t => `<option value="${t}" ${tx.type === t ? 'selected' : ''}>${t === 'salary' ? 'Salary / Earning' : 'Advance'}</option>`).join('')}
+            ${[['salary','Salary / Earning'],['payment','Payment (paisa diya — remaining se ghatega)'],['advance','Advance']].map(([t,lbl]) => `<option value="${t}" ${tx.type === t ? 'selected' : ''}>${lbl}</option>`).join('')}
           </select></div>
 
         ${isPerPieceEmp ? `
-          <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Entry Type</label>
+          <div id="etx-etype-wrap" class="md:col-span-2" style="${initType === 'salary' ? '' : 'display:none;'}"><label class="block text-sm font-medium mb-1">Entry Type</label>
             <select id="etx-etype" class="input-field" onchange="App._toggleEtxEntryType()">
               <option value="cash" ${initEntryType === 'cash' ? 'selected' : ''}>Cash (Direct Amount)</option>
               <option value="per_piece" ${initEntryType === 'per_piece' ? 'selected' : ''}>Per Piece (Item × Quantity)</option>
@@ -3859,8 +3868,8 @@ const App = {
             <input id="etx-qty" type="number" step="any" min="0" class="input-field" value="${parseFloat(tx.quantity) || 0}" oninput="App._etxRecalc()"></div>
         </div>
 
-        <div id="etx-amount-wrap" class="md:col-span-2" style="${initEntryType === 'cash' ? '' : 'display:none;'}">
-          <label class="block text-sm font-medium mb-1">Amount (PKR)</label>
+        <div id="etx-amount-wrap" class="md:col-span-2" style="${(initType !== 'salary' || initEntryType === 'cash') ? '' : 'display:none;'}">
+          <label id="etx-amount-label" class="block text-sm font-medium mb-1">${initType === 'payment' ? 'Payment Amount (PKR) — paid to worker' : initType === 'advance' ? 'Advance Amount (PKR)' : 'Amount (PKR)'}</label>
           <input id="etx-amount" type="number" step="any" min="0" class="input-field" value="${parseFloat(tx.amount) || 0}" oninput="App._etxAmountChanged()">
         </div>
 
@@ -3911,8 +3920,9 @@ const App = {
 
     document.getElementById('etx-form').addEventListener('submit', async (e) => {
       e.preventDefault();
-      const eType = document.getElementById('etx-etype').value;
       const tType = document.getElementById('etx-type').value;
+      // Payment & advance are always plain cash; only salary may be per-piece.
+      const eType = (tType === 'salary') ? document.getElementById('etx-etype').value : 'cash';
       let payload = {
         employee_id: empId,
         entry_date: document.getElementById('etx-date').value,
@@ -3934,6 +3944,9 @@ const App = {
         payload.amount = qty * rate;
       } else {
         payload.amount = parseFloat(document.getElementById('etx-amount').value) || 0;
+      }
+      if ((tType === 'payment' || tType === 'advance') && payload.amount <= 0) {
+        this.toast(tType === 'payment' ? 'Payment amount required' : 'Advance amount required', 'error'); return;
       }
       // Defer flag only for advance type
       if (tType === 'advance') {
@@ -3968,6 +3981,27 @@ const App = {
     if (paidWrap) paidWrap.style.display = tEl === 'salary' ? '' : 'none';
     const deferWrap = document.getElementById('etx-defer-wrap');
     if (deferWrap) deferWrap.style.display = tEl === 'advance' ? '' : 'none';
+
+    // Payment / Advance are always a plain cash amount (no per-piece earning).
+    const etypeWrap = document.getElementById('etx-etype-wrap');
+    const etypeSel = document.getElementById('etx-etype');
+    const pieceWrap = document.getElementById('etx-piece-wrap');
+    const amountWrap = document.getElementById('etx-amount-wrap');
+    const pieceTotal = document.getElementById('etx-piece-total');
+    const amtLabel = document.getElementById('etx-amount-label');
+    if (tEl === 'payment' || tEl === 'advance') {
+      if (etypeSel) etypeSel.value = 'cash';
+      if (etypeWrap) etypeWrap.style.display = 'none';
+      if (pieceWrap) pieceWrap.style.display = 'none';
+      if (pieceTotal) pieceTotal.style.display = 'none';
+      if (amountWrap) amountWrap.style.display = '';
+      if (amtLabel) amtLabel.textContent = tEl === 'payment' ? 'Payment Amount (PKR) — paid to worker' : 'Advance Amount (PKR)';
+    } else {
+      // salary
+      if (etypeWrap) etypeWrap.style.display = '';
+      if (amtLabel) amtLabel.textContent = 'Amount (PKR)';
+      if (etypeSel) this._toggleEtxEntryType();
+    }
   },
 
   _toggleEtxEntryType() {
