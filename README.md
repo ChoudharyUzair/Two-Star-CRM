@@ -6,7 +6,44 @@
 - **Goal**: Complete business CRM for Two Star Industries — manage clients, ledgers, inventory, raw materials, manufacturing recipes, employees, side expenses, and bills with auto Net Profit tracking.
 - **Stack**: Hono (TypeScript) + Cloudflare Pages + Cloudflare D1 (SQLite) + TailwindCSS + Vanilla JS frontend
 
-## What's New (latest update — 2026-06-09) — COMPONENTS + WORKER PRODUCTION
+## What's New (latest update — 2026-06-09) — 6 FIXES (Production, Products, Worker Rate, Calendar, Advances)
+
+This update fixes 6 reported issues:
+
+### 1. Raw material exhaustion now blocks production
+- When **Log Production** has auto-deduct ON and a component has a recipe, the system now **rejects** production if there isn't enough raw material in stock.
+- The API returns `400` with a `shortages` array (e.g. `Steel Wire: need 1000, have 5`) and the UI shows a clear error instead of silently producing.
+
+### 2. Components are now linked to Final Products
+- A final product can now be built **from components** (not just raw materials). The product editor has a new **"Recipe — Components per 1 unit"** section.
+- The product table shows both raw-material chips (green) and **component chips (teal)**, so you can see exactly what each product is made of.
+- **Buildable units** and **cost per unit** are computed from both raw materials *and* components.
+- Building a product now **deducts the required components from stock** and blocks the build when components are insufficient (e.g. `Not enough component "Rings" (need 4, have 1)`).
+- New API: `product_components` is now fully wired into `GET/POST/PUT /api/products`, `GET /api/products/:id`, and `/build`.
+
+### 3. Worker rate auto-fills in Log Production
+- In **Components Production → Log Production**, selecting a worker now **auto-fills the per-piece rate** from that worker's profile (their saved per-piece item rates), instead of typing it every time.
+- Priority: worker's saved item rate matching the component name → component's default rate. A small label shows where the rate came from.
+
+### 4. Renamed labels
+- **"Components / Production" → "Components Production"**
+- **"Products / Manufacturing" → "Products Manufacturing"**
+
+### 5. Compact calendar UI
+- The large space-hungry calendar has been replaced with a compact **mini calendar** (`cal-mini`): summary chips are always visible, the month grid is collapsible, and days use small colored **dots** instead of long text — much better UX and far less screen space.
+
+### 6. Employee advance auto-deduct + defer + no bonus/deduction
+- Advances now **auto-deduct from the remaining balance**. Example: Hassan makes 1000 rings @ 3.5 = 3500 owed; he took a 1000 advance → **Remaining shows 2500** and **Salary Paid (incl. advance) shows 1000**.
+- **Defer option**: if a worker says *"don't cut this week's advance, cut next week"*, you can **defer** that advance with one click. Deferred advances are **not** deducted from the remaining until you un-defer them.
+- The **Bonus** and **Deduction** sections have been **removed entirely** — transactions are now only **Salary** or **Advance**.
+- New API: `POST /api/employee-transactions/:id/toggle-defer`; employees list returns `advance_active` (non-deferred advances) used for the remaining calculation.
+
+#### DB migration `0012`
+- Adds a `deferred` column (+ index) to `employee_transactions` for the defer-advance feature.
+
+---
+
+## What's New (previous update — 2026-06-09) — COMPONENTS + WORKER PRODUCTION
 
 ### NEW middle layer: Raw Material → **Components** → Final Product
 Pehle system tha: Raw Material → Product. Ab beech mein ek naya layer add hua hai — **Components / Production** — jisse factory ke contract (per-piece) workers ka kaam track hota hai.

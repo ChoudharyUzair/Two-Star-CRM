@@ -931,6 +931,8 @@ app.delete('/api/raw-materials/:id', requireAuth, async (c) => {
 // how many finished units can be built right now.
 
 // List all products with their recipe + computed "buildable" count.
+// A product recipe can mix RAW MATERIALS (product_ingredients) and
+// COMPONENTS (product_components). Buildable = min over all recipe lines.
 app.get('/api/products', requireAuth, async (c) => {
   const products = await c.env.DB.prepare('SELECT * FROM products ORDER BY name ASC').all()
   const ingredients = await c.env.DB.prepare(
@@ -939,19 +941,32 @@ app.get('/api/products', requireAuth, async (c) => {
      LEFT JOIN raw_materials rm ON rm.id = pi.raw_material_id
      ORDER BY pi.product_id, pi.sort_order, pi.id`
   ).all()
+  const compLinks = await c.env.DB.prepare(
+    `SELECT pc.*, cp.name as comp_name, cp.unit as comp_unit, cp.quantity as comp_quantity, cp.default_rate as comp_rate
+     FROM product_components pc
+     LEFT JOIN components cp ON cp.id = pc.component_id
+     ORDER BY pc.product_id, pc.sort_order, pc.id`
+  ).all()
 
   const ingByProduct: Record<number, any[]> = {}
   for (const ing of (ingredients.results as any[])) {
     if (!ingByProduct[ing.product_id]) ingByProduct[ing.product_id] = []
     ingByProduct[ing.product_id].push(ing)
   }
+  const compByProduct: Record<number, any[]> = {}
+  for (const pc of (compLinks.results as any[])) {
+    if (!compByProduct[pc.product_id]) compByProduct[pc.product_id] = []
+    compByProduct[pc.product_id].push(pc)
+  }
 
   const list = (products.results as any[]).map(p => {
     const ings = ingByProduct[p.id] || []
-    // buildable = floor(min over ingredients of (raw.quantity / qty_required))
+    const comps = compByProduct[p.id] || []
+    // buildable = floor(min over all recipe lines of (available / qty_required))
     let buildable: number | null = null
     let cost_per_unit = 0
     let any_missing = false
+    // Raw material lines
     for (const ing of ings) {
       const need = parseFloat(ing.quantity_required) || 0
       const have = parseFloat(ing.raw_quantity) || 0
@@ -962,11 +977,23 @@ app.get('/api/products', requireAuth, async (c) => {
       const can = have / need
       if (buildable === null || can < buildable) buildable = can
     }
-    if (ings.length === 0) buildable = 0
+    // Component lines
+    for (const pc of comps) {
+      const need = parseFloat(pc.quantity_required) || 0
+      const have = parseFloat(pc.comp_quantity) || 0
+      const rate = parseFloat(pc.comp_rate) || 0
+      cost_per_unit += need * rate
+      if (need <= 0) continue
+      if (pc.component_id == null) { any_missing = true; continue }
+      const can = have / need
+      if (buildable === null || can < buildable) buildable = can
+    }
+    if (ings.length === 0 && comps.length === 0) buildable = 0
     if (any_missing) buildable = 0
     return {
       ...p,
       ingredients: ings,
+      components: comps,
       buildable_units: buildable === null ? 0 : Math.floor(buildable),
       cost_per_unit
     }
@@ -985,7 +1012,14 @@ app.get('/api/products/:id', requireAuth, async (c) => {
      WHERE pi.product_id = ?
      ORDER BY pi.sort_order ASC, pi.id ASC`
   ).bind(id).all()
-  return c.json({ product, ingredients: ingredients.results })
+  const components = await c.env.DB.prepare(
+    `SELECT pc.*, cp.name as comp_name, cp.unit as comp_unit, cp.quantity as comp_quantity, cp.default_rate as comp_rate
+     FROM product_components pc
+     LEFT JOIN components cp ON cp.id = pc.component_id
+     WHERE pc.product_id = ?
+     ORDER BY pc.sort_order ASC, pc.id ASC`
+  ).bind(id).all()
+  return c.json({ product, ingredients: ingredients.results, components: components.results })
 })
 
 async function syncProductIngredients(env: any, productId: number, ingredients: any[]) {
@@ -1006,25 +1040,43 @@ async function syncProductIngredients(env: any, productId: number, ingredients: 
   }
 }
 
+// Sync the COMPONENT lines of a product recipe (product_components)
+async function syncProductComponents(env: any, productId: number, components: any[]) {
+  await env.DB.prepare('DELETE FROM product_components WHERE product_id = ?').bind(productId).run()
+  if (!Array.isArray(components)) return
+  for (let i = 0; i < components.length; i++) {
+    const pc = components[i]
+    if (!pc || !pc.component_id) continue
+    const qty = parseFloat(pc.quantity_required) || 0
+    if (qty <= 0) continue
+    await env.DB.prepare(
+      `INSERT INTO product_components (product_id, component_id, quantity_required, sort_order)
+       VALUES (?, ?, ?, ?)`
+    ).bind(productId, pc.component_id, qty, i).run()
+  }
+}
+
 app.post('/api/products', requireAuth, async (c) => {
-  const { name, unit, category, notes, sale_rate, ingredients } = await c.req.json()
+  const { name, unit, category, notes, sale_rate, ingredients, components } = await c.req.json()
   if (!name) return c.json({ error: 'Name required' }, 400)
   const result = await c.env.DB.prepare(
     `INSERT INTO products (name, unit, category, notes, sale_rate) VALUES (?, ?, ?, ?, ?)`
   ).bind(name, unit || 'pcs', category || '', notes || '', parseFloat(sale_rate) || 0).run()
   const productId = result.meta.last_row_id as number
   await syncProductIngredients(c.env, productId, ingredients || [])
+  await syncProductComponents(c.env, productId, components || [])
   return c.json({ id: productId })
 })
 
 app.put('/api/products/:id', requireAuth, async (c) => {
   const id = parseInt(c.req.param('id'))
-  const { name, unit, category, notes, sale_rate, ingredients } = await c.req.json()
+  const { name, unit, category, notes, sale_rate, ingredients, components } = await c.req.json()
   if (!name) return c.json({ error: 'Name required' }, 400)
   await c.env.DB.prepare(
     `UPDATE products SET name=?, unit=?, category=?, notes=?, sale_rate=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
   ).bind(name, unit || 'pcs', category || '', notes || '', parseFloat(sale_rate) || 0, id).run()
   await syncProductIngredients(c.env, id, ingredients || [])
+  await syncProductComponents(c.env, id, components || [])
   return c.json({ success: true })
 })
 
@@ -1050,15 +1102,31 @@ app.post('/api/products/:id/build', requireAuth, async (c) => {
      WHERE pi.product_id = ?`
   ).bind(id).all()
   const ings = ingsRes.results as any[]
-  if (ings.length === 0) return c.json({ error: 'This product has no recipe yet' }, 400)
+  const compRes = await c.env.DB.prepare(
+    `SELECT pc.*, cp.name as comp_name, cp.quantity as comp_quantity
+     FROM product_components pc LEFT JOIN components cp ON cp.id = pc.component_id
+     WHERE pc.product_id = ?`
+  ).bind(id).all()
+  const comps = compRes.results as any[]
+  if (ings.length === 0 && comps.length === 0) return c.json({ error: 'This product has no recipe yet' }, 400)
 
-  // Pre-check: enough stock?
+  // Pre-check: enough raw material stock?
   for (const ing of ings) {
     const need = (parseFloat(ing.quantity_required) || 0) * u
     const have = parseFloat(ing.raw_quantity) || 0
-    if (need > have) {
+    if (need > have + 1e-9) {
       return c.json({
         error: `Not enough "${ing.raw_name}" (need ${need}, have ${have})`
+      }, 400)
+    }
+  }
+  // Pre-check: enough component stock?
+  for (const pc of comps) {
+    const need = (parseFloat(pc.quantity_required) || 0) * u
+    const have = parseFloat(pc.comp_quantity) || 0
+    if (need > have + 1e-9) {
+      return c.json({
+        error: `Not enough component "${pc.comp_name}" (need ${need}, have ${have})`
       }, 400)
     }
   }
@@ -1069,6 +1137,13 @@ app.post('/api/products/:id/build', requireAuth, async (c) => {
     await c.env.DB.prepare(
       `UPDATE raw_materials SET quantity = quantity - ?, total_value = (quantity - ?) * rate, updated_at=CURRENT_TIMESTAMP WHERE id = ?`
     ).bind(need, need, ing.raw_material_id).run()
+  }
+  // Deduct components
+  for (const pc of comps) {
+    const need = (parseFloat(pc.quantity_required) || 0) * u
+    await c.env.DB.prepare(
+      `UPDATE components SET quantity = MAX(0, quantity - ?), updated_at=CURRENT_TIMESTAMP WHERE id = ?`
+    ).bind(need, pc.component_id).run()
   }
 
   // Optionally add finished units to inventory (matching by name)
@@ -1252,6 +1327,27 @@ app.post('/api/production', requireAuth, async (c) => {
      WHERE ci.component_id = ?`
   ).bind(component_id).all()
   const ings = ingsRes.results as any[]
+
+  // ---- Issue #1 fix: block production if raw material is insufficient ----
+  // Only enforce when auto-deduct is ON AND the component has a recipe.
+  if (doDeduct && ings.length > 0) {
+    const shortages: string[] = []
+    for (const ing of ings) {
+      const perUnit = parseFloat(ing.quantity_required) || 0
+      if (perUnit <= 0) continue
+      const need = perUnit * qty
+      const available = parseFloat(ing.raw_quantity) || 0
+      if (need > available + 1e-9) {
+        shortages.push(`${ing.raw_name || 'Raw material'}: need ${(+need.toFixed(3))}, have ${(+available.toFixed(3))}`)
+      }
+    }
+    if (shortages.length > 0) {
+      return c.json({
+        error: 'Not enough raw material to produce this quantity.',
+        shortages
+      }, 400)
+    }
+  }
 
   let totalRawUsed = 0
 
@@ -1456,11 +1552,24 @@ app.get('/api/employees', requireAuth, async (c) => {
        (SELECT COALESCE(SUM(CASE WHEN paid_amount IS NULL THEN amount ELSE paid_amount END),0)
           FROM employee_transactions WHERE employee_id = e.id AND type='salary') as total_paid,
        (SELECT COALESCE(SUM(amount),0) FROM employee_transactions WHERE employee_id = e.id AND type='advance') as total_advance,
+       (SELECT COALESCE(SUM(amount),0)
+          FROM employee_transactions
+          WHERE employee_id = e.id AND type='advance' AND COALESCE(deferred,0)=0) as advance_active,
        (SELECT COALESCE(SUM(amount),0) FROM employee_transactions WHERE employee_id = e.id AND type='bonus') as total_bonus,
        (SELECT COALESCE(SUM(amount),0) FROM employee_transactions WHERE employee_id = e.id AND type='deduction') as total_deduction
      FROM employees e ORDER BY e.name`
   ).all()
-  return c.json({ employees: result.results })
+  // Attach each employee's per-piece item rates (used to auto-fill rate in Log Production)
+  const items = await c.env.DB.prepare(
+    'SELECT employee_id, item_name, rate FROM employee_items ORDER BY sort_order ASC, id ASC'
+  ).all()
+  const itemsByEmp: Record<number, any[]> = {}
+  for (const it of (items.results as any[])) {
+    if (!itemsByEmp[it.employee_id]) itemsByEmp[it.employee_id] = []
+    itemsByEmp[it.employee_id].push(it)
+  }
+  const employees = (result.results as any[]).map(e => ({ ...e, items: itemsByEmp[e.id] || [] }))
+  return c.json({ employees })
 })
 
 app.get('/api/employees/:id', requireAuth, async (c) => {
@@ -1535,14 +1644,27 @@ app.post('/api/employee-transactions', requireAuth, async (c) => {
     paid = parseFloat(paid_amount)
     if (isNaN(paid)) paid = null
   }
+  // deferred: only meaningful for advance — 1 means "don't cut this from remaining yet"
+  const deferred = (type === 'advance' && body.deferred) ? 1 : 0
   const result = await c.env.DB.prepare(
-    `INSERT INTO employee_transactions (employee_id, entry_date, type, amount, description, entry_type, item_id, item_name, quantity, rate, paid_amount) 
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO employee_transactions (employee_id, entry_date, type, amount, description, entry_type, item_id, item_name, quantity, rate, paid_amount, deferred) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     employee_id, entry_date || new Date().toISOString().slice(0, 10), type, amt, description || '',
-    eType, item_id || null, item_name || '', qty, r, paid
+    eType, item_id || null, item_name || '', qty, r, paid, deferred
   ).run()
   return c.json({ id: result.meta.last_row_id })
+})
+
+// Toggle the "deferred" flag of an advance (defer = don't deduct from remaining this week)
+app.post('/api/employee-transactions/:id/toggle-defer', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const row = await c.env.DB.prepare('SELECT * FROM employee_transactions WHERE id = ?').bind(id).first() as any
+  if (!row) return c.json({ error: 'Not found' }, 404)
+  if (row.type !== 'advance') return c.json({ error: 'Only advances can be deferred' }, 400)
+  const newVal = (row.deferred ? 0 : 1)
+  await c.env.DB.prepare('UPDATE employee_transactions SET deferred = ? WHERE id = ?').bind(newVal, id).run()
+  return c.json({ success: true, deferred: newVal })
 })
 
 app.put('/api/employee-transactions/:id', requireAuth, async (c) => {
@@ -1559,10 +1681,11 @@ app.put('/api/employee-transactions/:id', requireAuth, async (c) => {
     paid = parseFloat(paid_amount)
     if (isNaN(paid)) paid = null
   }
+  const deferred = (type === 'advance' && body.deferred) ? 1 : 0
   await c.env.DB.prepare(
     `UPDATE employee_transactions SET entry_date=?, type=?, amount=?, description=?, 
-     entry_type=?, item_id=?, item_name=?, quantity=?, rate=?, paid_amount=? WHERE id=?`
-  ).bind(entry_date, type, amt, description || '', eType, item_id || null, item_name || '', qty, r, paid, id).run()
+     entry_type=?, item_id=?, item_name=?, quantity=?, rate=?, paid_amount=?, deferred=? WHERE id=?`
+  ).bind(entry_date, type, amt, description || '', eType, item_id || null, item_name || '', qty, r, paid, deferred, id).run()
   return c.json({ success: true })
 })
 

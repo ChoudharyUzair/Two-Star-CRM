@@ -208,10 +208,10 @@ const App = {
             <i class="fas fa-cubes"></i><span>Raw Material</span>
           </button>
           <button class="nav-btn ${this.state.view === 'components' ? 'active' : ''}" id="nav-components" onclick="App.showComponents()">
-            <i class="fas fa-puzzle-piece"></i><span>Components / Production</span>
+            <i class="fas fa-puzzle-piece"></i><span>Components Production</span>
           </button>
           <button class="nav-btn ${this.state.view === 'products' ? 'active' : ''}" id="nav-products" onclick="App.showProducts()">
-            <i class="fas fa-industry"></i><span>Products / Manufacturing</span>
+            <i class="fas fa-industry"></i><span>Products Manufacturing</span>
           </button>
           <button class="nav-btn ${this.state.view === 'employees' ? 'active' : ''}" id="nav-employees" onclick="App.showEmployees()">
             <i class="fas fa-users-gear"></i><i class="fas fa-user-tie" style="display:none;"></i><span>Employees</span>
@@ -1002,14 +1002,14 @@ const App = {
     builtSoldStats.forEach(s => { if (s.product_name) soldMap[s.product_name] = s; });
     const empTotalAmount = (empPaidStats && empPaidStats.total_amount) || 0;
     const empTotalPaid = (empPaidStats && empPaidStats.total_paid) || (typeof empPaid === 'number' ? empPaid : 0);
-    // Recompute remaining across all employees: (salary - paid) - advance - deduction + bonus
+    // Recompute remaining across all employees: (salary owed - paid) - ACTIVE advance
     const empTotalRemaining = (empList || []).reduce((s, em) => {
       const tAmt = parseFloat(em.total_amount) || 0;
       const tPaid = parseFloat(em.total_paid) || 0;
-      const adv = parseFloat(em.total_advance) || 0;
-      const ded = parseFloat(em.total_deduction) || 0;
-      const bon = parseFloat(em.total_bonus) || 0;
-      return s + ((tAmt - tPaid) - adv - ded + bon);
+      const adv = (em.advance_active !== undefined && em.advance_active !== null)
+        ? (parseFloat(em.advance_active) || 0)
+        : (parseFloat(em.total_advance) || 0);
+      return s + ((tAmt - tPaid) - adv);
     }, 0);
     const area = document.getElementById('content-area');
     area.innerHTML = `
@@ -1327,10 +1327,10 @@ const App = {
                 ${empList.map(em => {
                   const tAmt = parseFloat(em.total_amount) || 0;
                   const tPaid = parseFloat(em.total_paid) || 0;
-                  const adv = parseFloat(em.total_advance) || 0;
-                  const ded = parseFloat(em.total_deduction) || 0;
-                  const bon = parseFloat(em.total_bonus) || 0;
-                  const tRemain = (tAmt - tPaid) - adv - ded + bon;
+                  const adv = (em.advance_active !== undefined && em.advance_active !== null)
+                    ? (parseFloat(em.advance_active) || 0)
+                    : (parseFloat(em.total_advance) || 0);
+                  const tRemain = (tAmt - tPaid) - adv;
                   return `
                   <tr class="border-t hover:bg-gray-50 cursor-pointer" onclick="App.openEmployee(${em.id})">
                     <td class="p-3"><i class="fas fa-user text-blue-500 mr-2"></i>${this.escapeHtml(em.name)}${em.salary_type === 'per_piece' ? ' <i class="fas fa-cubes text-orange-500 ml-1" title="Per Piece"></i>' : ''}</td>
@@ -2112,15 +2112,17 @@ const App = {
     this.closeSidebarOnMobile();
     this.renderFolders();
     document.getElementById('content-area').innerHTML = `
-      <div class="page-header"><h1 class="page-title"><i class="fas fa-industry text-purple-600"></i>Products / Manufacturing</h1></div>
+      <div class="page-header"><h1 class="page-title"><i class="fas fa-industry text-purple-600"></i>Products Manufacturing</h1></div>
       <div class="p-6"><div class="text-gray-400 text-center py-8"><i class="fas fa-spinner fa-spin text-2xl"></i></div></div>`;
     try {
-      const [pData, rmData] = await Promise.all([
+      const [pData, rmData, cData] = await Promise.all([
         this.api.get('/api/products'),
-        this.api.get('/api/raw-materials')
+        this.api.get('/api/raw-materials'),
+        this.api.get('/api/components')
       ]);
       this.state.products = pData.products || [];
       this.state.rawMaterials = rmData.items || [];
+      this.state.componentsList = cData.components || [];
       this.renderProducts();
     } catch (e) { this.toast('Failed to load', 'error'); }
   },
@@ -2136,7 +2138,7 @@ const App = {
     area.innerHTML = `
       <div class="page-header">
         <div>
-          <h1 class="page-title"><i class="fas fa-industry text-purple-600"></i>Products / Manufacturing</h1>
+          <h1 class="page-title"><i class="fas fa-industry text-purple-600"></i>Products Manufacturing</h1>
           <p class="page-subtitle">${this.state.products.length} product(s) · Recipes linked to Raw Material stock</p>
         </div>
         <div class="flex gap-2 flex-wrap">
@@ -2171,17 +2173,30 @@ const App = {
               </td></tr>` :
               items.map((p, i) => {
                 const ings = p.ingredients || [];
-                const recipeStr = ings.length === 0 ? '<span class="text-gray-400">No recipe</span>' :
-                  ings.map(ing => {
+                const comps = p.components || [];
+                const rawStr = ings.map(ing => {
                     const rmName = ing.raw_name || '(deleted)';
                     const have = parseFloat(ing.raw_quantity) || 0;
                     const need = parseFloat(ing.quantity_required) || 0;
                     const enough = have >= need;
                     const unit = ing.unit || ing.raw_unit || '';
                     return `<span class="inline-block px-2 py-0.5 rounded text-xs mr-1 mb-1 ${enough ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}">
-                      <strong>${this.escapeHtml(rmName)}</strong>: ${this.fmt(need)} ${this.escapeHtml(unit)} <span class="opacity-70">(stock: ${this.fmt(have)})</span>
+                      <i class="fas fa-cubes opacity-60 mr-0.5"></i><strong>${this.escapeHtml(rmName)}</strong>: ${this.fmt(need)} ${this.escapeHtml(unit)} <span class="opacity-70">(stock: ${this.fmt(have)})</span>
                     </span>`;
                   }).join('');
+                const compStr = comps.map(pc => {
+                    const cName = pc.comp_name || '(deleted)';
+                    const have = parseFloat(pc.comp_quantity) || 0;
+                    const need = parseFloat(pc.quantity_required) || 0;
+                    const enough = have >= need;
+                    const unit = pc.comp_unit || 'pcs';
+                    return `<span class="inline-block px-2 py-0.5 rounded text-xs mr-1 mb-1 ${enough ? 'bg-teal-50 text-teal-700 border border-teal-200' : 'bg-red-50 text-red-700 border border-red-200'}">
+                      <i class="fas fa-puzzle-piece opacity-60 mr-0.5"></i><strong>${this.escapeHtml(cName)}</strong>: ${this.fmt(need)} ${this.escapeHtml(unit)} <span class="opacity-70">(stock: ${this.fmt(have)})</span>
+                    </span>`;
+                  }).join('');
+                const recipeStr = (ings.length === 0 && comps.length === 0)
+                  ? '<span class="text-gray-400">No recipe</span>'
+                  : (rawStr + compStr);
                 const buildable = parseFloat(p.buildable_units) || 0;
                 const buildableClass = buildable > 0 ? 'text-green-600' : 'text-red-600';
                 return `<tr>
@@ -2197,7 +2212,7 @@ const App = {
                     <div class="text-xs text-gray-500">${this.escapeHtml(p.unit || 'pcs')}</div>
                   </td>
                   <td>
-                    <button onclick="App.showBuildProduct(${p.id})" class="btn btn-secondary btn-sm" title="Build / Produce" ${ings.length === 0 ? 'disabled' : ''}><i class="fas fa-hammer"></i></button>
+                    <button onclick="App.showBuildProduct(${p.id})" class="btn btn-secondary btn-sm" title="Build / Produce" ${(ings.length === 0 && comps.length === 0) ? 'disabled' : ''}><i class="fas fa-hammer"></i></button>
                     <button onclick="App.showProductEditor(${p.id})" class="btn btn-secondary btn-sm ml-1" title="Edit"><i class="fas fa-edit"></i></button>
                     <button onclick="App.deleteProduct(${p.id})" class="text-red-500 hover:text-red-700 ml-1" title="Delete"><i class="fas fa-trash text-sm"></i></button>
                   </td>
@@ -2217,13 +2232,18 @@ const App = {
   },
 
   showProductEditor(id = null) {
-    const p = id ? this.state.products.find(x => x.id === id) : { name:'', unit:'pcs', category:'', notes:'', sale_rate: 0, ingredients: [] };
+    const p = id ? this.state.products.find(x => x.id === id) : { name:'', unit:'pcs', category:'', notes:'', sale_rate: 0, ingredients: [], components: [] };
     if (id && !p) return;
-    // Working copy of ingredients
+    // Working copy of ingredients (raw materials)
     this._editingIngredients = (p.ingredients || []).map(ing => ({
       raw_material_id: ing.raw_material_id,
       quantity_required: ing.quantity_required,
       unit: ing.unit || ing.raw_unit || ''
+    }));
+    // Working copy of component lines
+    this._editingProdComponents = (p.components || []).map(pc => ({
+      component_id: pc.component_id,
+      quantity_required: pc.quantity_required
     }));
 
     this.openModal(`
@@ -2268,6 +2288,20 @@ const App = {
           <div id="ingredients-summary" class="mt-3 p-3 rounded-lg bg-gray-50 border text-sm"></div>
         </div>
 
+        <div class="border-t pt-4">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-base font-bold text-gray-800"><i class="fas fa-puzzle-piece text-teal-500 mr-1"></i>Recipe — Components per 1 unit</h3>
+            <button type="button" onclick="App._addProdComponentRow()" class="btn btn-secondary btn-sm"><i class="fas fa-plus"></i> Add Component</button>
+          </div>
+          <p class="text-xs text-gray-500 mb-2">Final product banane ke liye jo components chahiye (e.g. 1 Rack = 4 Rings + 1 Bottom Jaali). Build karte waqt yeh components stock se minus honge.</p>
+          ${(this.state.componentsList || []).length === 0 ? `
+            <div class="bg-teal-50 border border-teal-200 rounded p-3 text-sm text-teal-800">
+              <i class="fas fa-info-circle mr-1"></i>
+              Abhi koi component nahi hai. Pehle <strong>Components Production</strong> section me components banayein.
+            </div>` : ''}
+          <div id="prod-components-list" class="space-y-2"></div>
+        </div>
+
         <div class="flex gap-2 justify-end pt-2 border-t">
           ${id ? `<button type="button" class="btn btn-danger mr-auto" onclick="App.deleteProduct(${id})"><i class="fas fa-trash"></i> Delete</button>` : ''}
           <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
@@ -2277,19 +2311,23 @@ const App = {
     `, 'modal-lg');
 
     this._renderIngredientRows();
+    this._renderProdComponentRows();
 
     document.getElementById('prod-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       // Read latest values from rows
       this._collectIngredientRows();
+      this._collectProdComponentRows();
       const ings = (this._editingIngredients || []).filter(i => i.raw_material_id && parseFloat(i.quantity_required) > 0);
+      const comps = (this._editingProdComponents || []).filter(i => i.component_id && parseFloat(i.quantity_required) > 0);
       const payload = {
         name: document.getElementById('p-name').value.trim(),
         unit: document.getElementById('p-unit').value || 'pcs',
         category: document.getElementById('p-cat').value,
         notes: document.getElementById('p-notes').value,
         sale_rate: parseFloat(document.getElementById('p-rate').value) || 0,
-        ingredients: ings
+        ingredients: ings,
+        components: comps
       };
       if (!payload.name) { this.toast('Product name required', 'error'); return; }
       try {
@@ -2425,6 +2463,65 @@ const App = {
     `;
   },
 
+  // ----- Product recipe: COMPONENT lines -----
+  _addProdComponentRow() {
+    this._collectProdComponentRows();
+    if (!this._editingProdComponents) this._editingProdComponents = [];
+    this._editingProdComponents.push({ component_id: null, quantity_required: 0 });
+    this._renderProdComponentRows();
+  },
+  _removeProdComponentRow(idx) {
+    this._collectProdComponentRows();
+    this._editingProdComponents.splice(idx, 1);
+    this._renderProdComponentRows();
+  },
+  _collectProdComponentRows() {
+    const list = document.getElementById('prod-components-list');
+    if (!list) return;
+    const rows = list.querySelectorAll('.prodcomp-row');
+    const arr = [];
+    rows.forEach(row => {
+      const cId = parseInt(row.querySelector('.pc-comp').value) || null;
+      const qty = parseFloat(row.querySelector('.pc-qty').value) || 0;
+      arr.push({ component_id: cId, quantity_required: qty });
+    });
+    this._editingProdComponents = arr;
+  },
+  _renderProdComponentRows() {
+    const list = document.getElementById('prod-components-list');
+    if (!list) return;
+    const comps = this.state.componentsList || [];
+    const rows = this._editingProdComponents || [];
+    if (rows.length === 0) {
+      list.innerHTML = `<div class="text-gray-400 text-sm text-center py-4 border-2 border-dashed rounded-lg">Koi component nahi. <strong>Add Component</strong> daba kar components link karein (optional).</div>`;
+      return;
+    }
+    list.innerHTML = rows.map((pc, idx) => {
+      const c = comps.find(x => x.id === pc.component_id);
+      const optionsHtml = `<option value="">-- Select Component --</option>` +
+        comps.map(x => `<option value="${x.id}" ${x.id === pc.component_id ? 'selected' : ''}>${this.escapeHtml(x.name)} (Stock: ${this.fmt(x.quantity)} ${this.escapeHtml(x.unit||'pcs')})</option>`).join('');
+      const unit = c ? (c.unit || 'pcs') : '';
+      return `
+        <div class="prodcomp-row grid grid-cols-12 gap-2 items-center bg-white border rounded-lg p-2">
+          <div class="col-span-12 md:col-span-7">
+            <label class="block text-xs text-gray-500 mb-1">Component</label>
+            <select class="input-field pc-comp" onchange="App._renderProdComponentRowsKeep()">${optionsHtml}</select>
+          </div>
+          <div class="col-span-9 md:col-span-4">
+            <label class="block text-xs text-gray-500 mb-1">Qty Required (per 1 product) <span class="text-gray-400">${this.escapeHtml(unit)}</span></label>
+            <input type="number" step="any" class="input-field pc-qty" value="${pc.quantity_required || ''}">
+          </div>
+          <div class="col-span-3 md:col-span-1 text-right">
+            <button type="button" onclick="App._removeProdComponentRow(${idx})" class="text-red-500 hover:text-red-700 mt-5" title="Remove"><i class="fas fa-trash"></i></button>
+          </div>
+        </div>`;
+    }).join('');
+  },
+  _renderProdComponentRowsKeep() {
+    this._collectProdComponentRows();
+    this._renderProdComponentRows();
+  },
+
   async deleteProduct(id) {
     if (!confirm('Delete this product and its recipe?')) return;
     try {
@@ -2440,7 +2537,8 @@ const App = {
     if (!p) return;
     const buildable = parseFloat(p.buildable_units) || 0;
     const ings = p.ingredients || [];
-    if (ings.length === 0) { this.toast('This product has no recipe', 'error'); return; }
+    const comps = p.components || [];
+    if (ings.length === 0 && comps.length === 0) { this.toast('This product has no recipe', 'error'); return; }
 
     this.openModal(`
       <h2 class="text-xl font-bold mb-2"><i class="fas fa-hammer text-orange-500 mr-2"></i>Build / Produce: ${this.escapeHtml(p.name)}</h2>
@@ -2491,20 +2589,40 @@ const App = {
     if (!preview) return;
     if (units <= 0) { preview.innerHTML = ''; return; }
     const ings = p.ingredients || [];
-    let html = `<div class="font-medium text-gray-700 mb-1">Will deduct from Raw Material:</div><div class="space-y-1">`;
+    const comps = p.components || [];
     let totalCost = 0;
-    for (const ing of ings) {
-      const need = (parseFloat(ing.quantity_required) || 0) * units;
-      const have = parseFloat(ing.raw_quantity) || 0;
-      const rate = parseFloat(ing.raw_rate) || 0;
-      totalCost += need * rate;
-      const ok = have >= need;
-      html += `<div class="text-xs ${ok ? 'text-green-700' : 'text-red-700'}">
-        <i class="fas fa-${ok ? 'check' : 'times'}-circle mr-1"></i>
-        ${this.escapeHtml(ing.raw_name || '')}: -${this.fmt(need)} ${this.escapeHtml(ing.unit || ing.raw_unit || '')} (stock will go ${this.fmt(have)} → ${this.fmt(have - need)})
-      </div>`;
+    let html = '';
+    if (ings.length > 0) {
+      html += `<div class="font-medium text-gray-700 mb-1"><i class="fas fa-cubes mr-1 text-orange-500"></i>Will deduct from Raw Material:</div><div class="space-y-1 mb-2">`;
+      for (const ing of ings) {
+        const need = (parseFloat(ing.quantity_required) || 0) * units;
+        const have = parseFloat(ing.raw_quantity) || 0;
+        const rate = parseFloat(ing.raw_rate) || 0;
+        totalCost += need * rate;
+        const ok = have >= need;
+        html += `<div class="text-xs ${ok ? 'text-green-700' : 'text-red-700'}">
+          <i class="fas fa-${ok ? 'check' : 'times'}-circle mr-1"></i>
+          ${this.escapeHtml(ing.raw_name || '')}: -${this.fmt(need)} ${this.escapeHtml(ing.unit || ing.raw_unit || '')} (stock will go ${this.fmt(have)} → ${this.fmt(have - need)})
+        </div>`;
+      }
+      html += `</div>`;
     }
-    html += `</div><div class="mt-2 text-sm"><span class="text-gray-600">Total material cost:</span> <strong class="text-purple-700">PKR ${this.fmt(totalCost)}</strong></div>`;
+    if (comps.length > 0) {
+      html += `<div class="font-medium text-gray-700 mb-1"><i class="fas fa-puzzle-piece mr-1 text-teal-500"></i>Will deduct Components:</div><div class="space-y-1 mb-2">`;
+      for (const pc of comps) {
+        const need = (parseFloat(pc.quantity_required) || 0) * units;
+        const have = parseFloat(pc.comp_quantity) || 0;
+        const rate = parseFloat(pc.comp_rate) || 0;
+        totalCost += need * rate;
+        const ok = have >= need;
+        html += `<div class="text-xs ${ok ? 'text-green-700' : 'text-red-700'}">
+          <i class="fas fa-${ok ? 'check' : 'times'}-circle mr-1"></i>
+          ${this.escapeHtml(pc.comp_name || '')}: -${this.fmt(need)} ${this.escapeHtml(pc.comp_unit || 'pcs')} (stock will go ${this.fmt(have)} → ${this.fmt(have - need)})
+        </div>`;
+      }
+      html += `</div>`;
+    }
+    html += `<div class="mt-2 text-sm"><span class="text-gray-600">Total recipe cost:</span> <strong class="text-purple-700">PKR ${this.fmt(totalCost)}</strong></div>`;
     preview.innerHTML = html;
   },
 
@@ -2522,7 +2640,7 @@ const App = {
     this.closeSidebarOnMobile();
     this.renderFolders();
     document.getElementById('content-area').innerHTML = `
-      <div class="page-header"><h1 class="page-title"><i class="fas fa-puzzle-piece text-teal-600"></i>Components / Production</h1></div>
+      <div class="page-header"><h1 class="page-title"><i class="fas fa-puzzle-piece text-teal-600"></i>Components Production</h1></div>
       <div class="p-6"><div class="text-gray-400 text-center py-8"><i class="fas fa-spinner fa-spin text-2xl"></i></div></div>`;
     try {
       const [cData, rmData, eData, pData] = await Promise.all([
@@ -2554,7 +2672,7 @@ const App = {
     area.innerHTML = `
       <div class="page-header">
         <div>
-          <h1 class="page-title"><i class="fas fa-puzzle-piece text-teal-600"></i>Components / Production</h1>
+          <h1 class="page-title"><i class="fas fa-puzzle-piece text-teal-600"></i>Components Production</h1>
           <p class="page-subtitle">${this.state.components.length} component(s) · Raw Material → Components → Product</p>
         </div>
         <div class="flex gap-2 flex-wrap">
@@ -2777,7 +2895,7 @@ const App = {
         <div><label class="block text-sm font-medium mb-1">Date</label>
           <input id="pl-date" type="date" class="input-field" value="${log ? log.entry_date : today}"></div>
         <div><label class="block text-sm font-medium mb-1">Worker</label>
-          <select id="pl-emp" class="input-field" ${logId ? 'disabled' : ''}>${empOptions}</select>
+          <select id="pl-emp" class="input-field" onchange="App._onProdWorkerChange()" ${logId ? 'disabled' : ''}>${empOptions}</select>
           ${logId ? '<input type="hidden" id="pl-emp-hidden" value="'+(log.employee_id||'')+'">' : ''}
         </div>
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Component *</label>
@@ -2786,7 +2904,7 @@ const App = {
         </div>
         <div><label class="block text-sm font-medium mb-1">Pieces Made *</label>
           <input id="pl-qty" type="number" step="any" min="0.01" required class="input-field" value="${log ? log.quantity : ''}" oninput="App._onProdRecalc()"></div>
-        <div><label class="block text-sm font-medium mb-1">Per-Piece Rate (PKR)</label>
+        <div><label class="block text-sm font-medium mb-1">Per-Piece Rate (PKR) <span id="pl-rate-src" class="text-xs font-normal text-teal-600"></span></label>
           <input id="pl-rate" type="number" step="any" class="input-field" value="${log ? log.rate : (initComp ? (initComp.default_rate||0) : 0)}" oninput="App._onProdRecalc()"></div>
         <div><label class="block text-sm font-medium mb-1">Scrap / Waste (raw units)</label>
           <input id="pl-scrap" type="number" step="any" class="input-field" value="${log ? (log.scrap_qty||0) : 0}" placeholder="0"></div>
@@ -2807,6 +2925,8 @@ const App = {
       </form>
     `, 'modal-lg');
 
+    // On open: if both worker & component pre-selected, auto-fill the rate.
+    if (!logId) this._autoFillProdRate(true);
     this._onProdRecalc();
 
     document.getElementById('prod-log-form').addEventListener('submit', async (e) => {
@@ -2837,15 +2957,54 @@ const App = {
   },
 
   _onProdCompChange() {
-    const sel = document.getElementById('pl-comp');
-    if (!sel) return;
-    const compId = parseInt(sel.value) || null;
-    const comp = (this.state.components || []).find(c => c.id === compId);
-    const rateInput = document.getElementById('pl-rate');
-    if (comp && rateInput && (!rateInput.value || parseFloat(rateInput.value) === 0)) {
-      rateInput.value = comp.default_rate || 0;
-    }
+    // Component changed → re-evaluate the auto rate (worker's rate first, else component default).
+    this._autoFillProdRate(true);
     this._onProdRecalc();
+  },
+
+  _onProdWorkerChange() {
+    // Worker changed → if that worker has a saved per-piece rate for the selected
+    // component, fill it automatically (user na bar bar rate likhna pare).
+    this._autoFillProdRate(true);
+    this._onProdRecalc();
+  },
+
+  // Decide the per-piece rate. Priority:
+  //   1. Selected WORKER's saved rate for this component (employee_items, match by name)
+  //   2. Component's default_rate
+  // force=true overwrites the field; otherwise only fills if empty/zero.
+  _autoFillProdRate(force = false) {
+    const compSel = document.getElementById('pl-comp');
+    const empSel = document.getElementById('pl-emp');
+    const rateInput = document.getElementById('pl-rate');
+    const srcLabel = document.getElementById('pl-rate-src');
+    if (!compSel || !rateInput) return;
+    const compId = parseInt(compSel.value) || null;
+    const comp = (this.state.components || []).find(c => c.id === compId);
+    const empId = empSel ? (parseInt(empSel.value) || null) : null;
+    const emp = (this.state.employees || []).find(e => e.id === empId);
+
+    let rate = null;
+    let source = '';
+    // 1) Worker's saved rate for this component
+    if (emp && comp && Array.isArray(emp.items)) {
+      const it = emp.items.find(x => (x.item_name || '').trim().toLowerCase() === (comp.name || '').trim().toLowerCase());
+      if (it && parseFloat(it.rate) > 0) { rate = parseFloat(it.rate); source = 'from worker profile'; }
+    }
+    // 2) Component default rate
+    if (rate === null && comp && parseFloat(comp.default_rate) > 0) {
+      rate = parseFloat(comp.default_rate); source = 'component default';
+    }
+
+    if (rate !== null) {
+      const cur = parseFloat(rateInput.value) || 0;
+      if (force || cur === 0) {
+        rateInput.value = rate;
+        if (srcLabel) srcLabel.textContent = source ? '(' + source + ')' : '';
+      }
+    } else if (srcLabel) {
+      srcLabel.textContent = '';
+    }
   },
 
   _onProdRecalc() {
@@ -2893,14 +3052,15 @@ const App = {
     const emps = this.state.employees;
     const totalSalary = emps.reduce((s, e) => s + (parseFloat(e.monthly_salary) || 0), 0);
     const totalPaid = emps.reduce((s, e) => s + (parseFloat(e.total_paid) || 0), 0);
-    // Remaining = (salary - paid) - advance - deduction + bonus
+    // Remaining = (salary owed - salary paid) - ACTIVE advance (deferred advance not cut yet)
     const calcEmpRemaining = (e) => {
       const tAmt = parseFloat(e.total_amount) || 0;
       const tPaid = parseFloat(e.total_paid) || 0;
-      const adv = parseFloat(e.total_advance) || 0;
-      const ded = parseFloat(e.total_deduction) || 0;
-      const bon = parseFloat(e.total_bonus) || 0;
-      return (tAmt - tPaid) - adv - ded + bon;
+      // advance_active = advances that are NOT deferred (falls back to total_advance for old data)
+      const adv = (e.advance_active !== undefined && e.advance_active !== null)
+        ? (parseFloat(e.advance_active) || 0)
+        : (parseFloat(e.total_advance) || 0);
+      return (tAmt - tPaid) - adv;
     };
     const totalRemaining = emps.reduce((s, e) => s + calcEmpRemaining(e), 0);
     const area = document.getElementById('content-area');
@@ -3112,13 +3272,19 @@ const App = {
       return s + pa;
     }, 0);
     const salaryTotalAmount = sumByType('salary');
-    const advance = sumByType('advance'), bonus = sumByType('bonus'), deduction = sumByType('deduction');
-    // Remaining = (Salary owed) - advance - deduction + bonus
-    // Salary owed = salary total - salary already paid
-    // Advance is money employee already took out, so it reduces what's still owed.
-    // Deduction reduces too. Bonus increases what employer owes.
-    // Result CAN be negative (employee took more than earned -> employer is in credit).
-    const salaryRemaining = (salaryTotalAmount - salaryPaidActual) - advance - deduction + bonus;
+    const advance = sumByType('advance');
+    // Active advance = advances NOT deferred. Deferred advance is parked for a later week.
+    const advanceActive = tx.filter(x => x.type === 'advance' && !x.deferred)
+      .reduce((s, x) => s + (parseFloat(x.amount) || 0), 0);
+    const advanceDeferred = advance - advanceActive;
+    // Remaining = (Salary owed) - ACTIVE advance.
+    //   Salary owed = salary total - salary already paid.
+    //   Advance is money the worker already took, so an ACTIVE advance reduces what's
+    //   still owed (Remaining). A DEFERRED advance is not cut this week.
+    // Result CAN be negative (worker took more than earned -> employer is in credit).
+    const salaryRemaining = (salaryTotalAmount - salaryPaidActual) - advanceActive;
+    // Salary Paid (cash out the door) = salary paid + active advance already handed over.
+    const totalPaidOut = salaryPaidActual + advanceActive;
     const area = document.getElementById('content-area');
     area.innerHTML = `
       <div class="page-header">
@@ -3134,11 +3300,10 @@ const App = {
         </div>
       </div>
       <div class="p-4 md:p-6 space-y-5">
-        <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <div class="stat-card"><p class="text-xs text-gray-500">Salary Paid</p><p class="text-xl font-bold amount-received">PKR ${this.fmt(salaryPaidActual)}</p>${salaryTotalAmount > 0 ? `<p class="text-xs text-gray-400 mt-1">of PKR ${this.fmt(salaryTotalAmount)}</p>` : ''}</div>
-          <div class="stat-card"><p class="text-xs text-gray-500">Advance</p><p class="text-xl font-bold amount-pending">PKR ${this.fmt(advance)}</p></div>
-          <div class="stat-card"><p class="text-xs text-gray-500">Bonus</p><p class="text-xl font-bold text-green-600">PKR ${this.fmt(bonus)}</p></div>
-          <div class="stat-card"><p class="text-xs text-gray-500">Deduction</p><p class="text-xl font-bold text-red-600">PKR ${this.fmt(deduction)}</p></div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div class="stat-card"><p class="text-xs text-gray-500">Total Earned / Owed</p><p class="text-xl font-bold text-blue-600">PKR ${this.fmt(salaryTotalAmount)}</p></div>
+          <div class="stat-card"><p class="text-xs text-gray-500">Salary Paid (incl. advance)</p><p class="text-xl font-bold amount-received">PKR ${this.fmt(totalPaidOut)}</p><p class="text-xs text-gray-400 mt-1">Salary ${this.fmt(salaryPaidActual)} + Advance ${this.fmt(advanceActive)}</p></div>
+          <div class="stat-card"><p class="text-xs text-gray-500">Advance</p><p class="text-xl font-bold amount-pending">PKR ${this.fmt(advance)}</p>${advanceDeferred > 0 ? `<p class="text-xs text-orange-500 mt-1"><i class="fas fa-clock mr-1"></i>PKR ${this.fmt(advanceDeferred)} deferred (next week)</p>` : ''}</div>
           <div class="balance-box"><p class="text-xs opacity-90">Remaining</p><p class="text-2xl font-bold mt-1">PKR ${this.fmt(salaryRemaining)}</p>
             <p class="text-xs opacity-80 mt-1">${salaryRemaining > 0 ? 'You owe employee' : salaryRemaining < 0 ? 'Employee owes you' : 'Settled'}</p></div>
         </div>
@@ -3164,13 +3329,15 @@ const App = {
                 tx.map((t, i) => {
                   const isPiece = t.entry_type === 'per_piece';
                   const isSalary = t.type === 'salary';
+                  const isAdvance = t.type === 'advance';
+                  const isDeferred = isAdvance && !!t.deferred;
                   const totalAmt = parseFloat(t.amount) || 0;
                   const paidA = (t.paid_amount === null || t.paid_amount === undefined || t.paid_amount === '') ? totalAmt : (parseFloat(t.paid_amount) || 0);
                   const remainingA = Math.max(0, totalAmt - paidA);
                   return `<tr>
                   <td>${i + 1}</td>
                   <td>${t.entry_date}</td>
-                  <td><span class="status-badge ${t.type === 'salary' ? 'status-received' : t.type === 'advance' ? 'status-pending' : t.type === 'bonus' ? 'status-paid' : 'status-overdue'}">${this.escapeHtml(t.type)}</span>${isPiece ? ' <i class="fas fa-cubes text-orange-500 ml-1" title="Per Piece"></i>' : ''}</td>
+                  <td><span class="status-badge ${t.type === 'salary' ? 'status-received' : 'status-pending'}">${this.escapeHtml(t.type)}</span>${isPiece ? ' <i class="fas fa-cubes text-orange-500 ml-1" title="Per Piece"></i>' : ''}${isDeferred ? ' <span class="status-badge status-overdue" title="Deferred to next week"><i class="fas fa-clock"></i> deferred</span>' : ''}</td>
                   <td>${isPiece ? `<strong>${this.escapeHtml(t.item_name || '')}</strong>${t.description ? `<div class="text-xs text-gray-500">${this.escapeHtml(t.description)}</div>` : ''}` : this.escapeHtml(t.description || '')}</td>
                   <td class="text-right">${isPiece ? this.fmt(t.quantity) : '-'}</td>
                   <td class="text-right">${isPiece ? 'PKR ' + this.fmt(t.rate) : '-'}</td>
@@ -3178,6 +3345,7 @@ const App = {
                   <td class="text-right amount-received">${isSalary ? 'PKR ' + this.fmt(paidA) : '-'}</td>
                   <td class="text-right amount-pending font-semibold">${isSalary ? 'PKR ' + this.fmt(remainingA) : '-'}</td>
                   <td>
+                    ${isAdvance ? `<button onclick="App.toggleDeferAdvance(${t.id})" class="text-${isDeferred ? 'orange' : 'gray'}-500 mr-1" title="${isDeferred ? 'Is week kaat lo (un-defer)' : 'Is week mat kaato, next week kaatna (defer)'}"><i class="fas fa-clock text-sm"></i></button>` : ''}
                     <button onclick="App.showEmployeeTxEditor(${e.id}, ${t.id})" class="btn btn-secondary btn-sm"><i class="fas fa-edit"></i></button>
                     <button onclick="App.deleteEmployeeTx(${t.id})" class="text-red-500 ml-1"><i class="fas fa-trash text-sm"></i></button>
                   </td>
@@ -3254,7 +3422,7 @@ const App = {
         this.state.components = cData.components || [];
       }
       if (!this.state.components || this.state.components.length === 0) {
-        this.toast('No components yet. Add a component first (Components / Production section).', 'error');
+        this.toast('No components yet. Add a component first (Components Production section).', 'error');
         return;
       }
       // Ensure the current employee is selectable
@@ -3294,7 +3462,7 @@ const App = {
           <input id="etx-date" type="date" class="input-field" value="${tx.entry_date || ''}"></div>
         <div><label class="block text-sm font-medium mb-1">Type</label>
           <select id="etx-type" class="input-field" onchange="App._toggleEtxTypeChanged()">
-            ${['salary','advance','bonus','deduction'].map(t => `<option value="${t}" ${tx.type === t ? 'selected' : ''}>${t.charAt(0).toUpperCase()+t.slice(1)}</option>`).join('')}
+            ${['salary','advance'].map(t => `<option value="${t}" ${tx.type === t ? 'selected' : ''}>${t === 'salary' ? 'Salary / Earning' : 'Advance'}</option>`).join('')}
           </select></div>
 
         ${isPerPieceEmp ? `
@@ -3329,6 +3497,15 @@ const App = {
           </div>
         </div>
 
+        <!-- Defer option (only for advance type) -->
+        <div id="etx-defer-wrap" class="md:col-span-2" style="${initType === 'advance' ? '' : 'display:none;'}">
+          <label class="flex items-start gap-2 bg-orange-50 border border-orange-200 rounded-lg p-3 text-sm cursor-pointer">
+            <input id="etx-defer" type="checkbox" class="mt-0.5" ${tx.deferred ? 'checked' : ''}>
+            <span><strong><i class="fas fa-clock text-orange-500 mr-1"></i>Is week salary se mat kaato (defer)</strong>
+            <span class="block text-xs text-gray-600 mt-0.5">Agar employee bole "is week advance na cut karo, next week kaat lena" to yeh tick karo. Deferred advance Remaining se nahi katega jab tak aap is tick ko hata na do.</span></span>
+          </label>
+        </div>
+
         <!-- Paid / Remaining section (only for salary type) -->
         <div id="etx-paid-wrap" class="md:col-span-2" style="${initType === 'salary' ? '' : 'display:none;'}">
           <div class="bg-green-50 border border-green-200 rounded-lg p-3 space-y-2">
@@ -3358,13 +3535,6 @@ const App = {
     if (isPerPieceEmp && initEntryType === 'per_piece') this._etxRecalc();
     this._etxRecalcPaid();
 
-    // Toggle Paid section based on type (only show for 'salary')
-    document.getElementById('etx-type').addEventListener('change', () => {
-      const tEl = document.getElementById('etx-type').value;
-      const wrap = document.getElementById('etx-paid-wrap');
-      if (wrap) wrap.style.display = tEl === 'salary' ? '' : 'none';
-    });
-
     document.getElementById('etx-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const eType = document.getElementById('etx-etype').value;
@@ -3391,6 +3561,11 @@ const App = {
       } else {
         payload.amount = parseFloat(document.getElementById('etx-amount').value) || 0;
       }
+      // Defer flag only for advance type
+      if (tType === 'advance') {
+        const dEl = document.getElementById('etx-defer');
+        payload.deferred = dEl ? !!dEl.checked : false;
+      }
       // Paid amount only for salary type
       if (tType === 'salary') {
         const paidEl = document.getElementById('etx-paid');
@@ -3411,6 +3586,14 @@ const App = {
         this.toast('Saved', 'success');
       } catch (err) { this.toast('Failed', 'error'); }
     });
+  },
+
+  _toggleEtxTypeChanged() {
+    const tEl = document.getElementById('etx-type')?.value;
+    const paidWrap = document.getElementById('etx-paid-wrap');
+    if (paidWrap) paidWrap.style.display = tEl === 'salary' ? '' : 'none';
+    const deferWrap = document.getElementById('etx-defer-wrap');
+    if (deferWrap) deferWrap.style.display = tEl === 'advance' ? '' : 'none';
   },
 
   _toggleEtxEntryType() {
@@ -3477,6 +3660,17 @@ const App = {
       this.closeModal();
       if (this.state.currentEmployee) await this.openEmployee(this.state.currentEmployee.id);
       this.toast('Deleted', 'success');
+    } catch (e) { this.toast('Failed', 'error'); }
+  },
+
+  // Defer / un-defer an advance. Deferred advance is NOT cut from this week's
+  // Remaining (employee bola "is week mat kaato, next week kaat lena").
+  async toggleDeferAdvance(id) {
+    try {
+      const res = await this.api.post(`/api/employee-transactions/${id}/toggle-defer`, {});
+      if (res.error) { this.toast(res.error, 'error'); return; }
+      if (this.state.currentEmployee) await this.openEmployee(this.state.currentEmployee.id);
+      this.toast(res.deferred ? 'Advance deferred (next week)' : 'Advance will be cut this week', 'success');
     } catch (e) { this.toast('Failed', 'error'); }
   },
 
@@ -4690,64 +4884,82 @@ const App = {
     const byDate = {};
     (data.daily || []).forEach(d => { byDate[d.date] = d; });
 
-    // Build cells: leading empty + days
+    // Build cells: leading empty + days. COMPACT design — each day is a small
+    // square showing only the day number + tiny colored dots (no text clutter).
     const cells = [];
     for (let i = 0; i < firstDow; i++) cells.push(`<div class="cal-cell empty"></div>`);
     for (let day = 1; day <= lastDay; day++) {
       const dStr = `${month}-${String(day).padStart(2, '0')}`;
       const info = byDate[dStr];
       const isToday = dStr === todayStr;
-      let lines = '';
+      let dots = '';
       let hasData = false, hasExpense = false;
       if (info) {
         if (isEmployee) {
-          if (info.salary_paid > 0) { lines += `<div class="cal-day-line sal" title="Salary Paid">S: ${this.fmtCompact(info.salary_paid)}</div>`; hasData = true; }
-          if (info.advance > 0)     { lines += `<div class="cal-day-line adv" title="Advance">A: ${this.fmtCompact(info.advance)}</div>`; hasData = true; }
-          if (info.bonus > 0)       { lines += `<div class="cal-day-line rec" title="Bonus">B: ${this.fmtCompact(info.bonus)}</div>`; hasData = true; }
-          if (info.deduction > 0)   { lines += `<div class="cal-day-line exp" title="Deduction">D: ${this.fmtCompact(info.deduction)}</div>`; hasData = true; hasExpense = true; }
+          if (info.salary_paid > 0) { dots += `<span class="cal-dot d-sal" title="Salary Paid: ${this.fmt(info.salary_paid)}"></span>`; hasData = true; }
+          if (info.advance > 0)     { dots += `<span class="cal-dot d-adv" title="Advance: ${this.fmt(info.advance)}"></span>`; hasData = true; }
         } else {
-          if (info.net_profit > 0)   { lines += `<div class="cal-day-line profit" title="Net Profit">₹+${this.fmtCompact(info.net_profit)}</div>`; hasData = true; }
-          else if (info.net_profit < 0) { lines += `<div class="cal-day-line exp" title="Net Loss">₹${this.fmtCompact(info.net_profit)}</div>`; hasData = true; hasExpense = true; }
-          if (info.received > 0)     { lines += `<div class="cal-day-line rec" title="Received">R: ${this.fmtCompact(info.received)}</div>`; hasData = true; }
-          if (info.bills_count > 0)  { lines += `<div class="cal-day-line bills" title="Bills">${info.bills_count}b</div>`; hasData = true; }
-          if (info.expenses > 0)     { lines += `<div class="cal-day-line exp" title="Expenses">E: ${this.fmtCompact(info.expenses)}</div>`; hasData = true; hasExpense = true; }
+          if (info.net_profit > 0)      { dots += `<span class="cal-dot d-profit" title="Net Profit: ${this.fmt(info.net_profit)}"></span>`; hasData = true; }
+          else if (info.net_profit < 0) { dots += `<span class="cal-dot d-exp" title="Net Loss: ${this.fmt(info.net_profit)}"></span>`; hasData = true; hasExpense = true; }
+          if (info.received > 0)     { dots += `<span class="cal-dot d-rec" title="Received: ${this.fmt(info.received)}"></span>`; hasData = true; }
+          if (info.bills_count > 0)  { dots += `<span class="cal-dot d-bills" title="${info.bills_count} bill(s)"></span>`; hasData = true; }
+          if (info.expenses > 0)     { dots += `<span class="cal-dot d-exp" title="Expenses: ${this.fmt(info.expenses)}"></span>`; hasData = true; hasExpense = true; }
         }
       }
-      const cls = `cal-cell ${hasData ? 'has-data' : ''} ${hasExpense ? 'has-expense' : ''} ${isToday ? 'today' : ''}`;
-      cells.push(`<div class="${cls}" onclick="App.showCalendarDay('${containerId}','${dStr}')">
-        <div class="cal-day-num">${day}</div>${lines}
+      const cls = `cal-cell ${hasData ? 'has-data' : ''} ${isToday ? 'today' : ''}`;
+      cells.push(`<div class="${cls}" onclick="App.showCalendarDay('${containerId}','${dStr}')" title="${dStr}">
+        <span class="cal-day-num">${day}</span><span class="cal-dots">${dots}</span>
       </div>`);
     }
 
     const t = data.totals || {};
-    const totalsHtml = isEmployee
-      ? `<div class="cal-total-card"><div class="lbl">Salary Paid</div><div class="val amount-received">PKR ${this.fmt(t.salary_paid || 0)}</div></div>
-         <div class="cal-total-card"><div class="lbl">Advance</div><div class="val amount-pending">PKR ${this.fmt(t.advance || 0)}</div></div>
-         <div class="cal-total-card"><div class="lbl">Bonus</div><div class="val text-green-600">PKR ${this.fmt(t.bonus || 0)}</div></div>
-         <div class="cal-total-card"><div class="lbl">Deduction</div><div class="val text-red-600">PKR ${this.fmt(t.deduction || 0)}</div></div>`
-      : `<div class="cal-total-card cal-profit-card"><div class="lbl"><i class="fas fa-chart-line mr-1"></i>Net Profit</div><div class="val ${(t.net_profit||0) >= 0 ? 'text-green-700' : 'text-red-700'}">PKR ${this.fmt(t.net_profit || 0)}</div></div>
-         <div class="cal-total-card"><div class="lbl">Received</div><div class="val amount-received">PKR ${this.fmt(t.received || 0)}</div></div>
-         <div class="cal-total-card"><div class="lbl">Bills</div><div class="val text-purple-600">${t.bills_count || 0} (PKR ${this.fmt(t.bills_total || 0)})</div></div>
-         <div class="cal-total-card"><div class="lbl">Salary Paid</div><div class="val text-blue-600">PKR ${this.fmt(t.salary_paid || 0)}</div></div>
-         <div class="cal-total-card"><div class="lbl">Side Expenses</div><div class="val text-red-600">PKR ${this.fmt(t.expenses || 0)}</div></div>`;
+    // Compact single-line summary chips (always visible — this is the main view).
+    const chips = isEmployee
+      ? `<span class="cal-chip"><b class="amount-received">PKR ${this.fmt(t.salary_paid || 0)}</b><i>Salary Paid</i></span>
+         <span class="cal-chip"><b class="amount-pending">PKR ${this.fmt(t.advance || 0)}</b><i>Advance</i></span>`
+      : `<span class="cal-chip ${(t.net_profit||0) >= 0 ? 'chip-profit' : 'chip-loss'}"><b>PKR ${this.fmt(t.net_profit || 0)}</b><i>Net Profit</i></span>
+         <span class="cal-chip"><b class="amount-received">PKR ${this.fmt(t.received || 0)}</b><i>Received</i></span>
+         <span class="cal-chip"><b class="text-purple-600">${t.bills_count || 0}</b><i>Bills</i></span>
+         <span class="cal-chip"><b class="text-blue-600">PKR ${this.fmt(t.salary_paid || 0)}</b><i>Salary</i></span>
+         <span class="cal-chip"><b class="text-red-600">PKR ${this.fmt(t.expenses || 0)}</b><i>Expenses</i></span>`;
+
+    // Grid visibility persists per container (default collapsed = compact).
+    const expanded = !!this._cal[containerId].expanded;
 
     container.innerHTML = `
-      <div class="cal-wrap cal-compact">
-        <div class="cal-header">
-          <h2><i class="fas fa-calendar-days text-blue-500 mr-2"></i>${isEmployee ? 'Employee Calendar' : 'Activity Calendar'}</h2>
-          <div class="cal-nav">
-            <button onclick="App.calMove('${containerId}', -1)" title="Previous Month"><i class="fas fa-chevron-left"></i></button>
-            <span class="cal-month-label">${monthName}</span>
-            <button onclick="App.calMove('${containerId}', 1)" title="Next Month"><i class="fas fa-chevron-right"></i></button>
-            <button onclick="App.calMove('${containerId}', 0)" title="Today">Today</button>
+      <div class="cal-wrap cal-mini">
+        <div class="cal-bar">
+          <div class="cal-bar-left">
+            <button class="cal-arrow" onclick="App.calMove('${containerId}', -1)" title="Previous Month"><i class="fas fa-chevron-left"></i></button>
+            <span class="cal-month-label"><i class="fas fa-calendar-days text-blue-500 mr-1"></i>${monthName}</span>
+            <button class="cal-arrow" onclick="App.calMove('${containerId}', 1)" title="Next Month"><i class="fas fa-chevron-right"></i></button>
+            <button class="cal-today-btn" onclick="App.calMove('${containerId}', 0)">Today</button>
+          </div>
+          <button class="cal-toggle" onclick="App.calToggleGrid('${containerId}')">
+            <i class="fas fa-${expanded ? 'chevron-up' : 'calendar-alt'}"></i> ${expanded ? 'Hide' : 'View Days'}
+          </button>
+        </div>
+        <div class="cal-chips">${chips}</div>
+        <div class="cal-grid-wrap" style="${expanded ? '' : 'display:none;'}">
+          <div class="cal-grid">
+            ${['Su','Mo','Tu','We','Th','Fr','Sa'].map(d => `<div class="cal-dow">${d}</div>`).join('')}
+            ${cells.join('')}
+          </div>
+          <div class="cal-legend">
+            ${isEmployee
+              ? '<span><i class="cal-dot d-sal"></i>Salary</span><span><i class="cal-dot d-adv"></i>Advance</span>'
+              : '<span><i class="cal-dot d-profit"></i>Profit</span><span><i class="cal-dot d-rec"></i>Received</span><span><i class="cal-dot d-bills"></i>Bills</span><span><i class="cal-dot d-exp"></i>Expense</span>'}
+            <span class="cal-legend-hint">Kisi din par tap karein details ke liye</span>
           </div>
         </div>
-        <div class="cal-totals">${totalsHtml}</div>
-        <div class="cal-grid">
-          ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => `<div class="cal-dow">${d}</div>`).join('')}
-          ${cells.join('')}
-        </div>
       </div>`;
+  },
+
+  calToggleGrid(containerId) {
+    const cur = this._cal[containerId];
+    if (!cur) return;
+    cur.expanded = !cur.expanded;
+    this.renderCalendar(containerId, { month: cur.month, employeeId: cur.employeeId });
   },
 
   fmtCompact(n) {
@@ -4783,9 +4995,7 @@ const App = {
       if (isEmployee) {
         body = `
           <div class="cal-detail-row"><span class="lbl"><i class="fas fa-money-check-alt text-blue-500 mr-2"></i>Salary Paid</span><span class="val amount-received">PKR ${this.fmt(info.salary_paid || 0)}</span></div>
-          <div class="cal-detail-row"><span class="lbl"><i class="fas fa-hand-holding-usd text-orange-500 mr-2"></i>Advance</span><span class="val amount-pending">PKR ${this.fmt(info.advance || 0)}</span></div>
-          <div class="cal-detail-row"><span class="lbl"><i class="fas fa-gift text-green-500 mr-2"></i>Bonus</span><span class="val text-green-600">PKR ${this.fmt(info.bonus || 0)}</span></div>
-          <div class="cal-detail-row"><span class="lbl"><i class="fas fa-minus-circle text-red-500 mr-2"></i>Deduction</span><span class="val text-red-600">PKR ${this.fmt(info.deduction || 0)}</span></div>`;
+          <div class="cal-detail-row"><span class="lbl"><i class="fas fa-hand-holding-usd text-orange-500 mr-2"></i>Advance</span><span class="val amount-pending">PKR ${this.fmt(info.advance || 0)}</span></div>`;
       } else {
         const np = info.net_profit || 0;
         body = `
