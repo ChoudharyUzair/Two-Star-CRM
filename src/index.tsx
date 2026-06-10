@@ -149,20 +149,27 @@ app.get('/api/folders', requireAuth, async (c) => {
 })
 
 app.post('/api/folders', requireAuth, async (c) => {
-  const { name, icon, color, section_type } = await c.req.json()
+  const { name, icon, color, section_type, ledger_type } = await c.req.json()
   if (!name) return c.json({ error: 'Name required' }, 400)
+  const lt = (ledger_type === 'supplier') ? 'supplier' : 'customer'
   const result = await c.env.DB.prepare(
-    'INSERT INTO folders (name, icon, color, section_type) VALUES (?, ?, ?, ?)'
-  ).bind(name, icon || 'fa-folder', color || '#3b82f6', section_type || 'clients').run()
+    'INSERT INTO folders (name, icon, color, section_type, ledger_type) VALUES (?, ?, ?, ?, ?)'
+  ).bind(name, icon || 'fa-folder', color || '#3b82f6', section_type || 'clients', lt).run()
   return c.json({ id: result.meta.last_row_id })
 })
 
 app.put('/api/folders/:id', requireAuth, async (c) => {
   const id = c.req.param('id')
-  const { name, icon, color } = await c.req.json()
-  await c.env.DB.prepare(
-    'UPDATE folders SET name = ?, icon = ?, color = ? WHERE id = ?'
-  ).bind(name, icon, color, id).run()
+  const { name, icon, color, ledger_type } = await c.req.json()
+  if (ledger_type === 'customer' || ledger_type === 'supplier') {
+    await c.env.DB.prepare(
+      'UPDATE folders SET name = ?, icon = ?, color = ?, ledger_type = ? WHERE id = ?'
+    ).bind(name, icon, color, ledger_type, id).run()
+  } else {
+    await c.env.DB.prepare(
+      'UPDATE folders SET name = ?, icon = ?, color = ? WHERE id = ?'
+    ).bind(name, icon, color, id).run()
+  }
   return c.json({ success: true })
 })
 
@@ -378,6 +385,82 @@ app.post('/api/inventory', requireAuth, async (c) => {
     'INSERT INTO inventory (name, sku, unit, rate, quantity, category, notes, manufacturing_cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   ).bind(name, sku || '', unit || 'pcs', parseFloat(rate) || 0, parseFloat(quantity) || 0, category || '', notes || '', parseFloat(manufacturing_cost) || 0).run()
   return c.json({ id: result.meta.last_row_id })
+})
+
+// ============ INVENTORY MOVEMENTS (sold / returned / adjusted) ============
+// IMPORTANT: these /api/inventory/movements* routes must be declared BEFORE the
+// /api/inventory/:id routes, otherwise Hono would match "movements" as :id.
+// Recent entries log so the user can see, day by day, how many items were
+// sold / returned and which item. Each movement also updates the product's stock.
+app.get('/api/inventory/movements', requireAuth, async (c) => {
+  const invId = c.req.query('inventory_id')
+  const limit = parseInt(c.req.query('limit') || '50')
+  let rows
+  if (invId) {
+    rows = await c.env.DB.prepare(
+      `SELECT m.*, i.name as item_name FROM inventory_movements m
+       LEFT JOIN inventory i ON i.id = m.inventory_id
+       WHERE m.inventory_id = ?
+       ORDER BY m.entry_date DESC, m.id DESC LIMIT ?`
+    ).bind(invId, limit).all()
+  } else {
+    rows = await c.env.DB.prepare(
+      `SELECT m.*, i.name as item_name FROM inventory_movements m
+       LEFT JOIN inventory i ON i.id = m.inventory_id
+       ORDER BY m.entry_date DESC, m.id DESC LIMIT ?`
+    ).bind(limit).all()
+  }
+  return c.json({ movements: rows.results })
+})
+
+app.post('/api/inventory/movements', requireAuth, async (c) => {
+  const body = await c.req.json()
+  const inventory_id = parseInt(body.inventory_id)
+  if (!inventory_id) return c.json({ error: 'inventory_id required' }, 400)
+  const type = ['sale', 'return', 'adjust'].includes(body.type) ? body.type : 'sale'
+  const quantity = Math.abs(parseFloat(body.quantity) || 0)
+  if (quantity <= 0) return c.json({ error: 'quantity must be > 0' }, 400)
+
+  const item = await c.env.DB.prepare('SELECT * FROM inventory WHERE id = ?').bind(inventory_id).first() as any
+  if (!item) return c.json({ error: 'Product not found' }, 404)
+
+  const rate = parseFloat(body.rate) || parseFloat(item.rate) || 0
+  const total = quantity * rate
+  const entry_date = body.entry_date || new Date().toISOString().slice(0, 10)
+
+  // Stock direction: sale = decrease, return = increase, adjust = use sign of body.direction ('in'/'out')
+  let delta = 0
+  if (type === 'sale') delta = -quantity
+  else if (type === 'return') delta = quantity
+  else if (type === 'adjust') delta = (body.direction === 'out') ? -quantity : quantity
+
+  await c.env.DB.prepare(
+    `INSERT INTO inventory_movements (inventory_id, product_name, entry_date, type, quantity, rate, total, customer_name, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(inventory_id, item.name, entry_date, type, quantity, rate, total, body.customer_name || '', body.notes || '').run()
+
+  await c.env.DB.prepare(
+    `UPDATE inventory SET quantity = quantity + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+  ).bind(delta, inventory_id).run()
+
+  return c.json({ success: true })
+})
+
+app.delete('/api/inventory/movements/:id', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const mov = await c.env.DB.prepare('SELECT * FROM inventory_movements WHERE id = ?').bind(id).first() as any
+  if (!mov) return c.json({ error: 'Not found' }, 404)
+  // Reverse the stock effect before deleting
+  let reverse = 0
+  if (mov.type === 'sale') reverse = mov.quantity            // add back what was sold
+  else if (mov.type === 'return') reverse = -mov.quantity    // remove what was returned
+  else reverse = 0 // adjust: leave stock as-is to avoid wrong guesses
+  if (reverse !== 0) {
+    await c.env.DB.prepare('UPDATE inventory SET quantity = quantity + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .bind(reverse, mov.inventory_id).run()
+  }
+  await c.env.DB.prepare('DELETE FROM inventory_movements WHERE id = ?').bind(id).run()
+  return c.json({ success: true })
 })
 
 app.put('/api/inventory/:id', requireAuth, async (c) => {
@@ -2194,7 +2277,8 @@ app.get('/api/dashboard', requireAuth, async (c) => {
          rawList, empList, expenseList, profitStats, productList, invMfgList,
          supplierStats, mfgProducts, mfgIngredients, builtSoldStats,
          salesTodayStats, salesMonthStats, salesAllTimeStats,
-         salesTodayProducts, salesMonthProducts, salesAllTimeProducts] = await Promise.all([
+         salesTodayProducts, salesMonthProducts, salesAllTimeProducts,
+         rawCostStats, salaryPaidStats] = await Promise.all([
     c.env.DB.prepare(`
       SELECT COALESCE(SUM(amount_received),0) as total_received,
              COALESCE(SUM(amount_pending),0) as total_pending,
@@ -2365,7 +2449,32 @@ app.get('/api/dashboard', requireAuth, async (c) => {
       WHERE bi.product_name IS NOT NULL AND bi.product_name != ''
       GROUP BY bi.product_name
       ORDER BY units_sold DESC
-    `).all()
+    `).all(),
+    // Raw material PURCHASE cost (actual money spent buying raw material) — today / month / all
+    c.env.DB.prepare(`
+      SELECT
+        COALESCE(SUM(total_amount), 0) as total_all,
+        COALESCE(SUM(CASE WHEN entry_date = date('now') THEN total_amount ELSE 0 END), 0) as total_today,
+        COALESCE(SUM(CASE WHEN entry_date >= date('now','start of month') THEN total_amount ELSE 0 END), 0) as total_month
+      FROM raw_material_purchases
+    `).first(),
+    // Employee salary/payments actually PAID (salary paid + advance + bonus) — today / month / all
+    // We treat the actual cash that went out to workers as a cost for Net Profit.
+    c.env.DB.prepare(`
+      SELECT
+        COALESCE(SUM(paidval), 0) as total_all,
+        COALESCE(SUM(CASE WHEN entry_date = date('now') THEN paidval ELSE 0 END), 0) as total_today,
+        COALESCE(SUM(CASE WHEN entry_date >= date('now','start of month') THEN paidval ELSE 0 END), 0) as total_month
+      FROM (
+        SELECT entry_date,
+          CASE
+            WHEN type='salary' THEN (CASE WHEN paid_amount IS NULL THEN amount ELSE paid_amount END)
+            WHEN type IN ('advance','bonus','payment','per_piece') THEN amount
+            ELSE 0
+          END as paidval
+        FROM employee_transactions
+      )
+    `).first()
   ])
 
   return c.json({
@@ -2399,7 +2508,9 @@ app.get('/api/dashboard', requireAuth, async (c) => {
     salesAllTimeStats,
     salesTodayProducts: salesTodayProducts.results,
     salesMonthProducts: salesMonthProducts.results,
-    salesAllTimeProducts: salesAllTimeProducts.results
+    salesAllTimeProducts: salesAllTimeProducts.results,
+    rawCostStats,
+    salaryPaidStats
   })
 })
 

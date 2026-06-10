@@ -318,6 +318,21 @@ const App = {
       <form id="folder-form" class="space-y-4">
         <div><label class="block text-sm font-medium mb-1">Section Name</label>
           <input id="f-name" type="text" required class="input-field" placeholder="e.g., Customers, Suppliers"></div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Ledger Type — money flow direction</label>
+          <div class="grid grid-cols-1 gap-2">
+            <label class="flex items-start gap-2 border rounded-lg p-2 cursor-pointer hover:bg-blue-50">
+              <input type="radio" name="f-ledger" value="customer" class="mt-1" checked>
+              <span><span class="font-semibold text-green-700"><i class="fas fa-arrow-down mr-1"></i>Customer — We RECEIVE payment</span>
+                <span class="block text-xs text-gray-500">Two Star customers / Wire customers. Their bills ADD to profit.</span></span>
+            </label>
+            <label class="flex items-start gap-2 border rounded-lg p-2 cursor-pointer hover:bg-amber-50">
+              <input type="radio" name="f-ledger" value="supplier" class="mt-1">
+              <span><span class="font-semibold text-amber-700"><i class="fas fa-arrow-up mr-1"></i>Supplier — We PAY them</span>
+                <span class="block text-xs text-gray-500">Raw material suppliers. Their bills are a COST (subtract from gross profit).</span></span>
+            </label>
+          </div>
+        </div>
         <div><label class="block text-sm font-medium mb-1">Icon</label>
           <select id="f-icon" class="input-field">
             <option value="fa-folder">Folder</option><option value="fa-users">Users</option>
@@ -336,11 +351,13 @@ const App = {
     document.getElementById('folder-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       try {
+        const ledgerType = (document.querySelector('input[name="f-ledger"]:checked') || {}).value || 'customer';
         await this.api.post('/api/folders', {
           name: document.getElementById('f-name').value,
           icon: document.getElementById('f-icon').value,
           color: document.getElementById('f-color').value,
-          section_type: 'clients'
+          section_type: 'clients',
+          ledger_type: ledgerType
         });
         this.closeModal();
         await this.loadFolders();
@@ -358,6 +375,21 @@ const App = {
       <form id="folder-edit-form" class="space-y-4">
         <div><label class="block text-sm font-medium mb-1">Name</label>
           <input id="f-name" type="text" required class="input-field" value="${this.escapeAttr(folder.name)}"></div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Ledger Type — money flow direction</label>
+          <div class="grid grid-cols-1 gap-2">
+            <label class="flex items-start gap-2 border rounded-lg p-2 cursor-pointer hover:bg-blue-50">
+              <input type="radio" name="f-ledger" value="customer" class="mt-1" ${folder.ledger_type !== 'supplier' ? 'checked' : ''}>
+              <span><span class="font-semibold text-green-700"><i class="fas fa-arrow-down mr-1"></i>Customer — We RECEIVE payment</span>
+                <span class="block text-xs text-gray-500">Bills ADD to profit.</span></span>
+            </label>
+            <label class="flex items-start gap-2 border rounded-lg p-2 cursor-pointer hover:bg-amber-50">
+              <input type="radio" name="f-ledger" value="supplier" class="mt-1" ${folder.ledger_type === 'supplier' ? 'checked' : ''}>
+              <span><span class="font-semibold text-amber-700"><i class="fas fa-arrow-up mr-1"></i>Supplier — We PAY them</span>
+                <span class="block text-xs text-gray-500">Bills are a COST.</span></span>
+            </label>
+          </div>
+        </div>
         <div><label class="block text-sm font-medium mb-1">Icon</label>
           <select id="f-icon" class="input-field">
             ${['fa-folder','fa-users','fa-truck','fa-money-bill-wave','fa-building','fa-shopping-cart','fa-handshake','fa-briefcase','fa-chart-pie','fa-tag'].map(i => `<option value="${i}" ${folder.icon === i ? 'selected' : ''}>${i.replace('fa-','')}</option>`).join('')}
@@ -373,10 +405,12 @@ const App = {
     document.getElementById('folder-edit-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       try {
+        const ledgerType = (document.querySelector('input[name="f-ledger"]:checked') || {}).value || 'customer';
         await this.api.put(`/api/folders/${id}`, {
           name: document.getElementById('f-name').value,
           icon: document.getElementById('f-icon').value,
-          color: document.getElementById('f-color').value
+          color: document.getElementById('f-color').value,
+          ledger_type: ledgerType
         });
         this.closeModal();
         await this.loadFolders();
@@ -539,6 +573,9 @@ const App = {
     if (!c) return false;
     const folder = this.state.folders.find(f => f.id === c.folder_id);
     if (!folder) return false;
+    // Prefer explicit ledger_type chosen at section creation; fall back to name/section_type
+    if (folder.ledger_type === 'supplier') return true;
+    if (folder.ledger_type === 'customer') return false;
     const name = (folder.name || '').toLowerCase();
     return /supplier/i.test(name) || folder.section_type === 'suppliers';
   },
@@ -969,14 +1006,28 @@ const App = {
     const totalProfit = profitStats?.total_profit || 0;
     const profitMonth = profitStats?.profit_this_month || 0;
     const profitToday = profitStats?.profit_today || 0;
-    // Side expense totals for final net profit calculation
+    // Side expense totals
     const sideExpTotal = parseFloat(expenseStats?.total) || 0;
     const sideExpToday = parseFloat(expenseStats?.total_today) || 0;
     const sideExpMonth = parseFloat(expenseStats?.total_month) || 0;
-    // Final Net Profit = Gross Profit (from products) − Side Expenses
-    const finalProfitAll = totalProfit - sideExpTotal;
-    const finalProfitMonth = profitMonth - sideExpMonth;
-    const finalProfitToday = profitToday - sideExpToday;
+    // Raw material purchase cost (actual money spent buying raw material)
+    const rawCostStats = data.rawCostStats || {};
+    const rawCostAll = parseFloat(rawCostStats.total_all) || 0;
+    const rawCostToday = parseFloat(rawCostStats.total_today) || 0;
+    const rawCostMonth = parseFloat(rawCostStats.total_month) || 0;
+    // Employee salaries / payments actually paid out
+    const salaryPaidStats = data.salaryPaidStats || {};
+    const salaryAll = parseFloat(salaryPaidStats.total_all) || 0;
+    const salaryToday = parseFloat(salaryPaidStats.total_today) || 0;
+    const salaryMonth = parseFloat(salaryPaidStats.total_month) || 0;
+    // Total business costs = Raw Material + Employee Salaries/Payments + Side Expenses
+    const costAll = rawCostAll + salaryAll + sideExpTotal;
+    const costToday = rawCostToday + salaryToday + sideExpToday;
+    const costMonth = rawCostMonth + salaryMonth + sideExpMonth;
+    // Net Profit = Gross Profit − (Raw Material + Salaries + Side Expenses)
+    const finalProfitAll = totalProfit - costAll;
+    const finalProfitMonth = profitMonth - costMonth;
+    const finalProfitToday = profitToday - costToday;
     const products = productList || [];
     const invMfg = invMfgList || [];
     const supplierStats = data.supplierStats || {};
@@ -1059,34 +1110,45 @@ const App = {
           </div>
         </section>
 
-        <!-- ============ SECTION 2: PROFIT OVERVIEW (combined Gross + Net into one compact table) ============ -->
+        <!-- ============ SECTION 2: PROFIT OVERVIEW (Gross → costs → Net) ============ -->
         <section id="dash-profit" class="bg-white rounded-xl shadow-sm p-5">
           <h2 class="dash-card-title"><span><i class="fas fa-coins text-amber-500 mr-2"></i>Profit Overview</span></h2>
-          <p class="text-xs text-gray-500 mb-3">Gross Profit = (Sell − Mfg. cost) × Qty (products only). &nbsp;Net Profit = Gross − Side Expenses.</p>
+          <p class="text-xs text-gray-500 mb-3">
+            <strong>Gross Profit</strong> = (Selling Rate − Mfg. cost) × Qty (products sold).
+            &nbsp;<strong>Net Profit</strong> = Gross Profit − Raw Material − Salaries − Side Expenses.
+          </p>
           <div class="overflow-x-auto">
             <table class="w-full text-sm profit-table">
               <thead class="bg-gray-50"><tr>
                 <th class="text-left p-3">Period</th>
-                <th class="text-right p-3" title="Profit from products before side expenses">Gross Profit</th>
+                <th class="text-right p-3" title="Profit from products: (Sell − Mfg cost) × Qty">Gross Profit</th>
+                <th class="text-right p-3" title="Money spent buying raw material">Raw Material</th>
+                <th class="text-right p-3" title="Salaries / payments paid to workers">Salaries</th>
                 <th class="text-right p-3" title="All side / running expenses">Side Expenses</th>
-                <th class="text-right p-3" title="Final profit after side expenses">Net Profit</th>
+                <th class="text-right p-3" title="Net Profit = Gross − Raw Material − Salaries − Side Expenses">Net Profit</th>
               </tr></thead>
               <tbody>
                 <tr class="border-t">
                   <td class="p-3 font-semibold text-blue-700"><i class="fas fa-sun mr-1"></i>Today</td>
                   <td class="text-right p-3 amount-received">PKR ${this.fmt(profitToday)}</td>
+                  <td class="text-right p-3 text-orange-600">PKR ${this.fmt(rawCostToday)}</td>
+                  <td class="text-right p-3 text-purple-600">PKR ${this.fmt(salaryToday)}</td>
                   <td class="text-right p-3 text-red-600">PKR ${this.fmt(sideExpToday)}</td>
                   <td class="text-right p-3 font-bold ${finalProfitToday >= 0 ? 'text-green-700' : 'text-red-700'}">PKR ${this.fmt(finalProfitToday)}</td>
                 </tr>
                 <tr class="border-t">
                   <td class="p-3 font-semibold text-teal-700"><i class="fas fa-calendar-alt mr-1"></i>This Month</td>
                   <td class="text-right p-3 amount-received">PKR ${this.fmt(profitMonth)}</td>
+                  <td class="text-right p-3 text-orange-600">PKR ${this.fmt(rawCostMonth)}</td>
+                  <td class="text-right p-3 text-purple-600">PKR ${this.fmt(salaryMonth)}</td>
                   <td class="text-right p-3 text-red-600">PKR ${this.fmt(sideExpMonth)}</td>
                   <td class="text-right p-3 font-bold ${finalProfitMonth >= 0 ? 'text-green-700' : 'text-red-700'}">PKR ${this.fmt(finalProfitMonth)}</td>
                 </tr>
                 <tr class="border-t-2 bg-amber-50 font-bold">
                   <td class="p-3 text-amber-800"><i class="fas fa-trophy mr-1"></i>All Time</td>
                   <td class="text-right p-3 amount-received">PKR ${this.fmt(totalProfit)}</td>
+                  <td class="text-right p-3 text-orange-600">PKR ${this.fmt(rawCostAll)}</td>
+                  <td class="text-right p-3 text-purple-600">PKR ${this.fmt(salaryAll)}</td>
                   <td class="text-right p-3 text-red-600">PKR ${this.fmt(sideExpTotal)}</td>
                   <td class="text-right p-3 ${finalProfitAll >= 0 ? 'text-green-700' : 'text-red-700'}" style="font-size:1.05rem;">PKR ${this.fmt(finalProfitAll)}</td>
                 </tr>
@@ -1426,8 +1488,12 @@ const App = {
       <div class="page-header"><h1 class="page-title"><i class="fas fa-boxes text-orange-500"></i>Inventory</h1></div>
       <div class="p-6"><div class="text-gray-400 text-center py-8"><i class="fas fa-spinner fa-spin text-2xl"></i></div></div>`;
     try {
-      const data = await this.api.get('/api/inventory');
+      const [data, mov] = await Promise.all([
+        this.api.get('/api/inventory'),
+        this.api.get('/api/inventory/movements?limit=50')
+      ]);
       this.state.inventory = data.items || [];
+      this.state.invMovements = (mov && mov.movements) || [];
       this.renderInventory();
     } catch (e) {}
   },
@@ -1451,6 +1517,7 @@ const App = {
           <p class="page-subtitle">${this.state.inventory.length} product(s) · Total Value: PKR ${this.fmt(totalValue)}</p></div>
         <div class="flex gap-2 flex-wrap">
           <input type="text" id="inv-search" placeholder="Search..." class="input-field" style="max-width:240px;" oninput="App.renderInventory(this.value)" value="${this.escapeAttr(filter)}">
+          <button onclick="App.showMovementModal()" class="btn btn-secondary"><i class="fas fa-right-left"></i> Record Sale / Return</button>
           <button onclick="App.showInventoryEditor()" class="btn btn-primary"><i class="fas fa-plus"></i> Add Product</button>
         </div>
       </div>
@@ -1498,7 +1565,134 @@ const App = {
                 }).join('')}
             </tbody></table></div>
         </div>
+
+        <!-- ============ RECENT ENTRIES (sold / returned / adjusted) ============ -->
+        <section id="inv-recent" class="bg-white rounded-xl shadow-sm p-5">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="dash-card-title mb-0"><span><i class="fas fa-clock-rotate-left text-blue-500 mr-2"></i>Recent Entries</span></h2>
+            <span class="text-xs text-gray-500">Last 50 stock movements (sold / returned / adjusted)</span>
+          </div>
+          ${this.renderInventoryMovements()}
+        </section>
       </div>`;
+  },
+
+  renderInventoryMovements() {
+    const movs = this.state.invMovements || [];
+    if (movs.length === 0) {
+      return `<p class="text-gray-500 text-center py-6"><i class="fas fa-inbox text-2xl block mb-2"></i>No stock movements yet. Use "Record Sale / Return" to log one.</p>`;
+    }
+    const badge = (t) => {
+      if (t === 'sale')   return '<span class="px-2 py-0.5 rounded-full text-xs bg-red-100 text-red-700"><i class="fas fa-arrow-up mr-1"></i>Sold</span>';
+      if (t === 'return') return '<span class="px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700"><i class="fas fa-arrow-down mr-1"></i>Returned</span>';
+      return '<span class="px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-700"><i class="fas fa-sliders mr-1"></i>Adjusted</span>';
+    };
+    return `
+      <div class="overflow-x-auto"><table class="ledger-table">
+        <thead><tr>
+          <th style="width:110px;">Date</th><th>Product</th>
+          <th style="width:110px;">Type</th><th style="width:90px;" class="text-right">Qty</th>
+          <th style="width:120px;" class="text-right">Rate</th><th style="width:130px;" class="text-right">Total</th>
+          <th>Customer / Note</th><th style="width:60px;">Del</th>
+        </tr></thead><tbody>
+        ${movs.map(m => {
+          const qty = parseFloat(m.quantity) || 0, rate = parseFloat(m.rate) || 0, total = parseFloat(m.total) || 0;
+          const noteBits = [m.customer_name, m.notes].filter(Boolean).map(x => this.escapeHtml(x)).join(' · ');
+          return `<tr>
+            <td class="text-gray-600">${this.escapeHtml(m.entry_date || '')}</td>
+            <td class="font-medium">${this.escapeHtml(m.item_name || m.product_name || '—')}</td>
+            <td>${badge(m.type)}</td>
+            <td class="text-right ${m.type === 'sale' ? 'text-red-600' : m.type === 'return' ? 'text-green-600' : 'text-gray-700'} font-semibold">${m.type === 'sale' ? '-' : m.type === 'return' ? '+' : ''}${this.fmt(qty)}</td>
+            <td class="text-right">${rate > 0 ? this.fmt(rate) : '<span class="text-gray-400">—</span>'}</td>
+            <td class="text-right">${total > 0 ? 'PKR ' + this.fmt(total) : '<span class="text-gray-400">—</span>'}</td>
+            <td class="text-gray-600 text-sm">${noteBits || '<span class="text-gray-400">—</span>'}</td>
+            <td><button onclick="App.deleteMovement(${m.id})" class="text-red-500 hover:text-red-700" title="Delete & reverse stock"><i class="fas fa-trash text-sm"></i></button></td>
+          </tr>`;
+        }).join('')}
+        </tbody></table></div>`;
+  },
+
+  showMovementModal() {
+    const items = this.state.inventory || [];
+    if (items.length === 0) { this.toast('Add a product first', 'error'); return; }
+    const today = new Date().toISOString().slice(0, 10);
+    this.openModal(`
+      <h2 class="text-xl font-bold mb-4"><i class="fas fa-right-left text-blue-500 mr-2"></i>Record Stock Movement</h2>
+      <form id="mov-form" class="space-y-3">
+        <div><label class="block text-sm font-medium mb-1">Product *</label>
+          <select id="m-item" class="input-field" required onchange="App._movFillRate()">
+            ${items.map(it => `<option value="${it.id}" data-rate="${it.rate || 0}">${this.escapeHtml(it.name)} (stock: ${this.fmt(parseFloat(it.quantity)||0)})</option>`).join('')}
+          </select></div>
+        <div><label class="block text-sm font-medium mb-1">Type *</label>
+          <select id="m-type" class="input-field" onchange="App._movToggleDir()">
+            <option value="sale">Sold (stock decreases)</option>
+            <option value="return">Returned (stock increases)</option>
+            <option value="adjust">Adjustment</option>
+          </select></div>
+        <div id="m-dir-wrap" style="display:none;"><label class="block text-sm font-medium mb-1">Adjust Direction</label>
+          <select id="m-dir" class="input-field">
+            <option value="in">Add to stock (+)</option>
+            <option value="out">Remove from stock (−)</option>
+          </select></div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="block text-sm font-medium mb-1">Quantity *</label><input id="m-qty" type="number" step="any" min="0" required class="input-field" placeholder="e.g. 10"></div>
+          <div><label class="block text-sm font-medium mb-1">Rate (PKR)</label><input id="m-rate" type="number" step="any" class="input-field"></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="block text-sm font-medium mb-1">Date</label><input id="m-date" type="date" class="input-field" value="${today}"></div>
+          <div><label class="block text-sm font-medium mb-1">Customer (optional)</label><input id="m-cust" type="text" class="input-field"></div>
+        </div>
+        <div><label class="block text-sm font-medium mb-1">Note</label><input id="m-notes" type="text" class="input-field"></div>
+        <div class="flex gap-2 justify-end pt-2">
+          <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save</button>
+        </div>
+      </form>`);
+    this._movFillRate();
+    document.getElementById('mov-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const payload = {
+        inventory_id: parseInt(document.getElementById('m-item').value),
+        type: document.getElementById('m-type').value,
+        direction: document.getElementById('m-dir').value,
+        quantity: parseFloat(document.getElementById('m-qty').value) || 0,
+        rate: parseFloat(document.getElementById('m-rate').value) || 0,
+        entry_date: document.getElementById('m-date').value,
+        customer_name: document.getElementById('m-cust').value,
+        notes: document.getElementById('m-notes').value
+      };
+      if (payload.quantity <= 0) { this.toast('Quantity must be greater than 0', 'error'); return; }
+      try {
+        await this.api.post('/api/inventory/movements', payload);
+        this.closeModal();
+        await this.showInventory();
+        this.toast('Movement recorded', 'success');
+      } catch (err) { this.toast('Failed', 'error'); }
+    });
+  },
+
+  _movFillRate() {
+    const sel = document.getElementById('m-item');
+    const rateEl = document.getElementById('m-rate');
+    if (sel && rateEl) {
+      const opt = sel.options[sel.selectedIndex];
+      if (opt && (!rateEl.value || parseFloat(rateEl.value) === 0)) rateEl.value = opt.getAttribute('data-rate') || 0;
+    }
+  },
+
+  _movToggleDir() {
+    const t = document.getElementById('m-type').value;
+    const wrap = document.getElementById('m-dir-wrap');
+    if (wrap) wrap.style.display = (t === 'adjust') ? 'block' : 'none';
+  },
+
+  async deleteMovement(id) {
+    if (!confirm('Delete this entry? Stock will be reversed for sale/return entries.')) return;
+    try {
+      await this.api.delete(`/api/inventory/movements/${id}`);
+      await this.showInventory();
+      this.toast('Entry deleted', 'success');
+    } catch (err) { this.toast('Failed', 'error'); }
   },
 
   showInventoryEditor(id = null) {

@@ -6,7 +6,27 @@
 - **Goal**: Complete business CRM for Two Star Industries — manage clients, ledgers, inventory, raw materials, manufacturing recipes, employees, side expenses, and bills with auto Net Profit tracking.
 - **Stack**: Hono (TypeScript) + Cloudflare Pages + Cloudflare D1 (SQLite) + TailwindCSS + Vanilla JS frontend
 
-## What's New (latest update — 2026-06-09) — Worker payout fixes + Payment type
+## What's New (latest update — 2026-06-10) — Real Net Profit + Ledger Type + Inventory Recent Entries
+
+Teen requested features add kiye gaye:
+
+1. **Net Profit ab REAL cash-based hai.** Pehle dashboard ka Net Profit sirf `Gross Profit − Side Expenses` tha (adhura). Ab system poore business costs ghatata hai:
+   - **Gross Profit** = (Selling Rate − Manufacturing Cost) × Qty — jo products bechte hain (Two Star + Wire customers dono).
+   - **Net Profit** = Gross Profit − **Raw Material Cost** − **Employee Salaries/Payments** − **Side Expenses**.
+   - Dashboard "Profit Overview" table me ab alag-alag columns hain: Gross Profit | Raw Material | Salaries | Side Expenses | **Net Profit** — Today / This Month / All Time ke liye. (`rawCostStats` + `salaryPaidStats` `GET /api/dashboard` me add kiye.)
+
+2. **Ledger Type option (Customer vs Supplier).** Jab naya ledger/section banayein to ab choose karna hota hai:
+   - **Customer — We RECEIVE payment** (Two Star / Wire customers): bills profit me ADD hote hain.
+   - **Supplier — We PAY them** (raw material suppliers): bills ek COST hain (gross profit se minus).
+   - `folders.ledger_type` ('customer'/'supplier') column. Purane folders auto-detect ho gaye (naam/section_type se). `isSupplierContext()` ab is field ko priority deta hai.
+
+3. **Inventory "Recent Entries" section + Record Sale / Return.** Inventory page par ab:
+   - **Record Sale / Return** button — sold (stock kam), returned (stock barh), ya manual adjustment log karein. Stock automatically update hota hai.
+   - **Recent Entries** table — last 50 movements (date, item, type, qty, rate, total, customer/note). Entry delete karne par stock automatically reverse ho jata hai. (`inventory_movements` table + `GET/POST/DELETE /api/inventory/movements`.)
+
+---
+
+## Previous update (2026-06-09) — Worker payout fixes + Payment type
 
 Char requested fixes:
 
