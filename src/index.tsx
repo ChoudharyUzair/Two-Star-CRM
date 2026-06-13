@@ -766,8 +766,8 @@ async function syncRawPurchaseLedger(env: any, purchaseId: number, p: any) {
   const total = parseFloat(p.total_amount) || 0
   const paid = parseFloat(p.paid_amount) || 0
   const due = total - paid
-  // Status: Received = fully paid, Partial = some paid, Pending = nothing paid
-  const status = due <= 0 ? 'Received' : (paid > 0 ? 'Partial' : 'Pending')
+  // Status (supplier ledger): Paid = we fully paid them, Partial = some paid, Pending = nothing paid
+  const status = due <= 0 ? 'Paid' : (paid > 0 ? 'Partial' : 'Pending')
   // Description shows what was bought
   const desc = `Raw Material Purchase: ${p.raw_name || ''} — ${p.quantity || 0} ${p.unit || ''} @ PKR ${p.rate || 0}`
 
@@ -2423,34 +2423,64 @@ app.get('/api/dashboard', requireAuth, async (c) => {
          salesTodayStats, salesMonthStats, salesAllTimeStats,
          salesTodayProducts, salesMonthProducts, salesAllTimeProducts,
          rawCostStats, salaryPaidStats, compProdStats, compProdList] = await Promise.all([
+    // NET receivable / payable computed PER CLIENT first, then summed.
+    // For each client: net = opening_balance + SUM(amount_pending) - SUM(amount_received).
+    //   net > 0  => an outstanding balance (customer owes us / we owe supplier)
+    //   net < 0  => an ADVANCE (customer paid extra / we paid supplier extra)
+    // We only sum the POSITIVE nets into receivable/payable so that one client's
+    // advance does NOT wrongly cancel another client's outstanding debt, and so
+    // that overpaying a single supplier shows 0 payable (not the gross bill amount).
     c.env.DB.prepare(`
+      WITH client_net AS (
+        SELECT cl.id AS client_id,
+               COALESCE(f.ledger_type,'customer') AS ledger_type,
+               COALESCE(cl.opening_balance,0)
+                 + COALESCE(SUM(t.amount_pending),0)
+                 - COALESCE(SUM(t.amount_received),0) AS net
+        FROM clients cl
+        LEFT JOIN folders f ON f.id = cl.folder_id
+        LEFT JOIN transactions t ON t.client_id = cl.id
+        GROUP BY cl.id
+      )
       SELECT
-        COALESCE(SUM(t.amount_received),0) as total_received,
-        COALESCE(SUM(t.amount_pending),0) as total_pending,
-        COUNT(*) as total_transactions,
-        -- Customer side: money customers still owe US (we are to RECEIVE)
-        COALESCE(SUM(CASE WHEN COALESCE(f.ledger_type,'customer') = 'customer'
-                          THEN t.amount_pending ELSE 0 END),0) as customer_pending,
-        COALESCE(SUM(CASE WHEN COALESCE(f.ledger_type,'customer') = 'customer'
-                          THEN t.amount_received ELSE 0 END),0) as customer_received,
-        -- Supplier side: money WE still owe suppliers (we are to PAY)
-        COALESCE(SUM(CASE WHEN COALESCE(f.ledger_type,'customer') = 'supplier'
-                          THEN t.amount_pending ELSE 0 END),0) as supplier_pending,
-        COALESCE(SUM(CASE WHEN COALESCE(f.ledger_type,'customer') = 'supplier'
-                          THEN t.amount_received ELSE 0 END),0) as supplier_received
-      FROM transactions t
-      LEFT JOIN clients cl ON cl.id = t.client_id
-      LEFT JOIN folders f ON f.id = cl.folder_id
+        (SELECT COALESCE(SUM(amount_received),0) FROM transactions) as total_received,
+        (SELECT COALESCE(SUM(amount_pending),0) FROM transactions) as total_pending,
+        (SELECT COUNT(*) FROM transactions) as total_transactions,
+        -- Customer side: net money customers still owe US (only positive nets)
+        COALESCE(SUM(CASE WHEN ledger_type = 'customer' AND net > 0 THEN net ELSE 0 END),0) as customer_pending,
+        -- Money customers paid us in ADVANCE (negative nets, shown as positive)
+        COALESCE(SUM(CASE WHEN ledger_type = 'customer' AND net < 0 THEN -net ELSE 0 END),0) as customer_advance,
+        -- Supplier side: net money WE still owe suppliers (only positive nets)
+        COALESCE(SUM(CASE WHEN ledger_type = 'supplier' AND net > 0 THEN net ELSE 0 END),0) as supplier_pending,
+        -- Money WE paid suppliers in ADVANCE (negative nets, shown as positive)
+        COALESCE(SUM(CASE WHEN ledger_type = 'supplier' AND net < 0 THEN -net ELSE 0 END),0) as supplier_advance
+      FROM client_net
     `).first(),
+    // Per-folder summary. "remaining" is computed PER CLIENT (only positive nets
+    // summed) so an advance to one client does not cancel another's debt, and an
+    // overpaid client shows 0 remaining. "advance" is the total over-payment in
+    // that folder. total_received / total_pending stay as gross sums for display.
     c.env.DB.prepare(`
+      WITH client_net AS (
+        SELECT cl.id AS client_id, cl.folder_id AS folder_id,
+               COALESCE(SUM(t.amount_received),0) AS received,
+               COALESCE(SUM(t.amount_pending),0) AS pending,
+               COALESCE(cl.opening_balance,0)
+                 + COALESCE(SUM(t.amount_pending),0)
+                 - COALESCE(SUM(t.amount_received),0) AS net
+        FROM clients cl
+        LEFT JOIN transactions t ON t.client_id = cl.id
+        GROUP BY cl.id
+      )
       SELECT f.id, f.name, f.icon, f.color, f.section_type,
              COALESCE(f.ledger_type,'customer') as ledger_type,
-             COUNT(DISTINCT cl.id) as client_count,
-             COALESCE(SUM(t.amount_received),0) as total_received,
-             COALESCE(SUM(t.amount_pending),0) as total_pending
+             (SELECT COUNT(*) FROM clients c2 WHERE c2.folder_id = f.id) as client_count,
+             COALESCE(SUM(cn.received),0) as total_received,
+             COALESCE(SUM(cn.pending),0) as total_pending,
+             COALESCE(SUM(CASE WHEN cn.net > 0 THEN cn.net ELSE 0 END),0) as remaining,
+             COALESCE(SUM(CASE WHEN cn.net < 0 THEN -cn.net ELSE 0 END),0) as advance
       FROM folders f
-      LEFT JOIN clients cl ON cl.folder_id = f.id
-      LEFT JOIN transactions t ON t.client_id = cl.id
+      LEFT JOIN client_net cn ON cn.folder_id = f.id
       GROUP BY f.id ORDER BY f.sort_order
     `).all(),
     c.env.DB.prepare(`
@@ -2824,8 +2854,17 @@ app.get('/', (c) => {
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Two Star CRM</title>
+<!-- PWA -->
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#4f46e5">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Two Star CRM">
+<link rel="icon" type="image/png" href="/icons/favicon.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="preconnect" href="https://cdn.tailwindcss.com">
 <script src="https://cdn.tailwindcss.com"></script>
@@ -2839,7 +2878,67 @@ app.get('/', (c) => {
     <p class="boot-text">Loading Two Star CRM...</p>
   </div>
 </div>
+<!-- PWA install prompt button (hidden until browser allows install) -->
+<button id="pwa-install-btn" type="button" aria-label="App install karein" style="display:none;position:fixed;right:16px;bottom:16px;z-index:9999;background:#4f46e5;color:#fff;border:none;border-radius:9999px;padding:12px 18px;font-size:14px;font-weight:600;box-shadow:0 6px 20px rgba(79,70,229,.45);cursor:pointer;">
+  <i class="fas fa-download" style="margin-right:8px;"></i>App Install Karein
+</button>
 <script src="/static/app.js" defer></script>
+<script>
+(function () {
+  // --- Service worker registration ---
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('/sw.js').catch(function (e) {
+        console.warn('SW registration failed', e);
+      });
+    });
+  }
+
+  // --- Install prompt handling (Android / desktop Chrome / Edge) ---
+  var deferredPrompt = null;
+  var btn = document.getElementById('pwa-install-btn');
+
+  function isStandalone() {
+    return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  }
+
+  window.addEventListener('beforeinstallprompt', function (e) {
+    e.preventDefault();
+    deferredPrompt = e;
+    if (btn && !isStandalone()) btn.style.display = 'inline-flex';
+  });
+
+  if (btn) {
+    btn.addEventListener('click', async function () {
+      if (!deferredPrompt) return;
+      deferredPrompt.prompt();
+      try { await deferredPrompt.userChoice; } catch (e) {}
+      deferredPrompt = null;
+      btn.style.display = 'none';
+    });
+  }
+
+  window.addEventListener('appinstalled', function () {
+    deferredPrompt = null;
+    if (btn) btn.style.display = 'none';
+  });
+
+  // iOS Safari has no beforeinstallprompt — show a one-time hint to use "Add to Home Screen".
+  var isIos = /iphone|ipad|ipod/i.test(window.navigator.userAgent);
+  if (isIos && !isStandalone() && btn) {
+    var seen = false;
+    try { seen = localStorage.getItem('ios-a2hs-hint') === '1'; } catch (e) {}
+    if (!seen) {
+      btn.innerHTML = '<i class="fas fa-arrow-up-from-bracket" style="margin-right:8px;"></i>Share \u2192 Add to Home Screen';
+      btn.style.display = 'inline-flex';
+      btn.addEventListener('click', function () {
+        try { localStorage.setItem('ios-a2hs-hint', '1'); } catch (e) {}
+        btn.style.display = 'none';
+      });
+    }
+  }
+})();
+</script>
 </body>
 </html>`)
 })

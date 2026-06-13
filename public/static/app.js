@@ -689,6 +689,11 @@ const App = {
       const isAuto = t.auto_generated == 1;
       const lockIcon = isAuto ? `<i class="fas fa-link text-blue-400 ml-1" title="Auto-linked from Bill #${this.escapeAttr(t.bill_no || '')}"></i>` : '';
       const isPaid = pen <= 0;
+      // In a supplier ledger, "Received" means WE paid them — show it as "Paid".
+      const supCtx = this.isSupplierContext();
+      const statusRaw = t.status || '';
+      const statusDisplay = (supCtx && statusRaw === 'Received') ? 'Paid' : statusRaw;
+      const statusClass = (statusRaw === 'Paid') ? 'received' : (statusRaw || '').toLowerCase();
       return `
         <tr data-id="${t.id}" class="${isAuto ? 'row-auto' : ''}">
           <td class="text-gray-500">${i + 1}${lockIcon}</td>
@@ -696,7 +701,7 @@ const App = {
           <td class="cell-display">${this.escapeHtml(t.bill_no || '')}</td>
           <td class="amount-pending cell-display">${isPaid ? '<span class="text-gray-400">—</span>' : 'PKR ' + this.fmt(pen)}</td>
           <td class="amount-received cell-display">PKR ${this.fmt(rec)}</td>
-          <td><span class="status-badge status-${(t.status||'').toLowerCase()}">${this.escapeHtml(t.status || '')}</span></td>
+          <td><span class="status-badge status-${statusClass}">${this.escapeHtml(statusDisplay)}</span></td>
           <td class="cell-display">${this.escapeHtml(t.description || '')}</td>
           ${this.state.customColumns.map(col => `<td class="cell-display">${this.escapeHtml(customData[col.key] || '')}</td>`).join('')}
           <td class="text-right amount-running">PKR ${this.fmt(running)}</td>
@@ -738,7 +743,10 @@ const App = {
           <input id="er-rec" type="number" step="any" min="0" class="input-field" value="${parseFloat(t.amount_received) || 0}"></div>
         <div><label class="block text-sm font-medium mb-1">${this.escapeHtml(this.getColLabel('status'))}</label>
           <select id="er-status" class="input-field">
-            ${['Pending','Received','Partial','Overdue','Cancelled'].map(s => `<option value="${s}" ${t.status === s ? 'selected' : ''}>${s}</option>`).join('')}
+            ${(this.isSupplierContext()
+                ? ['Pending','Paid','Partial','Overdue','Cancelled']
+                : ['Pending','Received','Partial','Overdue','Cancelled']
+              ).map(s => `<option value="${s}" ${t.status === s ? 'selected' : ''}>${s}</option>`).join('')}
           </select></div>
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">${this.escapeHtml(this.getColLabel('description'))}</label>
           <textarea id="er-desc" class="input-field" rows="2">${this.escapeHtml(t.description || '')}</textarea></div>
@@ -1194,11 +1202,15 @@ const App = {
             <div class="stat-card" title="Jo customers ne abhi humein dene hain (we are to RECEIVE)">
               <p class="text-xs text-gray-500"><i class="fas fa-hand-holding-dollar mr-1 text-green-500"></i>Customers Se Lena (Receivable)</p>
               <p class="text-xl font-bold mt-1" style="color:#16a34a">PKR ${this.fmt(totals.customer_pending || 0)}</p>
-              <p class="text-xs text-gray-400 mt-1">Customer ki taraf pending</p></div>
+              ${(totals.customer_advance || 0) > 0
+                ? `<p class="text-xs text-blue-500 mt-1"><i class="fas fa-coins mr-1"></i>Advance liya: PKR ${this.fmt(totals.customer_advance)}</p>`
+                : `<p class="text-xs text-gray-400 mt-1">Customer ki taraf pending</p>`}</div>
             <div class="stat-card" title="Jo humein suppliers ko dena hai (we are to PAY)">
               <p class="text-xs text-gray-500"><i class="fas fa-hand-holding-dollar mr-1 text-red-500"></i>Suppliers Ko Dena (Payable)</p>
               <p class="text-xl font-bold mt-1" style="color:#dc2626">PKR ${this.fmt(totals.supplier_pending || 0)}</p>
-              <p class="text-xs text-gray-400 mt-1">Supplier ko pending</p></div>
+              ${(totals.supplier_advance || 0) > 0
+                ? `<p class="text-xs text-blue-500 mt-1"><i class="fas fa-coins mr-1"></i>Advance diya: PKR ${this.fmt(totals.supplier_advance)}</p>`
+                : `<p class="text-xs text-gray-400 mt-1">Supplier ko pending</p>`}</div>
             <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-file-invoice mr-1"></i>Bills</p>
               <p class="text-xl font-bold text-purple-600 mt-1">${billStats?.count || 0}</p>
               <p class="text-xs text-gray-400 mt-1">PKR ${this.fmt(billStats?.total_amount || 0)}</p></div>
@@ -1366,7 +1378,8 @@ const App = {
               </tr></thead><tbody>
                 ${perFolder.map(f => {
                   const isSup = (f.ledger_type === 'supplier');
-                  const rem = parseFloat(f.total_pending) || 0;
+                  const rem = parseFloat(f.remaining) || 0;
+                  const adv = parseFloat(f.advance) || 0;
                   return `
                   <tr class="border-t hover:bg-gray-50 cursor-pointer" onclick="App.openFolder(${f.id})">
                     <td class="p-3"><i class="fas ${f.icon} mr-2" style="color:${f.color}"></i>${this.escapeHtml(f.name)}</td>
@@ -1377,7 +1390,9 @@ const App = {
                     </td>
                     <td class="text-right p-3">${f.client_count}</td>
                     <td class="text-right p-3 amount-received">PKR ${this.fmt(f.total_received)}</td>
-                    <td class="text-right p-3 font-semibold" style="color:${isSup ? '#dc2626' : '#16a34a'}">PKR ${this.fmt(rem)}</td>
+                    <td class="text-right p-3 font-semibold" style="color:${isSup ? '#dc2626' : '#16a34a'}">PKR ${this.fmt(rem)}
+                      ${adv > 0 ? `<br><span class="text-xs font-normal text-blue-500"><i class="fas fa-coins mr-1"></i>Advance ${isSup ? 'diya' : 'liya'}: PKR ${this.fmt(adv)}</span>` : ''}
+                    </td>
                   </tr>`}).join('')}
               </tbody></table></div>
             <p class="text-xs text-gray-500 mt-2"><i class="fas fa-info-circle mr-1"></i>
