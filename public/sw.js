@@ -8,7 +8,7 @@
  *   - When the network comes back, the next request hits the network again and
  *     the cache is refreshed automatically (so data re-syncs from the cloud).
  */
-const CACHE_VERSION = 'two-star-crm-v1';
+const CACHE_VERSION = 'two-star-crm-v2';
 const APP_SHELL = [
   '/',
   '/static/app.js',

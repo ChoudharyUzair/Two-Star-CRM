@@ -445,23 +445,45 @@ body {
   font-family: 'Inter', sans-serif;
   color: #0f172a;
 }
+/* Top branding bar: "Two Star CRM" */
+.invoice-topbar {
+  display: flex; align-items: center; gap: 8px;
+  background: linear-gradient(135deg, var(--primary, #4f46e5), var(--accent, #7c3aed));
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-weight: 800;
+  font-size: 1rem;
+  letter-spacing: 0.5px;
+  margin-bottom: 16px;
+}
+.invoice-topbar i { color: #fde047; }
+
 .invoice-header {
-  display: flex; justify-content: space-between; align-items: flex-start;
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 16px;
   border-bottom: 3px double #0f172a;
-  padding-bottom: 18px;
+  padding-bottom: 16px;
   margin-bottom: 18px;
 }
+.invoice-header .company-block { flex: 1; min-width: 0; }
 .invoice-header .company-block h1 {
-  font-size: 1.75rem; font-weight: 800; margin: 0; color: #0f172a;
+  font-size: 1.5rem; font-weight: 800; margin: 0 0 4px; color: #0f172a;
+  line-height: 1.2;
 }
-.invoice-header .company-block p { margin: 2px 0; font-size: 0.85rem; color: #475569; }
+.invoice-header .company-block p { margin: 2px 0; font-size: 0.82rem; color: #475569; }
 .invoice-header .logo-block img,
 .invoice-header .logo-block .logo-fallback {
-  width: 150px; height: 150px;
-  max-width: 40vw;
+  width: 90px; height: 90px;
+  max-width: 22vw;
   object-fit: contain;
 }
-.invoice-header .logo-block { flex-shrink: 0; margin-left: 12px; }
+.invoice-header .logo-block { flex-shrink: 0; }
+.invoice-header .invoice-label-block { flex-shrink: 0; text-align: right; align-self: flex-start; }
+.invoice-header .invoice-label-block h2 {
+  margin: 0; font-size: 1.3rem; font-weight: 800; color: #94a3b8;
+  letter-spacing: 2px; text-transform: uppercase;
+}
 .invoice-header .logo-fallback {
   display: flex; align-items: center; justify-content: center;
   background: linear-gradient(135deg, var(--primary), var(--accent));
@@ -543,6 +565,14 @@ body {
   color: #64748b;
   font-style: italic;
 }
+.invoice-footer .invoice-crm-url {
+  margin-top: 8px;
+  font-style: normal;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #4f46e5;
+}
+.invoice-footer .invoice-crm-url i { color: #f59e0b; }
 
 /* ===== Print Styles ===== */
 @media print {

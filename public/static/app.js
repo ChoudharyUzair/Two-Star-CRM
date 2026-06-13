@@ -1531,13 +1531,6 @@ const App = {
             <button onclick="App.showRawMaterials()" class="dash-link-btn">View All <i class="fas fa-arrow-right ml-1"></i></button>
           </h2>
 
-          <!-- Supplier Stats (moved here from Manufacturing Summary) -->
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4 text-xs">
-            <div class="bg-orange-50 rounded p-3"><p class="text-gray-500"><i class="fas fa-cubes mr-1"></i>Raw Purchased</p><p class="font-bold text-orange-700 text-lg">PKR ${this.fmt(supplierStats.total_purchased || 0)}</p></div>
-            <div class="bg-green-50 rounded p-3"><p class="text-gray-500"><i class="fas fa-check-circle mr-1"></i>Paid to Suppliers</p><p class="font-bold text-green-700 text-lg">PKR ${this.fmt(supplierStats.total_paid || 0)}</p></div>
-            <div class="bg-red-50 rounded p-3"><p class="text-gray-500"><i class="fas fa-exclamation-circle mr-1"></i>Owed to Suppliers</p><p class="font-bold text-red-700 text-lg">PKR ${this.fmt(supplierStats.total_remaining || 0)}</p></div>
-          </div>
-
           ${(!rawList || rawList.length === 0) ? '<p class="text-gray-500 text-center py-4">No raw materials yet</p>' : `
             <div class="overflow-x-auto"><table class="w-full text-sm">
               <thead class="bg-gray-50"><tr>
@@ -5463,17 +5456,18 @@ const App = {
       const logoHtml = b.logo_url ? `<img src="${this.escapeAttr(b.logo_url)}" alt="logo">` :
         `<div class="logo-fallback">${this.escapeHtml((b.company_name || 'TS').split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase())}</div>`;
       const html = `
-        <div class="invoice-page print-area">
+        <div class="invoice-page print-area" id="bill-print-area">
+          <div class="invoice-topbar"><i class="fas fa-star"></i><span>Two Star CRM</span></div>
           <div class="invoice-header">
+            <div class="logo-block">${logoHtml}</div>
             <div class="company-block">
               <h1>${this.escapeHtml(b.company_name || 'Two Star Industries')}</h1>
               ${b.bill_address ? `<p><i class="fas fa-map-marker-alt mr-1"></i>${this.escapeHtml(b.bill_address)}</p>` : ''}
               ${b.bill_phone ? `<p><i class="fas fa-phone mr-1"></i>${this.escapeHtml(b.bill_phone)}</p>` : ''}
               ${b.bill_email ? `<p><i class="fas fa-envelope mr-1"></i>${this.escapeHtml(b.bill_email)}</p>` : ''}
               ${b.bill_website ? `<p><i class="fas fa-globe mr-1"></i>${this.escapeHtml(b.bill_website)}</p>` : ''}
-              <h2 style="margin-top:10px; font-size: 1.3rem; color: #475569;">INVOICE</h2>
             </div>
-            <div class="logo-block">${logoHtml}</div>
+            <div class="invoice-label-block"><h2>INVOICE</h2></div>
           </div>
           <div class="invoice-meta">
             <div class="box"><label>Bill To</label><span>${this.escapeHtml(bill.customer_name || '')}</span>
@@ -5505,7 +5499,10 @@ const App = {
             <div><span>Balance Due:</span><span style="color: var(--color-pending); font-weight: 700;">PKR ${this.fmt(due)}</span></div>
           </div>
           ${bill.notes ? `<div style="margin-top:16px; padding: 12px; background: #f8fafc; border-radius: 8px; font-size: 0.85rem;"><strong>Notes:</strong> ${this.escapeHtml(bill.notes)}</div>` : ''}
-          <div class="invoice-footer"><p>${this.escapeHtml(b.bill_footer || 'Thank you for your business!')}</p></div>
+          <div class="invoice-footer">
+            <p>${this.escapeHtml(b.bill_footer || 'Thank you for your business!')}</p>
+            <p class="invoice-crm-url"><i class="fas fa-star mr-1"></i>Powered by Two Star CRM &nbsp;&bull;&nbsp; https://two-star-crm.pages.dev</p>
+          </div>
         </div>`;
       const waNum = this._waNumber(bill.customer_phone);
       this.openModal(`
@@ -5513,8 +5510,9 @@ const App = {
           <h2 class="text-xl font-bold"><i class="fas fa-print mr-2"></i>Bill Preview</h2>
           <div class="flex gap-2 flex-wrap">
             <button onclick="window.print()" class="btn btn-primary"><i class="fas fa-print"></i> Print</button>
-            <button onclick="App._shareBillWhatsApp(${bill.id})" class="btn btn-success" title="${waNum ? 'Customer ke WhatsApp par bhejein' : 'Customer ka phone number profile me add karein'}">
-              <i class="fab fa-whatsapp"></i> WhatsApp
+            <button onclick="App.downloadBillPDF(${bill.id})" class="btn btn-secondary"><i class="fas fa-file-pdf"></i> PDF</button>
+            <button onclick="App._shareBillWhatsApp(${bill.id})" class="btn btn-success" title="${waNum ? 'Customer ke WhatsApp par PDF bhejein' : 'PDF banakar share karein'}">
+              <i class="fab fa-whatsapp"></i> WhatsApp (PDF)
             </button>
             <button onclick="App.closeModal()" class="btn btn-secondary">Close</button>
           </div>
@@ -5536,39 +5534,99 @@ const App = {
     return n;
   },
 
+  // Render the on-screen bill print area into a jsPDF document (A4).
+  // Returns { blob, fileName } or null on failure.
+  async _buildBillPDF(bill) {
+    const node = document.getElementById('bill-print-area');
+    if (!node) { this.toast('Pehle bill preview kholें', 'error'); return null; }
+    const jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
+    if (!jsPDFCtor || !window.html2canvas) { this.toast('PDF library load nahi hui — page refresh karein', 'error'); return null; }
+    // Render the DOM node to a high-resolution canvas
+    const canvas = await window.html2canvas(node, { scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false });
+    const imgData = canvas.toDataURL('image/jpeg', 0.95);
+    const pdf = new jsPDFCtor({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    const margin = 8;
+    const imgW = pageW - margin * 2;
+    const imgH = (canvas.height * imgW) / canvas.width;
+    let heightLeft = imgH;
+    let position = margin;
+    pdf.addImage(imgData, 'JPEG', margin, position, imgW, imgH);
+    heightLeft -= (pageH - margin * 2);
+    // Add extra pages for long bills
+    while (heightLeft > 0) {
+      pdf.addPage();
+      position = margin - (imgH - heightLeft);
+      pdf.addImage(imgData, 'JPEG', margin, position, imgW, imgH);
+      heightLeft -= (pageH - margin * 2);
+    }
+    const safeNo = String(bill.bill_no || bill.id).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const fileName = `Bill-${safeNo}.pdf`;
+    return { blob: pdf.output('blob'), fileName };
+  },
+
+  // Download the bill as a PDF file
+  async downloadBillPDF(id) {
+    try {
+      const data = await this.api.get(`/api/bills/${id}`);
+      const bill = data.bill;
+      this.toast('PDF ban raha hai...', 'info');
+      const res = await this._buildBillPDF(bill);
+      if (!res) return;
+      const url = URL.createObjectURL(res.blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = res.fileName;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    } catch (e) { this.toast('PDF download failed', 'error'); }
+  },
+
+  // Share the bill PDF via the device share sheet (WhatsApp etc.).
+  // On mobile this attaches the real PDF file. Falls back to text link on desktop.
   async _shareBillWhatsApp(id) {
     try {
       const data = await this.api.get(`/api/bills/${id}`);
       const bill = data.bill;
-      const items = data.items || [];
       const b = this.state.branding || {};
       const waNum = this._waNumber(bill.customer_phone);
+      this.toast('PDF ban raha hai...', 'info');
+      const res = await this._buildBillPDF(bill);
+      if (!res) return;
+
       const total = parseFloat(bill.total) || 0;
       const paid = parseFloat(bill.paid) || 0;
       const due = total - paid;
-      // Build a clean text summary of the bill
-      const lines = [];
-      lines.push(`*${b.company_name || 'Two Star Industries'}*`);
-      lines.push(`Invoice / Bill`);
-      lines.push(`-----------------------------`);
-      lines.push(`Bill No: ${bill.bill_no}`);
-      lines.push(`Date: ${bill.bill_date}`);
-      lines.push(`Customer: ${bill.customer_name || ''}`);
-      lines.push(`-----------------------------`);
-      items.forEach((it, i) => {
-        lines.push(`${i + 1}. ${it.product_name}  —  ${this.fmt(it.quantity)} x PKR ${this.fmt(it.rate)} = PKR ${this.fmt(it.total)}`);
-      });
-      lines.push(`-----------------------------`);
-      if ((parseFloat(bill.discount) || 0) > 0) lines.push(`Discount: PKR ${this.fmt(bill.discount)}`);
-      lines.push(`*Grand Total: PKR ${this.fmt(total)}*`);
-      lines.push(`Paid: PKR ${this.fmt(paid)}`);
-      lines.push(`Balance Due: PKR ${this.fmt(due)}`);
-      lines.push(`-----------------------------`);
-      lines.push(b.bill_footer || 'Thank you for your business!');
-      const text = encodeURIComponent(lines.join('\n'));
-      const url = waNum ? `https://wa.me/${waNum}?text=${text}` : `https://wa.me/?text=${text}`;
-      if (!waNum) this.toast('Customer ka phone number profile me nahi mila — WhatsApp khol diya, number khud chunein', 'info');
-      window.open(url, '_blank');
+      const caption = [
+        `*${b.company_name || 'Two Star Industries'}* — Invoice`,
+        `Bill No: ${bill.bill_no}`,
+        `Date: ${bill.bill_date}`,
+        `Grand Total: PKR ${this.fmt(total)} | Balance Due: PKR ${this.fmt(due)}`,
+        ``,
+        `Bill PDF attached. — Two Star CRM`
+      ].join('\n');
+
+      // Preferred: native share sheet with the actual PDF file (mobile WhatsApp)
+      const file = new File([res.blob], res.fileName, { type: 'application/pdf' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: res.fileName, text: caption });
+          return;
+        } catch (shareErr) {
+          if (shareErr && shareErr.name === 'AbortError') return; // user cancelled
+        }
+      }
+
+      // Fallback (desktop / unsupported): download the PDF and open WhatsApp with text.
+      const url = URL.createObjectURL(res.blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = res.fileName;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      const text = encodeURIComponent(caption + '\n\n(PDF download ho gaya hai — WhatsApp chat me attach kar dein)');
+      const waUrl = waNum ? `https://wa.me/${waNum}?text=${text}` : `https://wa.me/?text=${text}`;
+      this.toast('Is device par direct PDF attach support nahi — PDF download kar diya, WhatsApp me attach karein', 'info');
+      window.open(waUrl, '_blank');
     } catch (e) { this.toast('WhatsApp share failed', 'error'); }
   },
 

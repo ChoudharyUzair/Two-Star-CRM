@@ -2869,6 +2869,8 @@ app.get('/', (c) => {
 <link rel="preconnect" href="https://cdn.tailwindcss.com">
 <script src="https://cdn.tailwindcss.com"></script>
 <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="bg-gray-100 antialiased">
