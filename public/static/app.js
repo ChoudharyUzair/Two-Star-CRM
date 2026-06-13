@@ -1,4 +1,4 @@
-// ===== Two Star CRM Frontend v2 =====
+// ===== Two Star Essentials Frontend v2 =====
 const App = {
   state: {
     authenticated: false,
@@ -29,7 +29,7 @@ const App = {
     currentCustomSection: null,
     branding: {
       company_name: 'Two Star Industries',
-      crm_name: 'Two Star CRM',
+      crm_name: 'Two Star Essentials',
       logo_url: '',
       primary_color: '#3b82f6',
       accent_color: '#8b5cf6',
@@ -86,7 +86,7 @@ const App = {
       if (bData?.branding) {
         this.state.branding = { ...this.state.branding, ...bData.branding };
         this.applyBrandingTheme();
-        document.title = this.state.branding.crm_name || 'Two Star CRM';
+        document.title = this.state.branding.crm_name || 'Two Star Essentials';
       }
     } catch {}
     try {
@@ -126,7 +126,7 @@ const App = {
                  style="background: linear-gradient(135deg, var(--primary), var(--accent)); overflow: hidden;">
               ${b.logo_url ? `<img src="${this.escapeAttr(b.logo_url)}" style="width:100%;height:100%;object-fit:contain;background:#fff">` : `<i class="fas fa-star text-white text-2xl"></i>`}
             </div>
-            <h1 class="text-2xl font-bold text-gray-800">${this.escapeHtml(b.crm_name || 'Two Star CRM')}</h1>
+            <h1 class="text-2xl font-bold text-gray-800">${this.escapeHtml(b.crm_name || 'Two Star Essentials')}</h1>
             <p class="text-gray-500 text-sm mt-1">${this.escapeHtml(b.company_name || 'Two Star Industries')}</p>
           </div>
           <form id="login-form" class="space-y-4">
@@ -182,7 +182,7 @@ const App = {
             ${b.logo_url ? `<img src="${this.escapeAttr(b.logo_url)}" alt="logo">` : `<i class="fas fa-star"></i>`}
           </div>
           <div class="brand-text">
-            <h1>${this.escapeHtml(b.crm_name || 'Two Star CRM')}</h1>
+            <h1>${this.escapeHtml(b.crm_name || 'Two Star Essentials')}</h1>
             <p>Welcome, ${this.escapeHtml(this.state.username)}</p>
           </div>
           <div class="dropdown" id="user-dropdown">
@@ -5453,7 +5453,7 @@ const App = {
       const total = parseFloat(bill.total) || 0;
       const paid = parseFloat(bill.paid) || 0;
       const due = total - paid;
-      const logoHtml = b.logo_url ? `<img src="${this.escapeAttr(b.logo_url)}" alt="logo" style="width:100px;height:100px;max-width:100px;min-width:80px;object-fit:contain;display:block;">` :
+      const logoHtml = b.logo_url ? `<img src="${this.escapeAttr(b.logo_url)}" alt="logo" style="width:300px;height:150px;max-width:300px;min-width:120px;object-fit:contain;display:block;">` :
         `<div class="logo-fallback">${this.escapeHtml((b.company_name || 'TS').split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase())}</div>`;
       const html = `
         <div class="invoice-page print-area" id="bill-print-area">
@@ -5784,7 +5784,7 @@ const App = {
 
   _resetBranding() {
     const def = {
-      company_name: 'Two Star Industries', crm_name: 'Two Star CRM', logo_url: '',
+      company_name: 'Two Star Industries', crm_name: 'Two Star Essentials', logo_url: '',
       primary_color: '#3b82f6', accent_color: '#8b5cf6',
       received_color: '#ef4444', pending_color: '#3b82f6', running_color: '#10b981',
       bill_address: '', bill_phone: '', bill_footer: 'Thank you for your business!'
@@ -5797,7 +5797,7 @@ const App = {
   async _saveBranding() {
     const b = {
       company_name: document.getElementById('br-company').value || 'Two Star Industries',
-      crm_name: document.getElementById('br-crm').value || 'Two Star CRM',
+      crm_name: document.getElementById('br-crm').value || 'Two Star Essentials',
       logo_url: document.getElementById('br-logo').value || '',
       primary_color: document.getElementById('br-primary').value,
       accent_color: document.getElementById('br-accent').value,

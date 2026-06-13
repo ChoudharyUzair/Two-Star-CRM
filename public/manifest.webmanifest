@@ -1,7 +1,7 @@
 {
-  "name": "Two Star CRM",
+  "name": "Two Star Essentials",
   "short_name": "Two Star",
-  "description": "Two Star CRM — customers, suppliers, bills, inventory aur manufacturing ek hi jagah.",
+  "description": "Two Star Essentials — customers, suppliers, bills, inventory aur manufacturing ek hi jagah.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

@@ -1,4 +1,4 @@
-/* ===== Two Star CRM Custom Styles ===== */
+/* ===== Two Star Essentials Custom Styles ===== */
 :root {
   --primary: #3b82f6;
   --accent: #8b5cf6;
@@ -445,19 +445,7 @@ body {
   font-family: 'Inter', sans-serif;
   color: #0f172a;
 }
-/* Top branding bar: "Two Star CRM" */
-.invoice-topbar {
-  display: flex; align-items: center; gap: 8px;
-  background: linear-gradient(135deg, var(--primary, #4f46e5), var(--accent, #7c3aed));
-  color: #fff;
-  padding: 8px 16px;
-  border-radius: 8px;
-  font-weight: 800;
-  font-size: 1rem;
-  letter-spacing: 0.5px;
-  margin-bottom: 16px;
-}
-.invoice-topbar i { color: #fde047; }
+/* invoice-topbar removed */
 
 .invoice-header {
   display: flex; justify-content: space-between; align-items: center;
@@ -474,9 +462,9 @@ body {
 .invoice-header .company-block p { margin: 2px 0; font-size: 0.82rem; color: #475569; }
 .invoice-header .logo-block img,
 .invoice-header .logo-block .logo-fallback {
-  width: 100px; height: 100px;
-  max-width: 100px;
-  min-width: 80px;
+  width: 300px; height: 150px;
+  max-width: 300px;
+  min-width: 120px;
   object-fit: contain;
   display: block;
 }
@@ -571,14 +559,7 @@ body {
   color: #64748b;
   font-style: italic;
 }
-.invoice-footer .invoice-crm-url {
-  margin-top: 8px;
-  font-style: normal;
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: #4f46e5;
-}
-.invoice-footer .invoice-crm-url i { color: #f59e0b; }
+/* invoice-crm-url removed */
 
 /* ===== Print Styles ===== */
 @media print {

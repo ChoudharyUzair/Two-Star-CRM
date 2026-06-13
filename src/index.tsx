@@ -100,7 +100,7 @@ app.get('/api/branding', async (c) => {
   let row = await c.env.DB.prepare('SELECT * FROM branding WHERE id = 1').first()
   if (!row) {
     await c.env.DB.prepare(
-      "INSERT INTO branding (id, company_name, crm_name) VALUES (1, 'Two Star Industries', 'Two Star CRM')"
+      "INSERT INTO branding (id, company_name, crm_name) VALUES (1, 'Two Star Industries', 'Two Star Essentials')"
     ).run()
     row = await c.env.DB.prepare('SELECT * FROM branding WHERE id = 1').first()
   }
@@ -120,7 +120,7 @@ app.put('/api/branding', requireAuth, async (c) => {
     WHERE id = 1
   `).bind(
     b.company_name || 'Two Star Industries',
-    b.crm_name || 'Two Star CRM',
+    b.crm_name || 'Two Star Essentials',
     b.logo_url || '',
     b.primary_color || '#3b82f6',
     b.accent_color || '#8b5cf6',
@@ -2855,14 +2855,14 @@ app.get('/', (c) => {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Two Star CRM</title>
+<title>Two Star Essentials</title>
 <!-- PWA -->
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#4f46e5">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Two Star CRM">
+<meta name="apple-mobile-web-app-title" content="Two Star Essentials">
 <link rel="icon" type="image/png" href="/icons/favicon.png">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
@@ -2877,7 +2877,7 @@ app.get('/', (c) => {
 <div id="app">
   <div class="boot-loader">
     <div class="boot-spinner"></div>
-    <p class="boot-text">Loading Two Star CRM...</p>
+    <p class="boot-text">Loading Two Star Essentials...</p>
   </div>
 </div>
 <!-- PWA install prompt button (hidden until browser allows install) -->

@@ -1,4 +1,4 @@
-/* Two Star CRM — Service Worker
+/* Two Star Essentials — Service Worker
  * Strategy:
  *   - Navigations & static assets: network-first, fall back to cache (so the
  *     app shell opens even when the internet is down).
@@ -8,7 +8,7 @@
  *   - When the network comes back, the next request hits the network again and
  *     the cache is refreshed automatically (so data re-syncs from the cloud).
  */
-const CACHE_VERSION = 'two-star-crm-v2';
+const CACHE_VERSION = 'two-star-essentials-v3';
 const APP_SHELL = [
   '/',
   '/static/app.js',
