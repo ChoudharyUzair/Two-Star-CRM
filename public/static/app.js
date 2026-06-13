@@ -5457,11 +5457,11 @@ const App = {
         `<div class="logo-fallback">${this.escapeHtml((b.company_name || 'TS').split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase())}</div>`;
       const html = `
         <div class="invoice-page print-area" id="bill-print-area">
-          <div class="invoice-topbar"><i class="fas fa-star"></i><span>Two Star CRM</span></div>
+
           <div class="invoice-header">
             <div class="logo-block">${logoHtml}</div>
             <div class="company-block">
-              <h1>${this.escapeHtml(b.company_name || 'Two Star Industries')}</h1>
+              ${!b.logo_url ? `<h1>${this.escapeHtml(b.company_name || 'Two Star Industries')}</h1>` : ''}
               ${b.bill_address ? `<p><i class="fas fa-map-marker-alt mr-1"></i>${this.escapeHtml(b.bill_address)}</p>` : ''}
               ${b.bill_phone ? `<p><i class="fas fa-phone mr-1"></i>${this.escapeHtml(b.bill_phone)}</p>` : ''}
               ${b.bill_email ? `<p><i class="fas fa-envelope mr-1"></i>${this.escapeHtml(b.bill_email)}</p>` : ''}
@@ -5501,7 +5501,6 @@ const App = {
           ${bill.notes ? `<div style="margin-top:16px; padding: 12px; background: #f8fafc; border-radius: 8px; font-size: 0.85rem;"><strong>Notes:</strong> ${this.escapeHtml(bill.notes)}</div>` : ''}
           <div class="invoice-footer">
             <p>${this.escapeHtml(b.bill_footer || 'Thank you for your business!')}</p>
-            <p class="invoice-crm-url"><i class="fas fa-star mr-1"></i>Powered by Two Star CRM &nbsp;&bull;&nbsp; https://two-star-crm.pages.dev</p>
           </div>
         </div>`;
       const waNum = this._waNumber(bill.customer_phone);
