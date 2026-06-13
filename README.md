@@ -305,7 +305,7 @@ Calendar widget redesigned to be ~30% smaller (cells, gaps, fonts, paddings) whi
 
 ## URLs
 - **Production**: https://two-star-crm.pages.dev
-- **Latest Deployment**: https://70d92fbf.two-star-crm.pages.dev
+- **Latest Deployment**: https://785ddbc3.two-star-crm.pages.dev
 - **GitHub**: https://github.com/ChoudharyUzair/Two-Star-CRM
 
 ## API — Functional Entry Points
