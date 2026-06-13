@@ -478,6 +478,60 @@ app.delete('/api/inventory/:id', requireAuth, async (c) => {
   return c.json({ success: true })
 })
 
+// ============ CUSTOMER PRODUCT RATES (#3 per-customer selling price) ============
+// Manufacturing rate is same for everyone, but the SELLING rate can differ per
+// customer. Here the user saves "for THIS customer, THIS product is sold at THIS
+// rate". When a bill is made for that customer, the saved rate auto-fills.
+
+// All special rates for one customer (joined with inventory product info)
+app.get('/api/clients/:id/product-rates', requireAuth, async (c) => {
+  const clientId = c.req.param('id')
+  const rows = await c.env.DB.prepare(`
+    SELECT cpr.id, cpr.inventory_id, cpr.rate,
+           inv.name as product_name, inv.unit as product_unit,
+           inv.rate as default_rate, inv.sku
+    FROM customer_product_rates cpr
+    LEFT JOIN inventory inv ON inv.id = cpr.inventory_id
+    WHERE cpr.client_id = ?
+    ORDER BY inv.name ASC
+  `).bind(clientId).all()
+  return c.json({ rates: rows.results })
+})
+
+// Save (upsert) a special rate for a customer+product
+app.post('/api/clients/:id/product-rates', requireAuth, async (c) => {
+  const clientId = parseInt(c.req.param('id'))
+  const { inventory_id, rate } = await c.req.json()
+  if (!inventory_id) return c.json({ error: 'Product required' }, 400)
+  const r = parseFloat(rate) || 0
+  await c.env.DB.prepare(`
+    INSERT INTO customer_product_rates (client_id, inventory_id, rate)
+    VALUES (?, ?, ?)
+    ON CONFLICT(client_id, inventory_id)
+    DO UPDATE SET rate = excluded.rate, updated_at = CURRENT_TIMESTAMP
+  `).bind(clientId, inventory_id, r).run()
+  return c.json({ success: true })
+})
+
+// Delete a special rate (revert to default)
+app.delete('/api/clients/:id/product-rates/:rid', requireAuth, async (c) => {
+  const clientId = c.req.param('id')
+  const rid = c.req.param('rid')
+  await c.env.DB.prepare('DELETE FROM customer_product_rates WHERE id = ? AND client_id = ?').bind(rid, clientId).run()
+  return c.json({ success: true })
+})
+
+// Lookup a single customer's saved rate map { inventory_id: rate } — used by the bill builder
+app.get('/api/clients/:id/rate-map', requireAuth, async (c) => {
+  const clientId = c.req.param('id')
+  const rows = await c.env.DB.prepare(
+    'SELECT inventory_id, rate FROM customer_product_rates WHERE client_id = ?'
+  ).bind(clientId).all()
+  const map: Record<string, number> = {}
+  for (const r of (rows.results as any[])) map[String(r.inventory_id)] = parseFloat(r.rate) || 0
+  return c.json({ rateMap: map })
+})
+
 // ============ Helper: sync bill ↔ ledger ============
 async function syncBillLedger(env: any, billId: number, b: any) {
   // After bill saved: create or update a transaction row in client's ledger
@@ -1567,13 +1621,26 @@ app.get('/api/components', requireAuth, async (c) => {
      LEFT JOIN raw_materials rm ON rm.id = ci.raw_material_id
      ORDER BY ci.component_id, ci.sort_order, ci.id`
   ).all()
+  // #4: child-component lines (component made from other components)
+  const subs = await c.env.DB.prepare(
+    `SELECT csc.*, ch.name as child_name, ch.unit as child_unit, ch.quantity as child_quantity, ch.default_rate as child_rate
+     FROM component_subcomponents csc
+     LEFT JOIN components ch ON ch.id = csc.child_component_id
+     ORDER BY csc.component_id, csc.sort_order, csc.id`
+  ).all()
   const ingBy: Record<number, any[]> = {}
   for (const ing of (ings.results as any[])) {
     if (!ingBy[ing.component_id]) ingBy[ing.component_id] = []
     ingBy[ing.component_id].push(ing)
   }
+  const subBy: Record<number, any[]> = {}
+  for (const s of (subs.results as any[])) {
+    if (!subBy[s.component_id]) subBy[s.component_id] = []
+    subBy[s.component_id].push(s)
+  }
   const list = (comps.results as any[]).map(comp => {
     const list2 = ingBy[comp.id] || []
+    const subList = subBy[comp.id] || []
     let buildable: number | null = null
     let material_cost = 0
     for (const ing of list2) {
@@ -1586,9 +1653,21 @@ app.get('/api/components', requireAuth, async (c) => {
       const can = have / need
       if (buildable === null || can < buildable) buildable = can
     }
+    // child components also limit buildable + add to cost
+    for (const s of subList) {
+      const need = parseFloat(s.quantity_required) || 0
+      const have = parseFloat(s.child_quantity) || 0
+      const rate = parseFloat(s.child_rate) || 0
+      material_cost += need * rate
+      if (need <= 0) continue
+      if (s.child_component_id == null) { buildable = 0; continue }
+      const can = have / need
+      if (buildable === null || can < buildable) buildable = can
+    }
     return {
       ...comp,
       ingredients: list2,
+      subcomponents: subList,
       buildable_units: buildable === null ? null : Math.floor(buildable),
       material_cost_per_unit: material_cost
     }
@@ -1606,11 +1685,17 @@ app.get('/api/components/:id', requireAuth, async (c) => {
      LEFT JOIN raw_materials rm ON rm.id = ci.raw_material_id
      WHERE ci.component_id = ? ORDER BY ci.sort_order ASC, ci.id ASC`
   ).bind(id).all()
+  const subs = await c.env.DB.prepare(
+    `SELECT csc.*, ch.name as child_name, ch.unit as child_unit, ch.quantity as child_quantity, ch.default_rate as child_rate
+     FROM component_subcomponents csc
+     LEFT JOIN components ch ON ch.id = csc.child_component_id
+     WHERE csc.component_id = ? ORDER BY csc.sort_order ASC, csc.id ASC`
+  ).bind(id).all()
   // recent production for this component
   const prod = await c.env.DB.prepare(
     'SELECT * FROM production_logs WHERE component_id = ? ORDER BY entry_date DESC, id DESC LIMIT 50'
   ).bind(id).all()
-  return c.json({ component: comp, ingredients: ings.results, production: prod.results })
+  return c.json({ component: comp, ingredients: ings.results, subcomponents: subs.results, production: prod.results })
 })
 
 async function syncComponentIngredients(env: any, componentId: number, ingredients: any[]) {
@@ -1630,20 +1715,40 @@ async function syncComponentIngredients(env: any, componentId: number, ingredien
   }
 }
 
+// #4: Sync the CHILD-COMPONENT lines (a component made from other components)
+async function syncComponentSubcomponents(env: any, componentId: number, subs: any[]) {
+  await env.DB.prepare('DELETE FROM component_subcomponents WHERE component_id = ?').bind(componentId).run()
+  if (!Array.isArray(subs)) return
+  for (let i = 0; i < subs.length; i++) {
+    const s = subs[i]
+    if (!s || !s.child_component_id) continue
+    const childId = parseInt(s.child_component_id)
+    // Guard: a component cannot be its own child (no self-reference / direct loop)
+    if (childId === componentId) continue
+    const qty = parseFloat(s.quantity_required) || 0
+    if (qty <= 0) continue
+    await env.DB.prepare(
+      `INSERT INTO component_subcomponents (component_id, child_component_id, quantity_required, sort_order)
+       VALUES (?, ?, ?, ?)`
+    ).bind(componentId, childId, qty, i).run()
+  }
+}
+
 app.post('/api/components', requireAuth, async (c) => {
-  const { name, unit, category, notes, default_rate, quantity, ingredients } = await c.req.json()
+  const { name, unit, category, notes, default_rate, quantity, ingredients, subcomponents } = await c.req.json()
   if (!name) return c.json({ error: 'Name required' }, 400)
   const result = await c.env.DB.prepare(
     `INSERT INTO components (name, unit, category, notes, default_rate, quantity) VALUES (?, ?, ?, ?, ?, ?)`
   ).bind(name, unit || 'pcs', category || '', notes || '', parseFloat(default_rate) || 0, parseFloat(quantity) || 0).run()
   const cid = result.meta.last_row_id as number
   await syncComponentIngredients(c.env, cid, ingredients || [])
+  await syncComponentSubcomponents(c.env, cid, subcomponents || [])
   return c.json({ id: cid })
 })
 
 app.put('/api/components/:id', requireAuth, async (c) => {
   const id = parseInt(c.req.param('id'))
-  const { name, unit, category, notes, default_rate, quantity, ingredients } = await c.req.json()
+  const { name, unit, category, notes, default_rate, quantity, ingredients, subcomponents } = await c.req.json()
   if (!name) return c.json({ error: 'Name required' }, 400)
   // quantity can be edited manually (correction). If undefined, keep existing.
   if (quantity === undefined || quantity === null || quantity === '') {
@@ -1656,6 +1761,7 @@ app.put('/api/components/:id', requireAuth, async (c) => {
     ).bind(name, unit || 'pcs', category || '', notes || '', parseFloat(default_rate) || 0, parseFloat(quantity) || 0, id).run()
   }
   await syncComponentIngredients(c.env, id, ingredients || [])
+  await syncComponentSubcomponents(c.env, id, subcomponents || [])
   return c.json({ success: true })
 })
 
@@ -1717,9 +1823,17 @@ app.post('/api/production', requireAuth, async (c) => {
   ).bind(component_id).all()
   const ings = ingsRes.results as any[]
 
-  // ---- Issue #1 fix: block production if raw material is insufficient ----
+  // #4: child-component recipe (other components consumed to make this one)
+  const subsRes = await c.env.DB.prepare(
+    `SELECT csc.*, ch.name as child_name, ch.quantity as child_quantity
+     FROM component_subcomponents csc LEFT JOIN components ch ON ch.id = csc.child_component_id
+     WHERE csc.component_id = ?`
+  ).bind(component_id).all()
+  const subs = subsRes.results as any[]
+
+  // ---- block production if raw material OR child components are insufficient ----
   // Only enforce when auto-deduct is ON AND the component has a recipe.
-  if (doDeduct && ings.length > 0) {
+  if (doDeduct && (ings.length > 0 || subs.length > 0)) {
     const shortages: string[] = []
     for (const ing of ings) {
       const perUnit = parseFloat(ing.quantity_required) || 0
@@ -1730,9 +1844,18 @@ app.post('/api/production', requireAuth, async (c) => {
         shortages.push(`${ing.raw_name || 'Raw material'}: need ${(+need.toFixed(3))}, have ${(+available.toFixed(3))}`)
       }
     }
+    for (const s of subs) {
+      const perUnit = parseFloat(s.quantity_required) || 0
+      if (perUnit <= 0) continue
+      const need = perUnit * qty
+      const available = parseFloat(s.child_quantity) || 0
+      if (need > available + 1e-9) {
+        shortages.push(`${s.child_name || 'Component'} (component): need ${(+need.toFixed(3))}, have ${(+available.toFixed(3))}`)
+      }
+    }
     if (shortages.length > 0) {
       return c.json({
-        error: 'Not enough raw material to produce this quantity.',
+        error: 'Not enough raw material / components to produce this quantity.',
         shortages
       }, 400)
     }
@@ -1763,6 +1886,21 @@ app.post('/api/production', requireAuth, async (c) => {
       await c.env.DB.prepare(
         `INSERT INTO production_raw_usage (production_log_id, raw_material_id, raw_name, qty_used, scrap_qty) VALUES (?, ?, ?, ?, ?)`
       ).bind(logId, ing.raw_material_id, ing.raw_name || '', need, 0).run()
+    }
+  }
+
+  // #4: Deduct CHILD COMPONENT stock used to assemble this component
+  if (doDeduct && subs.length > 0) {
+    for (const s of subs) {
+      const need = (parseFloat(s.quantity_required) || 0) * qty
+      if (need <= 0 || !s.child_component_id) continue
+      await c.env.DB.prepare(
+        `UPDATE components SET quantity = MAX(0, quantity - ?), updated_at=CURRENT_TIMESTAMP WHERE id = ?`
+      ).bind(need, s.child_component_id).run()
+      // record usage detail so it can be reversed on delete
+      await c.env.DB.prepare(
+        `INSERT INTO production_raw_usage (production_log_id, raw_material_id, child_component_id, raw_name, qty_used, scrap_qty) VALUES (?, NULL, ?, ?, ?, ?)`
+      ).bind(logId, s.child_component_id, (s.child_name || ''), need, 0).run()
     }
   }
 
@@ -1847,14 +1985,20 @@ app.delete('/api/production/:id', requireAuth, async (c) => {
       'UPDATE components SET quantity = MAX(0, quantity - ?), updated_at=CURRENT_TIMESTAMP WHERE id = ?'
     ).bind(parseFloat(old.quantity) || 0, old.component_id).run()
   }
-  // restore deducted raw materials
+  // restore deducted raw materials AND child components
   if (old.deducted_raw) {
     const usage = await c.env.DB.prepare('SELECT * FROM production_raw_usage WHERE production_log_id = ?').bind(id).all()
     for (const u of (usage.results as any[])) {
-      if (!u.raw_material_id) continue
-      await c.env.DB.prepare(
-        'UPDATE raw_materials SET quantity = quantity + ?, total_value = (quantity + ?) * rate, updated_at=CURRENT_TIMESTAMP WHERE id = ?'
-      ).bind(parseFloat(u.qty_used) || 0, parseFloat(u.qty_used) || 0, u.raw_material_id).run()
+      if (u.raw_material_id) {
+        await c.env.DB.prepare(
+          'UPDATE raw_materials SET quantity = quantity + ?, total_value = (quantity + ?) * rate, updated_at=CURRENT_TIMESTAMP WHERE id = ?'
+        ).bind(parseFloat(u.qty_used) || 0, parseFloat(u.qty_used) || 0, u.raw_material_id).run()
+      } else if (u.child_component_id) {
+        // #4: restore child component stock that was consumed
+        await c.env.DB.prepare(
+          'UPDATE components SET quantity = quantity + ?, updated_at=CURRENT_TIMESTAMP WHERE id = ?'
+        ).bind(parseFloat(u.qty_used) || 0, u.child_component_id).run()
+      }
     }
   }
   // remove linked employee transaction
@@ -2278,14 +2422,29 @@ app.get('/api/dashboard', requireAuth, async (c) => {
          supplierStats, mfgProducts, mfgIngredients, builtSoldStats,
          salesTodayStats, salesMonthStats, salesAllTimeStats,
          salesTodayProducts, salesMonthProducts, salesAllTimeProducts,
-         rawCostStats, salaryPaidStats] = await Promise.all([
+         rawCostStats, salaryPaidStats, compProdStats, compProdList] = await Promise.all([
     c.env.DB.prepare(`
-      SELECT COALESCE(SUM(amount_received),0) as total_received,
-             COALESCE(SUM(amount_pending),0) as total_pending,
-             COUNT(*) as total_transactions FROM transactions
+      SELECT
+        COALESCE(SUM(t.amount_received),0) as total_received,
+        COALESCE(SUM(t.amount_pending),0) as total_pending,
+        COUNT(*) as total_transactions,
+        -- Customer side: money customers still owe US (we are to RECEIVE)
+        COALESCE(SUM(CASE WHEN COALESCE(f.ledger_type,'customer') = 'customer'
+                          THEN t.amount_pending ELSE 0 END),0) as customer_pending,
+        COALESCE(SUM(CASE WHEN COALESCE(f.ledger_type,'customer') = 'customer'
+                          THEN t.amount_received ELSE 0 END),0) as customer_received,
+        -- Supplier side: money WE still owe suppliers (we are to PAY)
+        COALESCE(SUM(CASE WHEN COALESCE(f.ledger_type,'customer') = 'supplier'
+                          THEN t.amount_pending ELSE 0 END),0) as supplier_pending,
+        COALESCE(SUM(CASE WHEN COALESCE(f.ledger_type,'customer') = 'supplier'
+                          THEN t.amount_received ELSE 0 END),0) as supplier_received
+      FROM transactions t
+      LEFT JOIN clients cl ON cl.id = t.client_id
+      LEFT JOIN folders f ON f.id = cl.folder_id
     `).first(),
     c.env.DB.prepare(`
       SELECT f.id, f.name, f.icon, f.color, f.section_type,
+             COALESCE(f.ledger_type,'customer') as ledger_type,
              COUNT(DISTINCT cl.id) as client_count,
              COALESCE(SUM(t.amount_received),0) as total_received,
              COALESCE(SUM(t.amount_pending),0) as total_pending
@@ -2474,7 +2633,27 @@ app.get('/api/dashboard', requireAuth, async (c) => {
           END as paidval
         FROM employee_transactions
       )
-    `).first()
+    `).first(),
+    // #5: Components Production summary — overall totals (pieces produced today / month / all + payout)
+    c.env.DB.prepare(`
+      SELECT
+        COALESCE(SUM(quantity),0) as pieces_all,
+        COALESCE(SUM(payout),0) as payout_all,
+        COALESCE(SUM(CASE WHEN entry_date = date('now') THEN quantity ELSE 0 END),0) as pieces_today,
+        COALESCE(SUM(CASE WHEN entry_date = date('now') THEN payout ELSE 0 END),0) as payout_today,
+        COALESCE(SUM(CASE WHEN entry_date >= date('now','start of month') THEN quantity ELSE 0 END),0) as pieces_month,
+        COALESCE(SUM(CASE WHEN entry_date >= date('now','start of month') THEN payout ELSE 0 END),0) as payout_month,
+        COUNT(*) as log_count
+      FROM production_logs
+    `).first(),
+    // #5: Components list with current stock + total produced (all time)
+    c.env.DB.prepare(`
+      SELECT cmp.id, cmp.name, cmp.unit, cmp.quantity, cmp.default_rate,
+        (SELECT COALESCE(SUM(pl.quantity),0) FROM production_logs pl WHERE pl.component_id = cmp.id) as produced_all,
+        (SELECT COALESCE(SUM(pl.quantity),0) FROM production_logs pl WHERE pl.component_id = cmp.id AND pl.entry_date >= date('now','start of month')) as produced_month
+      FROM components cmp
+      ORDER BY cmp.name ASC
+    `).all()
   ])
 
   return c.json({
@@ -2510,7 +2689,9 @@ app.get('/api/dashboard', requireAuth, async (c) => {
     salesMonthProducts: salesMonthProducts.results,
     salesAllTimeProducts: salesAllTimeProducts.results,
     rawCostStats,
-    salaryPaidStats
+    salaryPaidStats,
+    compProdStats,
+    compProdList: compProdList.results
   })
 })
 

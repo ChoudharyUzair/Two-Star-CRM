@@ -124,7 +124,7 @@ const App = {
           <div class="text-center mb-6">
             <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-4"
                  style="background: linear-gradient(135deg, var(--primary), var(--accent)); overflow: hidden;">
-              ${b.logo_url ? `<img src="${this.escapeAttr(b.logo_url)}" style="width:100%;height:100%;object-fit:cover">` : `<i class="fas fa-star text-white text-2xl"></i>`}
+              ${b.logo_url ? `<img src="${this.escapeAttr(b.logo_url)}" style="width:100%;height:100%;object-fit:contain;background:#fff">` : `<i class="fas fa-star text-white text-2xl"></i>`}
             </div>
             <h1 class="text-2xl font-bold text-gray-800">${this.escapeHtml(b.crm_name || 'Two Star CRM')}</h1>
             <p class="text-gray-500 text-sm mt-1">${this.escapeHtml(b.company_name || 'Two Star Industries')}</p>
@@ -498,6 +498,11 @@ const App = {
   },
 
   showAddClient(folderId) {
+    const fdr = this.state.folders.find(f => f.id === folderId);
+    const isSup = fdr ? (fdr.ledger_type === 'supplier' || /supplier/i.test(fdr.name) || fdr.section_type === 'suppliers') : false;
+    const obHint = isSup
+      ? 'Is supplier ko shuru me aapne jitna <b>DENA</b> tha (purana baqaya).'
+      : 'Is customer se shuru me aapne jitna <b>LENA</b> tha (purana udhaar).';
     this.openModal(`
       <h2 class="text-xl font-bold mb-4"><i class="fas fa-user-plus text-blue-500 mr-2"></i>Add New Entry</h2>
       <form id="client-form" class="space-y-3">
@@ -505,7 +510,8 @@ const App = {
         <div><label class="block text-sm font-medium mb-1">Phone</label><input id="c-phone" type="text" class="input-field"></div>
         <div><label class="block text-sm font-medium mb-1">Email</label><input id="c-email" type="email" class="input-field"></div>
         <div><label class="block text-sm font-medium mb-1">Address</label><input id="c-address" type="text" class="input-field"></div>
-        <div><label class="block text-sm font-medium mb-1">Opening Balance</label><input id="c-balance" type="number" step="any" value="0" class="input-field"></div>
+        <div><label class="block text-sm font-medium mb-1">Opening Balance</label><input id="c-balance" type="number" step="any" value="0" class="input-field">
+          <p class="text-xs text-gray-500 mt-1"><i class="fas fa-info-circle mr-1"></i>${obHint}</p></div>
         <div><label class="block text-sm font-medium mb-1">Notes</label><textarea id="c-notes" class="input-field" rows="2"></textarea></div>
         <div class="flex gap-2 justify-end pt-2">
           <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
@@ -613,6 +619,7 @@ const App = {
           </div>
         </div>
         <div class="flex gap-2 flex-wrap">
+          ${isSupplier ? '' : `<button onclick="App.showCustomerRates()" class="btn btn-primary btn-sm" title="Is customer ke liye products ke special selling rate set karein"><i class="fas fa-tags"></i> Product Rates</button>`}
           <button onclick="App.showEditClient()" class="btn btn-secondary btn-sm"><i class="fas fa-edit"></i> Edit</button>
           <button onclick="App.showCustomColumns()" class="btn btn-secondary btn-sm"><i class="fas fa-columns"></i> Columns</button>
           <button onclick="App.deleteClient()" class="btn btn-danger btn-sm"><i class="fas fa-trash"></i></button>
@@ -621,8 +628,10 @@ const App = {
 
       <div class="p-4 md:p-6 space-y-5">
         <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div class="stat-card"><p class="text-xs text-gray-500">Opening Balance</p>
-            <p class="text-xl font-bold text-gray-800 mt-1">PKR ${this.fmt(opening)}</p></div>
+          <div class="stat-card" title="${isSupplier ? 'Shuru me aapne is supplier ko jitna dena tha' : 'Shuru me is customer se aapne jitna lena tha'}">
+            <p class="text-xs text-gray-500">Opening Balance</p>
+            <p class="text-xl font-bold text-gray-800 mt-1">PKR ${this.fmt(opening)}</p>
+            <p class="text-xs mt-1" style="color:${isSupplier ? '#dc2626' : '#16a34a'}">${isSupplier ? 'Supplier ko dena tha' : 'Customer se lena tha'}</p></div>
           <div class="stat-card"><p class="text-xs text-gray-500">${this.escapeHtml(this.getColLabel('amount_received'))}</p>
             <p class="text-xl font-bold mt-1 amount-received">PKR ${this.fmt(totalReceived)}</p></div>
           <div class="balance-box"><p class="text-xs opacity-90">${isSupplier ? 'Outstanding Balance' : 'Remaining Balance'}</p>
@@ -851,6 +860,10 @@ const App = {
 
   showEditClient() {
     const c = this.state.currentClient;
+    const isSup = this.isSupplierContext();
+    const obHint = isSup
+      ? 'Is supplier ko shuru me aapne jitna <b>DENA</b> tha (purana baqaya).'
+      : 'Is customer se shuru me aapne jitna <b>LENA</b> tha (purana udhaar).';
     this.openModal(`
       <h2 class="text-xl font-bold mb-4"><i class="fas fa-user-edit text-blue-500 mr-2"></i>Edit Entry</h2>
       <form id="client-edit-form" class="space-y-3">
@@ -858,7 +871,8 @@ const App = {
         <div><label class="block text-sm font-medium mb-1">Phone</label><input id="c-phone" type="text" class="input-field" value="${this.escapeAttr(c.phone || '')}"></div>
         <div><label class="block text-sm font-medium mb-1">Email</label><input id="c-email" type="email" class="input-field" value="${this.escapeAttr(c.email || '')}"></div>
         <div><label class="block text-sm font-medium mb-1">Address</label><input id="c-address" type="text" class="input-field" value="${this.escapeAttr(c.address || '')}"></div>
-        <div><label class="block text-sm font-medium mb-1">Opening Balance</label><input id="c-balance" type="number" step="any" class="input-field" value="${c.opening_balance || 0}"></div>
+        <div><label class="block text-sm font-medium mb-1">Opening Balance</label><input id="c-balance" type="number" step="any" class="input-field" value="${c.opening_balance || 0}">
+          <p class="text-xs text-gray-500 mt-1"><i class="fas fa-info-circle mr-1"></i>${obHint}</p></div>
         <div><label class="block text-sm font-medium mb-1">Notes</label><textarea id="c-notes" class="input-field" rows="2">${this.escapeHtml(c.notes || '')}</textarea></div>
         <div class="flex gap-2 justify-end pt-2">
           <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
@@ -881,6 +895,101 @@ const App = {
         this.toast('Updated', 'success');
       } catch (err) { this.toast('Failed', 'error'); }
     });
+  },
+
+  // ===== #3: Per-customer product selling rates =====
+  async showCustomerRates() {
+    const c = this.state.currentClient;
+    if (!c) return;
+    // Ensure inventory is loaded for the product picker
+    if (!this.state.inventory || this.state.inventory.length === 0) {
+      try { const inv = await this.api.get('/api/inventory'); this.state.inventory = inv.inventory || inv.items || []; } catch (e) {}
+    }
+    let rates = [];
+    try { const r = await this.api.get(`/api/clients/${c.id}/product-rates`); rates = r.rates || []; } catch (e) {}
+    this._custRates = rates;
+    const products = this.state.inventory || [];
+    const renderRows = () => (this._custRates.length === 0)
+      ? '<tr><td colspan="4" class="text-center text-gray-500 py-4">Abhi koi special rate set nahi. Neeche se add karein.</td></tr>'
+      : this._custRates.map(rt => `
+        <tr class="border-t">
+          <td class="p-2"><strong>${this.escapeHtml(rt.product_name || '-')}</strong>
+            ${rt.sku ? `<span class="text-xs text-gray-400 ml-1">${this.escapeHtml(rt.sku)}</span>` : ''}</td>
+          <td class="p-2 text-right text-gray-500">PKR ${this.fmt(rt.default_rate || 0)}</td>
+          <td class="p-2 text-right font-bold text-green-700">PKR ${this.fmt(rt.rate || 0)}</td>
+          <td class="p-2 text-center"><button onclick="App._deleteCustomerRate(${rt.id})" class="text-red-500 hover:text-red-700"><i class="fas fa-trash text-sm"></i></button></td>
+        </tr>`).join('');
+
+    this.openModal(`
+      <h2 class="text-xl font-bold mb-1"><i class="fas fa-tags text-blue-500 mr-2"></i>Product Rates — ${this.escapeHtml(c.name)}</h2>
+      <p class="text-sm text-gray-500 mb-3"><i class="fas fa-info-circle mr-1"></i>Yahan is customer ke liye har product ka <b>selling rate</b> ek hi dafa set karein. Jab is customer ka bill banega aur ye product add hoga, ye rate <b>khud-ba-khud</b> lag jayega. (Manufacturing rate sab ke liye same rehta hai.)</p>
+
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
+          <div class="md:col-span-1">
+            <label class="block text-xs font-medium mb-1">Product</label>
+            <select id="cr-product" class="input-field">
+              <option value="">-- Select product --</option>
+              ${products.map(p => `<option value="${p.id}" data-rate="${p.rate}">${this.escapeHtml(p.name)} (def PKR ${this.fmt(p.rate || 0)})</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium mb-1">Special Rate (PKR)</label>
+            <input id="cr-rate" type="number" step="any" min="0" class="input-field" placeholder="Is customer ka rate">
+          </div>
+          <div>
+            <button onclick="App._saveCustomerRate()" class="btn btn-primary w-full"><i class="fas fa-plus"></i> Add / Update Rate</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white border rounded-lg overflow-hidden">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50"><tr>
+            <th class="text-left p-2">Product</th>
+            <th class="text-right p-2">Default Rate</th>
+            <th class="text-right p-2">This Customer Rate</th>
+            <th class="text-center p-2"></th>
+          </tr></thead>
+          <tbody id="cr-rows">${renderRows()}</tbody>
+        </table>
+      </div>
+      <div class="flex justify-end pt-3"><button class="btn btn-secondary" onclick="App.closeModal()">Close</button></div>
+    `, 'modal-lg');
+
+    // Auto-fill the rate box with the selected product's default rate as a starting point
+    const sel = document.getElementById('cr-product');
+    if (sel) sel.addEventListener('change', () => {
+      const opt = sel.options[sel.selectedIndex];
+      const existing = this._custRates.find(r => String(r.inventory_id) === sel.value);
+      const box = document.getElementById('cr-rate');
+      if (box) box.value = existing ? (existing.rate || 0) : (opt?.dataset.rate || 0);
+    });
+  },
+
+  async _saveCustomerRate() {
+    const c = this.state.currentClient;
+    const sel = document.getElementById('cr-product');
+    const rateBox = document.getElementById('cr-rate');
+    const invId = sel?.value;
+    const rate = parseFloat(rateBox?.value);
+    if (!invId) { this.toast('Pehle product select karein', 'error'); return; }
+    if (isNaN(rate)) { this.toast('Rate likhein', 'error'); return; }
+    try {
+      await this.api.post(`/api/clients/${c.id}/product-rates`, { inventory_id: parseInt(invId), rate });
+      this.toast('Rate saved', 'success');
+      this.showCustomerRates();
+    } catch (e) { this.toast('Save failed', 'error'); }
+  },
+
+  async _deleteCustomerRate(rid) {
+    const c = this.state.currentClient;
+    if (!confirm('Is special rate ko hata dein? (Default rate wapas lagega)')) return;
+    try {
+      await this.api.delete(`/api/clients/${c.id}/product-rates/${rid}`);
+      this.toast('Rate removed', 'success');
+      this.showCustomerRates();
+    } catch (e) { this.toast('Failed', 'error'); }
   },
 
   async deleteClient() {
@@ -1031,6 +1140,8 @@ const App = {
     const products = productList || [];
     const invMfg = invMfgList || [];
     const supplierStats = data.supplierStats || {};
+    const compProdStats = data.compProdStats || {};
+    const compProdList = data.compProdList || [];
     const mfgProducts = data.mfgProducts || [];
     const mfgIngredients = data.mfgIngredients || [];
     const builtSoldStats = data.builtSoldStats || [];
@@ -1080,8 +1191,14 @@ const App = {
           <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-arrow-down mr-1"></i>Total Received</p>
               <p class="text-xl font-bold mt-1 amount-received">PKR ${this.fmt(totals.total_received)}</p></div>
-            <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-balance-scale mr-1"></i>Remaining Balance</p>
-              <p class="text-xl font-bold mt-1 amount-running">PKR ${this.fmt((totals.total_pending||0) - (totals.total_received||0))}</p></div>
+            <div class="stat-card" title="Jo customers ne abhi humein dene hain (we are to RECEIVE)">
+              <p class="text-xs text-gray-500"><i class="fas fa-hand-holding-dollar mr-1 text-green-500"></i>Customers Se Lena (Receivable)</p>
+              <p class="text-xl font-bold mt-1" style="color:#16a34a">PKR ${this.fmt(totals.customer_pending || 0)}</p>
+              <p class="text-xs text-gray-400 mt-1">Customer ki taraf pending</p></div>
+            <div class="stat-card" title="Jo humein suppliers ko dena hai (we are to PAY)">
+              <p class="text-xs text-gray-500"><i class="fas fa-hand-holding-dollar mr-1 text-red-500"></i>Suppliers Ko Dena (Payable)</p>
+              <p class="text-xl font-bold mt-1" style="color:#dc2626">PKR ${this.fmt(totals.supplier_pending || 0)}</p>
+              <p class="text-xs text-gray-400 mt-1">Supplier ko pending</p></div>
             <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-file-invoice mr-1"></i>Bills</p>
               <p class="text-xl font-bold text-purple-600 mt-1">${billStats?.count || 0}</p>
               <p class="text-xs text-gray-400 mt-1">PKR ${this.fmt(billStats?.total_amount || 0)}</p></div>
@@ -1241,17 +1358,31 @@ const App = {
           ${perFolder.length === 0 ? '<p class="text-gray-500 text-center py-4">No sections yet</p>' : `
             <div class="overflow-x-auto"><table class="w-full text-sm">
               <thead class="bg-gray-50"><tr>
-                <th class="text-left p-3">Section</th><th class="text-right p-3">Entries</th>
-                <th class="text-right p-3">Received</th><th class="text-right p-3">Remaining Balance</th>
+                <th class="text-left p-3">Section</th>
+                <th class="text-center p-3">Type</th>
+                <th class="text-right p-3">Entries</th>
+                <th class="text-right p-3">Received</th>
+                <th class="text-right p-3" title="Customer = Lena hai, Supplier = Dena hai">Remaining</th>
               </tr></thead><tbody>
-                ${perFolder.map(f => `
+                ${perFolder.map(f => {
+                  const isSup = (f.ledger_type === 'supplier');
+                  const rem = parseFloat(f.total_pending) || 0;
+                  return `
                   <tr class="border-t hover:bg-gray-50 cursor-pointer" onclick="App.openFolder(${f.id})">
                     <td class="p-3"><i class="fas ${f.icon} mr-2" style="color:${f.color}"></i>${this.escapeHtml(f.name)}</td>
+                    <td class="text-center p-3">
+                      <span class="status-badge ${isSup ? 'status-pending' : 'status-received'}" title="${isSup ? 'Suppliers ko dena hai' : 'Customers se lena hai'}">
+                        ${isSup ? 'Supplier (Dena)' : 'Customer (Lena)'}
+                      </span>
+                    </td>
                     <td class="text-right p-3">${f.client_count}</td>
                     <td class="text-right p-3 amount-received">PKR ${this.fmt(f.total_received)}</td>
-                    <td class="text-right p-3 amount-running">PKR ${this.fmt(f.total_pending - f.total_received)}</td>
-                  </tr>`).join('')}
-              </tbody></table></div>`}
+                    <td class="text-right p-3 font-semibold" style="color:${isSup ? '#dc2626' : '#16a34a'}">PKR ${this.fmt(rem)}</td>
+                  </tr>`}).join('')}
+              </tbody></table></div>
+            <p class="text-xs text-gray-500 mt-2"><i class="fas fa-info-circle mr-1"></i>
+              <span style="color:#16a34a">Customer (Lena)</span> = jo aapko customers se milna hai.
+              <span style="color:#dc2626">Supplier (Dena)</span> = jo aapne suppliers ko dena hai.</p>`}
         </section>
 
         <!-- Inventory Summary -->
@@ -1329,6 +1460,52 @@ const App = {
                 }).join('')}
               </tbody></table></div>
             ${mfgProducts.length > 15 ? `<p class="text-xs text-gray-400 text-center mt-2">Showing 15 of ${mfgProducts.length} products</p>` : ''}
+          `}
+        </section>
+
+        <!-- ============ Components Production Summary (#5) ============ -->
+        <section class="bg-white rounded-xl shadow-sm p-5">
+          <h2 class="dash-card-title">
+            <span><i class="fas fa-puzzle-piece text-teal-600 mr-2"></i>Components Production Summary</span>
+            <button onclick="App.showComponents()" class="dash-link-btn">View All <i class="fas fa-arrow-right ml-1"></i></button>
+          </h2>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 text-xs">
+            <div class="bg-teal-50 rounded p-3"><p class="text-gray-500"><i class="fas fa-sun mr-1"></i>Produced Today</p>
+              <p class="font-bold text-teal-700 text-lg">${this.fmt(compProdStats.pieces_today || 0)} <span class="text-xs font-normal">pcs</span></p>
+              <p class="text-xs text-gray-400">Payout PKR ${this.fmt(compProdStats.payout_today || 0)}</p></div>
+            <div class="bg-cyan-50 rounded p-3"><p class="text-gray-500"><i class="fas fa-calendar-alt mr-1"></i>This Month</p>
+              <p class="font-bold text-cyan-700 text-lg">${this.fmt(compProdStats.pieces_month || 0)} <span class="text-xs font-normal">pcs</span></p>
+              <p class="text-xs text-gray-400">Payout PKR ${this.fmt(compProdStats.payout_month || 0)}</p></div>
+            <div class="bg-blue-50 rounded p-3"><p class="text-gray-500"><i class="fas fa-infinity mr-1"></i>All Time</p>
+              <p class="font-bold text-blue-700 text-lg">${this.fmt(compProdStats.pieces_all || 0)} <span class="text-xs font-normal">pcs</span></p>
+              <p class="text-xs text-gray-400">Payout PKR ${this.fmt(compProdStats.payout_all || 0)}</p></div>
+            <div class="bg-green-50 rounded p-3"><p class="text-gray-500"><i class="fas fa-cubes mr-1"></i>Total Components</p>
+              <p class="font-bold text-green-700 text-lg">${compProdList.length}</p>
+              <p class="text-xs text-gray-400">${this.fmt(compProdStats.log_count || 0)} production logs</p></div>
+          </div>
+          ${(!compProdList || compProdList.length === 0) ? '<p class="text-gray-500 text-center py-4">No components yet. <a href="#" onclick="App.showComponents(); return false;" class="text-blue-600 hover:underline">Add a component →</a></p>' : `
+            <div class="overflow-x-auto"><table class="w-full text-sm">
+              <thead class="bg-gray-50"><tr>
+                <th class="text-left p-3">Component</th>
+                <th class="text-right p-3" title="Current available stock">In Stock</th>
+                <th class="text-right p-3" title="Pieces produced this month">Produced (Month)</th>
+                <th class="text-right p-3" title="Total pieces produced all time">Produced (All)</th>
+                <th class="text-right p-3" title="Per-piece worker rate">Rate</th>
+              </tr></thead><tbody>
+                ${compProdList.slice(0, 20).map(cp => {
+                  const stock = parseFloat(cp.quantity) || 0;
+                  return `
+                  <tr class="border-t hover:bg-gray-50 cursor-pointer" onclick="App.showComponents()">
+                    <td class="p-3"><i class="fas fa-puzzle-piece text-teal-600 mr-2"></i><strong>${this.escapeHtml(cp.name)}</strong>
+                      <span class="text-xs text-gray-400">per ${this.escapeHtml(cp.unit || 'pcs')}</span></td>
+                    <td class="text-right p-3 ${stock > 0 ? 'text-green-700 font-semibold' : 'text-gray-400'}">${this.fmt(stock)}</td>
+                    <td class="text-right p-3 text-cyan-700">${this.fmt(cp.produced_month || 0)}</td>
+                    <td class="text-right p-3 text-blue-700 font-semibold">${this.fmt(cp.produced_all || 0)}</td>
+                    <td class="text-right p-3">${parseFloat(cp.default_rate) > 0 ? 'PKR ' + this.fmt(cp.default_rate) : '<span class="text-gray-400">—</span>'}</td>
+                  </tr>`;
+                }).join('')}
+              </tbody></table></div>
+            ${compProdList.length > 20 ? `<p class="text-xs text-gray-400 text-center mt-2">Showing 20 of ${compProdList.length} components</p>` : ''}
           `}
         </section>
 
@@ -2748,6 +2925,60 @@ const App = {
     `;
   },
 
+  // ----- #4: Component-from-Components (nested BOM) row helpers -----
+  _addSubcompRow() {
+    this._collectSubcompRows();
+    if (!this._editingSubcomps) this._editingSubcomps = [];
+    this._editingSubcomps.push({ child_component_id: null, quantity_required: 0 });
+    this._renderSubcompRows();
+  },
+  _removeSubcompRow(idx) {
+    this._collectSubcompRows();
+    this._editingSubcomps.splice(idx, 1);
+    this._renderSubcompRows();
+  },
+  _collectSubcompRows() {
+    const list = document.getElementById('subcomps-list');
+    if (!list) return;
+    const rows = list.querySelectorAll('.subcomp-row');
+    const arr = [];
+    rows.forEach(row => {
+      const cid = parseInt(row.querySelector('.sub-comp').value) || null;
+      const qty = parseFloat(row.querySelector('.sub-qty').value) || 0;
+      arr.push({ child_component_id: cid, quantity_required: qty });
+    });
+    this._editingSubcomps = arr;
+  },
+  _renderSubcompRows() {
+    const list = document.getElementById('subcomps-list');
+    if (!list) return;
+    // Available child components (exclude the component being edited to avoid self-loop)
+    const comps = (this.state.components || []).filter(c => parseInt(c.id) !== parseInt(this._editingCompId));
+    const subs = this._editingSubcomps || [];
+    if (subs.length === 0) {
+      list.innerHTML = `<div class="text-gray-400 text-sm text-center py-4 border-2 border-dashed rounded-lg">No child components. Click <strong>Add Component</strong> agar ye component dusre components se banta hai.</div>`;
+      return;
+    }
+    list.innerHTML = subs.map((s, idx) => {
+      const optionsHtml = `<option value="">-- Select Component --</option>` +
+        comps.map(cp => `<option value="${cp.id}" ${cp.id == s.child_component_id ? 'selected' : ''}>${this.escapeHtml(cp.name)} (Stock: ${this.fmt(cp.quantity)} ${this.escapeHtml(cp.unit||'')})</option>`).join('');
+      return `
+        <div class="subcomp-row grid grid-cols-12 gap-2 items-center bg-white border rounded-lg p-2">
+          <div class="col-span-12 md:col-span-7">
+            <label class="block text-xs text-gray-500 mb-1">Child Component</label>
+            <select class="input-field sub-comp">${optionsHtml}</select>
+          </div>
+          <div class="col-span-9 md:col-span-4">
+            <label class="block text-xs text-gray-500 mb-1">Quantity Required (per 1 unit)</label>
+            <input type="number" step="any" class="input-field sub-qty" value="${s.quantity_required || ''}">
+          </div>
+          <div class="col-span-3 md:col-span-1 text-right">
+            <button type="button" onclick="App._removeSubcompRow(${idx})" class="text-red-500 hover:text-red-700 mt-5" title="Remove"><i class="fas fa-trash"></i></button>
+          </div>
+        </div>`;
+    }).join('');
+  },
+
   // ----- Product recipe: COMPONENT lines -----
   _addProdComponentRow() {
     this._collectProdComponentRows();
@@ -3275,14 +3506,23 @@ const App = {
               </td></tr>` :
               items.map((c, i) => {
                 const ings = c.ingredients || [];
-                const recipeStr = ings.length === 0 ? '<span class="text-gray-400">Manual (no recipe)</span>' :
-                  ings.map(ing => {
+                const subc = c.subcomponents || [];
+                const rawStr = ings.map(ing => {
                     const rmName = ing.raw_name || '(deleted)';
                     const need = parseFloat(ing.quantity_required) || 0;
                     const unit = ing.unit || ing.raw_unit || '';
                     return `<span class="inline-block px-2 py-0.5 rounded text-xs mr-1 mb-1 bg-orange-50 text-orange-700 border border-orange-200">
                       <strong>${this.escapeHtml(rmName)}</strong>: ${this.fmt(need)} ${this.escapeHtml(unit)}</span>`;
                   }).join('');
+                const subStr = subc.map(s => {
+                    const nm = s.child_name || '(deleted)';
+                    const need = parseFloat(s.quantity_required) || 0;
+                    return `<span class="inline-block px-2 py-0.5 rounded text-xs mr-1 mb-1 bg-purple-50 text-purple-700 border border-purple-200" title="Child component">
+                      <i class="fas fa-puzzle-piece mr-1"></i><strong>${this.escapeHtml(nm)}</strong>: ${this.fmt(need)}</span>`;
+                  }).join('');
+                const recipeStr = (ings.length === 0 && subc.length === 0)
+                  ? '<span class="text-gray-400">Manual (no recipe)</span>'
+                  : (rawStr + subStr);
                 const stock = parseFloat(c.quantity) || 0;
                 return `<tr>
                   <td class="text-gray-500">${i + 1}</td>
@@ -3341,13 +3581,19 @@ const App = {
   },
 
   showComponentEditor(id = null) {
-    const c = id ? this.state.components.find(x => x.id === id) : { name:'', unit:'pcs', category:'', notes:'', default_rate:0, quantity:0, ingredients: [] };
+    const c = id ? this.state.components.find(x => x.id === id) : { name:'', unit:'pcs', category:'', notes:'', default_rate:0, quantity:0, ingredients: [], subcomponents: [] };
     if (id && !c) return;
     this._editingIngredients = (c.ingredients || []).map(ing => ({
       raw_material_id: ing.raw_material_id,
       quantity_required: ing.quantity_required,
       unit: ing.unit || ing.raw_unit || ''
     }));
+    // #4: child components used to build this component
+    this._editingSubcomps = (c.subcomponents || []).map(s => ({
+      child_component_id: s.child_component_id,
+      quantity_required: s.quantity_required
+    }));
+    this._editingCompId = id;
 
     this.openModal(`
       <h2 class="text-xl font-bold mb-4"><i class="fas fa-puzzle-piece text-teal-600 mr-2"></i>${id ? 'Edit' : 'Add'} Component</h2>
@@ -3395,6 +3641,15 @@ const App = {
           <div id="ingredients-summary" class="mt-3 p-3 rounded-lg bg-gray-50 border text-sm"></div>
         </div>
 
+        <div class="border-t pt-4">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-base font-bold text-gray-800"><i class="fas fa-puzzle-piece text-purple-500 mr-1"></i>Made from OTHER Components (optional)</h3>
+            <button type="button" onclick="App._addSubcompRow()" class="btn btn-secondary btn-sm"><i class="fas fa-plus"></i> Add Component</button>
+          </div>
+          <p class="text-xs text-gray-500 mb-2">Agar ye component dusre components se banta hai (jaise "Assembled Basket" banane ke liye "Rings" + "Jaali" chahiye), to yahan child components + quantity daalein. Production log karte waqt ye child component stock bhi apne aap kam ho jayega.</p>
+          <div id="subcomps-list" class="space-y-2"></div>
+        </div>
+
         <div class="flex gap-2 justify-end pt-2 border-t">
           ${id ? `<button type="button" class="btn btn-danger mr-auto" onclick="App.deleteComponent(${id})"><i class="fas fa-trash"></i> Delete</button>` : ''}
           <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
@@ -3404,11 +3659,15 @@ const App = {
     `, 'modal-lg');
 
     this._renderIngredientRows();
+    this._renderSubcompRows();
 
     document.getElementById('comp-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       this._collectIngredientRows();
+      this._collectSubcompRows();
       const ings = (this._editingIngredients || []).filter(i => i.raw_material_id && parseFloat(i.quantity_required) > 0);
+      const subs = (this._editingSubcomps || []).filter(s => s.child_component_id && parseFloat(s.quantity_required) > 0
+        && parseInt(s.child_component_id) !== parseInt(id));
       const payload = {
         name: document.getElementById('c-name').value.trim(),
         unit: document.getElementById('c-unit').value || 'pcs',
@@ -3416,7 +3675,8 @@ const App = {
         notes: document.getElementById('c-notes').value,
         default_rate: parseFloat(document.getElementById('c-rate').value) || 0,
         quantity: parseFloat(document.getElementById('c-qty').value) || 0,
-        ingredients: ings
+        ingredients: ings,
+        subcomponents: subs
       };
       if (!payload.name) { this.toast('Component name required', 'error'); return; }
       try {
@@ -4991,11 +5251,40 @@ const App = {
     this._renderBillItems();
     this._calcBill();
 
-    document.getElementById('b-cname').addEventListener('change', (e) => {
+    // Load this customer's special rate map (if editing an existing bill with a client)
+    this._billRateMap = {};
+    const loadRateMapFor = async (clientId) => {
+      this._billRateMap = {};
+      if (!clientId) return;
+      try {
+        const r = await this.api.get(`/api/clients/${clientId}/rate-map`);
+        this._billRateMap = r.rateMap || {};
+      } catch (e) { this._billRateMap = {}; }
+    };
+    if (editing && editing.client_id) loadRateMapFor(editing.client_id);
+
+    document.getElementById('b-cname').addEventListener('change', async (e) => {
       const c = this.state.allClients.find(c => c.name === e.target.value);
       if (c) {
         document.getElementById('b-cphone').value = c.phone || '';
         document.getElementById('b-caddr').value = c.address || '';
+        await loadRateMapFor(c.id);
+        // Re-apply special rates to any already-added products
+        let applied = 0;
+        this._billItems.forEach((it) => {
+          if (it.product_id && this._billRateMap[String(it.product_id)] !== undefined) {
+            it.rate = parseFloat(this._billRateMap[String(it.product_id)]) || 0;
+            it.total = (parseFloat(it.quantity) || 0) * it.rate;
+            applied++;
+          }
+        });
+        if (applied > 0) {
+          this._renderBillItems();
+          this._calcBill();
+          this.toast(`${applied} product(s) par is customer ka special rate laga diya`, 'info');
+        }
+      } else {
+        this._billRateMap = {};
       }
     });
   },
@@ -5038,11 +5327,18 @@ const App = {
     if (inv) {
       this._billItems[i].product_id = inv.id;
       this._billItems[i].product_name = inv.name;
-      this._billItems[i].rate = parseFloat(inv.rate) || 0;
+      // Use the customer's special saved rate if one exists, else the default product rate
+      const special = (this._billRateMap && this._billRateMap[String(inv.id)] !== undefined)
+        ? parseFloat(this._billRateMap[String(inv.id)])
+        : null;
+      this._billItems[i].rate = (special !== null && !isNaN(special)) ? special : (parseFloat(inv.rate) || 0);
       this._billItems[i].manufacturing_cost = parseFloat(inv.manufacturing_cost) || 0;
       this._billItems[i].total = (parseFloat(this._billItems[i].quantity) || 0) * this._billItems[i].rate;
       this._renderBillItems();
       this._calcBill();
+      if (special !== null && !isNaN(special)) {
+        this.toast(`Special rate (PKR ${this.fmt(special)}) is customer ke liye laga diya`, 'info');
+      }
     } else {
       this._billItems[i].product_id = null;
       this._billItems[i].product_name = value;
@@ -5196,15 +5492,69 @@ const App = {
           ${bill.notes ? `<div style="margin-top:16px; padding: 12px; background: #f8fafc; border-radius: 8px; font-size: 0.85rem;"><strong>Notes:</strong> ${this.escapeHtml(bill.notes)}</div>` : ''}
           <div class="invoice-footer"><p>${this.escapeHtml(b.bill_footer || 'Thank you for your business!')}</p></div>
         </div>`;
+      const waNum = this._waNumber(bill.customer_phone);
       this.openModal(`
         <div style="display:flex; justify-content: space-between; align-items: center; margin-bottom: 12px;" class="no-print">
           <h2 class="text-xl font-bold"><i class="fas fa-print mr-2"></i>Bill Preview</h2>
-          <div class="flex gap-2">
+          <div class="flex gap-2 flex-wrap">
             <button onclick="window.print()" class="btn btn-primary"><i class="fas fa-print"></i> Print</button>
+            <button onclick="App._shareBillWhatsApp(${bill.id})" class="btn btn-success" title="${waNum ? 'Customer ke WhatsApp par bhejein' : 'Customer ka phone number profile me add karein'}">
+              <i class="fab fa-whatsapp"></i> WhatsApp
+            </button>
             <button onclick="App.closeModal()" class="btn btn-secondary">Close</button>
           </div>
         </div>${html}`, 'modal-xl');
     } catch (e) { this.toast('Failed to load bill', 'error'); }
+  },
+
+  // Normalize a phone number into WhatsApp international format (Pakistan default).
+  // e.g. "0300-1234567" -> "923001234567", "+92 300 1234567" -> "923001234567"
+  _waNumber(phone) {
+    if (!phone) return '';
+    let n = String(phone).replace(/[^0-9+]/g, '');
+    if (n.startsWith('+')) n = n.slice(1);
+    if (n.startsWith('00')) n = n.slice(2);
+    // Local Pakistani format starting with 0 -> replace leading 0 with 92
+    if (n.startsWith('0')) n = '92' + n.slice(1);
+    // Bare 10-digit (3001234567) -> add 92
+    else if (n.length === 10 && n.startsWith('3')) n = '92' + n;
+    return n;
+  },
+
+  async _shareBillWhatsApp(id) {
+    try {
+      const data = await this.api.get(`/api/bills/${id}`);
+      const bill = data.bill;
+      const items = data.items || [];
+      const b = this.state.branding || {};
+      const waNum = this._waNumber(bill.customer_phone);
+      const total = parseFloat(bill.total) || 0;
+      const paid = parseFloat(bill.paid) || 0;
+      const due = total - paid;
+      // Build a clean text summary of the bill
+      const lines = [];
+      lines.push(`*${b.company_name || 'Two Star Industries'}*`);
+      lines.push(`Invoice / Bill`);
+      lines.push(`-----------------------------`);
+      lines.push(`Bill No: ${bill.bill_no}`);
+      lines.push(`Date: ${bill.bill_date}`);
+      lines.push(`Customer: ${bill.customer_name || ''}`);
+      lines.push(`-----------------------------`);
+      items.forEach((it, i) => {
+        lines.push(`${i + 1}. ${it.product_name}  —  ${this.fmt(it.quantity)} x PKR ${this.fmt(it.rate)} = PKR ${this.fmt(it.total)}`);
+      });
+      lines.push(`-----------------------------`);
+      if ((parseFloat(bill.discount) || 0) > 0) lines.push(`Discount: PKR ${this.fmt(bill.discount)}`);
+      lines.push(`*Grand Total: PKR ${this.fmt(total)}*`);
+      lines.push(`Paid: PKR ${this.fmt(paid)}`);
+      lines.push(`Balance Due: PKR ${this.fmt(due)}`);
+      lines.push(`-----------------------------`);
+      lines.push(b.bill_footer || 'Thank you for your business!');
+      const text = encodeURIComponent(lines.join('\n'));
+      const url = waNum ? `https://wa.me/${waNum}?text=${text}` : `https://wa.me/?text=${text}`;
+      if (!waNum) this.toast('Customer ka phone number profile me nahi mila — WhatsApp khol diya, number khud chunein', 'info');
+      window.open(url, '_blank');
+    } catch (e) { this.toast('WhatsApp share failed', 'error'); }
   },
 
   // ========= BRANDING =========
@@ -5291,7 +5641,7 @@ const App = {
               <div class="p-4 rounded-lg" style="background: linear-gradient(135deg, var(--primary), var(--accent)); color: white;">
                 <div class="flex items-center gap-3">
                   <div class="logo-circle" id="prev-logo" style="background: rgba(255,255,255,0.2);">
-                    ${b.logo_url ? `<img src="${this.escapeAttr(b.logo_url)}" style="width:100%;height:100%;object-fit:cover">` : `<i class="fas fa-star"></i>`}
+                    ${b.logo_url ? `<img src="${this.escapeAttr(b.logo_url)}" style="width:100%;height:100%;object-fit:contain;background:#fff">` : `<i class="fas fa-star"></i>`}
                   </div>
                   <div><h3 class="font-bold" id="prev-crm">${this.escapeHtml(b.crm_name)}</h3>
                     <p class="text-xs opacity-90" id="prev-company">${this.escapeHtml(b.company_name)}</p></div>
@@ -5350,7 +5700,7 @@ const App = {
     const preview = document.getElementById('logo-preview');
     const sidebarPrev = document.getElementById('prev-logo');
     if (preview) preview.innerHTML = url ? `<img src="${this.escapeAttr(url)}" style="width:100%;height:100%;object-fit:contain">` : `<i class="fas fa-image text-gray-400"></i>`;
-    if (sidebarPrev) sidebarPrev.innerHTML = url ? `<img src="${this.escapeAttr(url)}" style="width:100%;height:100%;object-fit:cover">` : `<i class="fas fa-star"></i>`;
+    if (sidebarPrev) sidebarPrev.innerHTML = url ? `<img src="${this.escapeAttr(url)}" style="width:100%;height:100%;object-fit:contain;background:#fff">` : `<i class="fas fa-star"></i>`;
   },
 
   _previewColor(key, value) {

@@ -6,6 +6,32 @@
 - **Goal**: Complete business CRM for Two Star Industries — manage clients, ledgers, inventory, raw materials, manufacturing recipes, employees, side expenses, and bills with auto Net Profit tracking.
 - **Stack**: Hono (TypeScript) + Cloudflare Pages + Cloudflare D1 (SQLite) + TailwindCSS + Vanilla JS frontend
 
+## What's New (latest update — 2026-06-13) — 6 Requested Fixes (Two Star CRM rebrand)
+
+Ye 6 cheezein add / fix ki gayi hain:
+
+1. **Remaining Balance ab clear 2 hisson me hai.** Pehle ek hi confusing "Remaining Balance" tha. Ab dashboard par 2 alag cards:
+   - **Customers Se Lena (Receivable)** — jo paisa customers humein dene hain.
+   - **Suppliers Ko Dena (Payable)** — jo paisa hum suppliers ko dene hain.
+   - SQL level par `folders.ledger_type` (`customer`/`supplier`) ke hisaab se split hota hai. Per-section summary table me ab **Type** column bhi hai.
+
+2. **Opening Balance ka matlab clear kiya.** Customer profile + Add/Edit customer forms me hint diya gaya hai ke opening balance = "is customer se jo purana udhaar lena hai" (receivable). Supplier ke liye hint alag hai.
+
+3. **Per-customer product selling rate (MAIN feature).** Manufacturing rate sab ke liye same, lekin selling rate har customer ka alag ho sakta hai. Ab ek dafa set karo "ye customer = ye product = ye rate". Phir us customer ki bill banate waqt jab item add karte ho to rate **khud-ba-khud bhar jata hai**.
+   - Naye endpoints: `GET/POST /api/clients/:id/product-rates`, `DELETE /api/clients/:id/product-rates/:rid`, `GET /api/clients/:id/rate-map`.
+   - Customer profile me **"Product Rates"** button.
+
+4. **Nested Components (component se component).** Pehle components sirf raw material se bante the. Ab ek component doosre components se bhi ban sakta hai. Production karte waqt child component ka stock auto-deduct hota hai, aur shortage check + delete-par-restore dono kaam karte hain.
+
+5. **Components Production summary dashboard par.** Ab dashboard par alag section: kitne pieces banaye (Today / Month / All), total payout, aur har component ka produced count.
+
+6. **Logo fix + bada bill logo + WhatsApp share.** Logo ab crop nahi hota (`object-fit: contain`), printed bill par logo bada (150px). Bill par **WhatsApp share** button bhi add kiya — customer ke profile-saved number par bill summary bhejta hai (print ke saath-saath).
+
+### New DB schema (migration 0015)
+- `customer_product_rates` (client_id, inventory_id, rate) — per-customer per-product rate.
+- `component_subcomponents` (component_id, child_component_id, quantity_required) — nested BOM.
+- `production_raw_usage.child_component_id` — child component usage tracking for reversal.
+
 ## What's New (latest update — 2026-06-10) — Real Net Profit + Ledger Type + Inventory Recent Entries
 
 Teen requested features add kiye gaye:
@@ -327,7 +353,7 @@ Calendar widget redesigned to be ~30% smaller (cells, gaps, fonts, paddings) whi
 - **Platform**: Cloudflare Pages
 - **Status**: ✅ Active
 - **Tech Stack**: Hono + TypeScript + Vite + Cloudflare D1 + TailwindCSS
-- **Last Updated**: 2026-06-09
+- **Last Updated**: 2026-06-13
 
 ## Local Development
 ```bash

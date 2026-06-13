@@ -74,7 +74,8 @@ body {
   overflow: hidden;
   flex-shrink: 0;
 }
-.sidebar-brand .logo-circle img { width: 100%; height: 100%; object-fit: cover; }
+.sidebar-brand .logo-circle { background: white; }
+.sidebar-brand .logo-circle img { width: 100%; height: 100%; object-fit: contain; }
 .sidebar-brand .brand-text {
   flex: 1;
   min-width: 0;
@@ -456,9 +457,11 @@ body {
 .invoice-header .company-block p { margin: 2px 0; font-size: 0.85rem; color: #475569; }
 .invoice-header .logo-block img,
 .invoice-header .logo-block .logo-fallback {
-  width: 90px; height: 90px;
+  width: 150px; height: 150px;
+  max-width: 40vw;
   object-fit: contain;
 }
+.invoice-header .logo-block { flex-shrink: 0; margin-left: 12px; }
 .invoice-header .logo-fallback {
   display: flex; align-items: center; justify-content: center;
   background: linear-gradient(135deg, var(--primary), var(--accent));
