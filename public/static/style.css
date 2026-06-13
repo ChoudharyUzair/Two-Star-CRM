@@ -474,9 +474,11 @@ body {
 .invoice-header .company-block p { margin: 2px 0; font-size: 0.82rem; color: #475569; }
 .invoice-header .logo-block img,
 .invoice-header .logo-block .logo-fallback {
-  width: 90px; height: 90px;
-  max-width: 22vw;
+  width: 100px; height: 100px;
+  max-width: 100px;
+  min-width: 80px;
   object-fit: contain;
+  display: block;
 }
 .invoice-header .logo-block { flex-shrink: 0; }
 .invoice-header .invoice-label-block { flex-shrink: 0; text-align: right; align-self: flex-start; }
@@ -555,6 +557,10 @@ body {
   border-radius: 6px;
   margin-top: 4px;
   border: none;
+  padding: 8px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 .invoice-footer {
   margin-top: 24px;

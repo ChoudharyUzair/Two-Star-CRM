@@ -5453,7 +5453,7 @@ const App = {
       const total = parseFloat(bill.total) || 0;
       const paid = parseFloat(bill.paid) || 0;
       const due = total - paid;
-      const logoHtml = b.logo_url ? `<img src="${this.escapeAttr(b.logo_url)}" alt="logo">` :
+      const logoHtml = b.logo_url ? `<img src="${this.escapeAttr(b.logo_url)}" alt="logo" style="width:100px;height:100px;max-width:100px;min-width:80px;object-fit:contain;display:block;">` :
         `<div class="logo-fallback">${this.escapeHtml((b.company_name || 'TS').split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase())}</div>`;
       const html = `
         <div class="invoice-page print-area" id="bill-print-area">
@@ -5541,7 +5541,7 @@ const App = {
     const jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
     if (!jsPDFCtor || !window.html2canvas) { this.toast('PDF library load nahi hui — page refresh karein', 'error'); return null; }
     // Render the DOM node to a high-resolution canvas
-    const canvas = await window.html2canvas(node, { scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false });
+    const canvas = await window.html2canvas(node, { scale: 2, backgroundColor: '#ffffff', useCORS: true, allowTaint: true, logging: false, imageTimeout: 5000 });
     const imgData = canvas.toDataURL('image/jpeg', 0.95);
     const pdf = new jsPDFCtor({ orientation: 'portrait', unit: 'mm', format: 'a4' });
     const pageW = pdf.internal.pageSize.getWidth();
@@ -5602,7 +5602,7 @@ const App = {
         `Date: ${bill.bill_date}`,
         `Grand Total: PKR ${this.fmt(total)} | Balance Due: PKR ${this.fmt(due)}`,
         ``,
-        `Bill PDF attached. — Two Star CRM`
+        `Bill PDF attached.`
       ].join('\n');
 
       // Preferred: native share sheet with the actual PDF file (mobile WhatsApp)
