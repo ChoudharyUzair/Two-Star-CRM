@@ -1702,7 +1702,7 @@ const App = {
           <p class="page-subtitle">${this.state.inventory.length} product(s) · Total Value: PKR ${this.fmt(totalValue)}</p></div>
         <div class="flex gap-2 flex-wrap">
           <input type="text" id="inv-search" placeholder="Search..." class="input-field" style="max-width:240px;" oninput="App.renderInventory(this.value)" value="${this.escapeAttr(filter)}">
-          <button onclick="App.showMovementModal()" class="btn btn-secondary"><i class="fas fa-right-left"></i> Record Sale / Return</button>
+          <button onclick="App.showMovementModal()" class="btn btn-secondary"><i class="fas fa-right-left"></i> ReStock / Return</button>
           <button onclick="App.showInventoryEditor()" class="btn btn-primary"><i class="fas fa-plus"></i> Add Product</button>
         </div>
       </div>
@@ -1765,11 +1765,12 @@ const App = {
   renderInventoryMovements() {
     const movs = this.state.invMovements || [];
     if (movs.length === 0) {
-      return `<p class="text-gray-500 text-center py-6"><i class="fas fa-inbox text-2xl block mb-2"></i>No stock movements yet. Use "Record Sale / Return" to log one.</p>`;
+      return `<p class="text-gray-500 text-center py-6"><i class="fas fa-inbox text-2xl block mb-2"></i>No stock movements yet. Use "ReStock / Return" to log one.</p>`;
     }
     const badge = (t) => {
-      if (t === 'sale')   return '<span class="px-2 py-0.5 rounded-full text-xs bg-red-100 text-red-700"><i class="fas fa-arrow-up mr-1"></i>Sold</span>';
-      if (t === 'return') return '<span class="px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700"><i class="fas fa-arrow-down mr-1"></i>Returned</span>';
+      if (t === 'sale')    return '<span class="px-2 py-0.5 rounded-full text-xs bg-red-100 text-red-700"><i class="fas fa-arrow-up mr-1"></i>Sold</span>';
+      if (t === 'return')  return '<span class="px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700"><i class="fas fa-arrow-down mr-1"></i>Returned</span>';
+      if (t === 'restock') return '<span class="px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-700"><i class="fas fa-truck-ramp-box mr-1"></i>Restocked</span>';
       return '<span class="px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-700"><i class="fas fa-sliders mr-1"></i>Adjusted</span>';
     };
     return `
@@ -1787,7 +1788,7 @@ const App = {
             <td class="text-gray-600">${this.escapeHtml(m.entry_date || '')}</td>
             <td class="font-medium">${this.escapeHtml(m.item_name || m.product_name || '—')}</td>
             <td>${badge(m.type)}</td>
-            <td class="text-right ${m.type === 'sale' ? 'text-red-600' : m.type === 'return' ? 'text-green-600' : 'text-gray-700'} font-semibold">${m.type === 'sale' ? '-' : m.type === 'return' ? '+' : ''}${this.fmt(qty)}</td>
+            <td class="text-right ${m.type === 'sale' ? 'text-red-600' : (m.type === 'return' || m.type === 'restock') ? 'text-green-600' : 'text-gray-700'} font-semibold">${m.type === 'sale' ? '-' : (m.type === 'return' || m.type === 'restock') ? '+' : ''}${this.fmt(qty)}</td>
             <td class="text-right">${rate > 0 ? this.fmt(rate) : '<span class="text-gray-400">—</span>'}</td>
             <td class="text-right">${total > 0 ? 'PKR ' + this.fmt(total) : '<span class="text-gray-400">—</span>'}</td>
             <td class="text-gray-600 text-sm">${noteBits || '<span class="text-gray-400">—</span>'}</td>
@@ -1801,6 +1802,10 @@ const App = {
     const items = this.state.inventory || [];
     if (items.length === 0) { this.toast('Add a product first', 'error'); return; }
     const today = new Date().toISOString().slice(0, 10);
+    // Build supplier options from folders with ledger_type = supplier
+    const allFolders = this.state.folders || [];
+    const supplierFolders = allFolders.filter(f => f.ledger_type === 'supplier' || /supplier/i.test(f.name));
+    // Build clients for supplier folders — we'll lazy-load via API
     this.openModal(`
       <h2 class="text-xl font-bold mb-4"><i class="fas fa-right-left text-blue-500 mr-2"></i>Record Stock Movement</h2>
       <form id="mov-form" class="space-y-3">
@@ -1812,6 +1817,7 @@ const App = {
           <select id="m-type" class="input-field" onchange="App._movToggleDir()">
             <option value="sale">Sold (stock decreases)</option>
             <option value="return">Returned (stock increases)</option>
+            <option value="restock">Restock (stock increases — from supplier)</option>
             <option value="adjust">Adjustment</option>
           </select></div>
         <div id="m-dir-wrap" style="display:none;"><label class="block text-sm font-medium mb-1">Adjust Direction</label>
@@ -1819,13 +1825,27 @@ const App = {
             <option value="in">Add to stock (+)</option>
             <option value="out">Remove from stock (−)</option>
           </select></div>
+        <!-- Restock supplier fields -->
+        <div id="m-restock-wrap" style="display:none;" class="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-2">
+          <p class="text-xs text-blue-800 font-semibold"><i class="fas fa-truck mr-1"></i>Supplier Ledger Entry — is restock ki entry supplier ke ledger mein bhi ho gi</p>
+          <div>
+            <label class="block text-sm font-medium mb-1">Supplier (optional)</label>
+            <select id="m-supplier" class="input-field" onchange="App._movSupplierChange()">
+              <option value="">-- Select Supplier (optional) --</option>
+            </select>
+          </div>
+          <div id="m-supplier-name-wrap" style="display:none;">
+            <label class="block text-sm font-medium mb-1">Supplier Name (manual)</label>
+            <input id="m-supplier-name" type="text" class="input-field" placeholder="e.g. Ali Enterprises">
+          </div>
+        </div>
         <div class="grid grid-cols-2 gap-3">
           <div><label class="block text-sm font-medium mb-1">Quantity *</label><input id="m-qty" type="number" step="any" min="0" required class="input-field" placeholder="e.g. 10"></div>
-          <div><label class="block text-sm font-medium mb-1">Rate (PKR)</label><input id="m-rate" type="number" step="any" class="input-field"></div>
+          <div><label class="block text-sm font-medium mb-1">Rate / Cost (PKR)</label><input id="m-rate" type="number" step="any" class="input-field" placeholder="Purchase rate"></div>
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div><label class="block text-sm font-medium mb-1">Date</label><input id="m-date" type="date" class="input-field" value="${today}"></div>
-          <div><label class="block text-sm font-medium mb-1">Customer (optional)</label><input id="m-cust" type="text" class="input-field"></div>
+          <div id="m-cust-wrap"><label class="block text-sm font-medium mb-1">Customer (optional)</label><input id="m-cust" type="text" class="input-field"></div>
         </div>
         <div><label class="block text-sm font-medium mb-1">Note</label><input id="m-notes" type="text" class="input-field"></div>
         <div class="flex gap-2 justify-end pt-2">
@@ -1834,26 +1854,72 @@ const App = {
         </div>
       </form>`);
     this._movFillRate();
+    // Load suppliers into dropdown
+    this._movLoadSuppliers();
     document.getElementById('mov-form').addEventListener('submit', async (e) => {
       e.preventDefault();
+      const typeVal = document.getElementById('m-type').value;
+      const supplierEl = document.getElementById('m-supplier');
+      const supplierNameEl = document.getElementById('m-supplier-name');
+      const supplierId = supplierEl ? supplierEl.value : '';
+      const supplierName = supplierId === '__manual__' ? (supplierNameEl ? supplierNameEl.value.trim() : '') :
+        (supplierEl && supplierEl.options[supplierEl.selectedIndex] ? supplierEl.options[supplierEl.selectedIndex].text : '');
       const payload = {
         inventory_id: parseInt(document.getElementById('m-item').value),
-        type: document.getElementById('m-type').value,
+        type: typeVal,
         direction: document.getElementById('m-dir').value,
         quantity: parseFloat(document.getElementById('m-qty').value) || 0,
         rate: parseFloat(document.getElementById('m-rate').value) || 0,
         entry_date: document.getElementById('m-date').value,
         customer_name: document.getElementById('m-cust').value,
-        notes: document.getElementById('m-notes').value
+        notes: document.getElementById('m-notes').value,
+        supplier_id: supplierId && supplierId !== '__manual__' ? parseInt(supplierId) : null,
+        supplier_name: typeVal === 'restock' ? supplierName : ''
       };
       if (payload.quantity <= 0) { this.toast('Quantity must be greater than 0', 'error'); return; }
       try {
         await this.api.post('/api/inventory/movements', payload);
         this.closeModal();
         await this.showInventory();
-        this.toast('Movement recorded', 'success');
+        const msg = typeVal === 'restock' && payload.supplier_id ? 'Restocked & supplier ledger entry added' : 'Movement recorded';
+        this.toast(msg, 'success');
       } catch (err) { this.toast('Failed', 'error'); }
     });
+  },
+
+  async _movLoadSuppliers() {
+    const sel = document.getElementById('m-supplier');
+    if (!sel) return;
+    try {
+      const data = await this.api.get('/api/clients');
+      const allClients = data.clients || [];
+      // Filter only supplier folder clients
+      const allFolders = this.state.folders || [];
+      const supFolderIds = new Set(allFolders.filter(f => f.ledger_type === 'supplier' || /supplier/i.test(f.name)).map(f => f.id));
+      const suppliers = allClients.filter(cl => supFolderIds.has(cl.folder_id));
+      sel.innerHTML = '<option value="">-- Select Supplier (optional) --</option>';
+      if (suppliers.length > 0) {
+        suppliers.forEach(s => {
+          const opt = document.createElement('option');
+          opt.value = s.id;
+          opt.textContent = `${s.name}${s.folder_name ? ' (' + s.folder_name + ')' : ''}`;
+          sel.appendChild(opt);
+        });
+      }
+      // Option to enter manually
+      const manOpt = document.createElement('option');
+      manOpt.value = '__manual__';
+      manOpt.textContent = '+ Enter supplier name manually';
+      sel.appendChild(manOpt);
+    } catch (e) {}
+  },
+
+  _movSupplierChange() {
+    const sel = document.getElementById('m-supplier');
+    const manualWrap = document.getElementById('m-supplier-name-wrap');
+    if (sel && manualWrap) {
+      manualWrap.style.display = sel.value === '__manual__' ? 'block' : 'none';
+    }
   },
 
   _movFillRate() {
@@ -1867,12 +1933,17 @@ const App = {
 
   _movToggleDir() {
     const t = document.getElementById('m-type').value;
-    const wrap = document.getElementById('m-dir-wrap');
-    if (wrap) wrap.style.display = (t === 'adjust') ? 'block' : 'none';
+    const dirWrap = document.getElementById('m-dir-wrap');
+    const restockWrap = document.getElementById('m-restock-wrap');
+    const custWrap = document.getElementById('m-cust-wrap');
+    const rateLabel = document.querySelector('label[for="m-rate"]');
+    if (dirWrap) dirWrap.style.display = (t === 'adjust') ? 'block' : 'none';
+    if (restockWrap) restockWrap.style.display = (t === 'restock') ? 'block' : 'none';
+    if (custWrap) custWrap.style.display = (t === 'restock') ? 'none' : 'block';
   },
 
   async deleteMovement(id) {
-    if (!confirm('Delete this entry? Stock will be reversed for sale/return entries.')) return;
+    if (!confirm('Delete this entry? Stock will be reversed for sale/return/restock entries.')) return;
     try {
       await this.api.delete(`/api/inventory/movements/${id}`);
       await this.showInventory();

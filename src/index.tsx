@@ -417,7 +417,7 @@ app.post('/api/inventory/movements', requireAuth, async (c) => {
   const body = await c.req.json()
   const inventory_id = parseInt(body.inventory_id)
   if (!inventory_id) return c.json({ error: 'inventory_id required' }, 400)
-  const type = ['sale', 'return', 'adjust'].includes(body.type) ? body.type : 'sale'
+  const type = ['sale', 'return', 'adjust', 'restock'].includes(body.type) ? body.type : 'sale'
   const quantity = Math.abs(parseFloat(body.quantity) || 0)
   if (quantity <= 0) return c.json({ error: 'quantity must be > 0' }, 400)
 
@@ -428,20 +428,40 @@ app.post('/api/inventory/movements', requireAuth, async (c) => {
   const total = quantity * rate
   const entry_date = body.entry_date || new Date().toISOString().slice(0, 10)
 
-  // Stock direction: sale = decrease, return = increase, adjust = use sign of body.direction ('in'/'out')
+  // Stock direction: sale = decrease, return/restock = increase, adjust = use sign of body.direction ('in'/'out')
   let delta = 0
   if (type === 'sale') delta = -quantity
   else if (type === 'return') delta = quantity
+  else if (type === 'restock') delta = quantity
   else if (type === 'adjust') delta = (body.direction === 'out') ? -quantity : quantity
+
+  // Supplier info for restock
+  const supplier_id = body.supplier_id ? parseInt(body.supplier_id) : null
+  const supplier_name = body.supplier_name || ''
 
   await c.env.DB.prepare(
     `INSERT INTO inventory_movements (inventory_id, product_name, entry_date, type, quantity, rate, total, customer_name, notes)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(inventory_id, item.name, entry_date, type, quantity, rate, total, body.customer_name || '', body.notes || '').run()
+  ).bind(inventory_id, item.name, entry_date, type, quantity, rate, total,
+    type === 'restock' ? (supplier_name || body.customer_name || '') : (body.customer_name || ''),
+    body.notes || '').run()
 
   await c.env.DB.prepare(
     `UPDATE inventory SET quantity = quantity + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
   ).bind(delta, inventory_id).run()
+
+  // If restock has a linked supplier client, create a ledger entry in their transactions
+  if (type === 'restock' && supplier_id && total > 0) {
+    // Verify the supplier/client exists
+    const supplier = await c.env.DB.prepare('SELECT id FROM clients WHERE id = ?').bind(supplier_id).first() as any
+    if (supplier) {
+      const desc = `Restock: ${item.name} × ${quantity} units @ PKR ${rate}`
+      await c.env.DB.prepare(
+        `INSERT INTO transactions (client_id, entry_date, bill_no, amount_received, amount_pending, status, description)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(supplier_id, entry_date, '', 0, total, 'Pending', desc).run()
+    }
+  }
 
   return c.json({ success: true })
 })
@@ -454,6 +474,7 @@ app.delete('/api/inventory/movements/:id', requireAuth, async (c) => {
   let reverse = 0
   if (mov.type === 'sale') reverse = mov.quantity            // add back what was sold
   else if (mov.type === 'return') reverse = -mov.quantity    // remove what was returned
+  else if (mov.type === 'restock') reverse = -mov.quantity   // remove what was restocked
   else reverse = 0 // adjust: leave stock as-is to avoid wrong guesses
   if (reverse !== 0) {
     await c.env.DB.prepare('UPDATE inventory SET quantity = quantity + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
