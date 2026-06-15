@@ -1118,31 +1118,33 @@ const App = {
     const { totals, perFolder, topPending, recent, statuses, clientCount, folderCount, billStats,
             empCount, empPaid, empAdvance, expenseStats, rawStats, customSecCount,
             rawList, empList, expenseList, empPaidStats, profitStats, productList, invMfgList,
-            salesTodayStats, salesMonthStats, salesAllTimeStats,
-            salesTodayProducts, salesMonthProducts, salesAllTimeProducts } = data;
+            salesTodayStats, salesMonthStats, salesWeekStats,
+            salesTodayProducts, salesMonthProducts, salesWeekProducts } = data;
     const totalProfit = profitStats?.total_profit || 0;
     const profitMonth = profitStats?.profit_this_month || 0;
     const profitToday = profitStats?.profit_today || 0;
+    const profitWeek = profitStats?.profit_this_week || 0;
     // Side expense totals
     const sideExpTotal = parseFloat(expenseStats?.total) || 0;
     const sideExpToday = parseFloat(expenseStats?.total_today) || 0;
+    const sideExpWeek = parseFloat(expenseStats?.total_week) || 0;
     const sideExpMonth = parseFloat(expenseStats?.total_month) || 0;
     // Raw material purchase cost (actual money spent buying raw material)
     const rawCostStats = data.rawCostStats || {};
-    const rawCostAll = parseFloat(rawCostStats.total_all) || 0;
     const rawCostToday = parseFloat(rawCostStats.total_today) || 0;
+    const rawCostWeek = parseFloat(rawCostStats.total_week) || 0;
     const rawCostMonth = parseFloat(rawCostStats.total_month) || 0;
     // Employee salaries / payments actually paid out
     const salaryPaidStats = data.salaryPaidStats || {};
-    const salaryAll = parseFloat(salaryPaidStats.total_all) || 0;
     const salaryToday = parseFloat(salaryPaidStats.total_today) || 0;
+    const salaryWeek = parseFloat(salaryPaidStats.total_week) || 0;
     const salaryMonth = parseFloat(salaryPaidStats.total_month) || 0;
     // Total business costs = Raw Material + Employee Salaries/Payments + Side Expenses
-    const costAll = rawCostAll + salaryAll + sideExpTotal;
     const costToday = rawCostToday + salaryToday + sideExpToday;
+    const costWeek = rawCostWeek + salaryWeek + sideExpWeek;
     const costMonth = rawCostMonth + salaryMonth + sideExpMonth;
     // Net Profit = Gross Profit − (Raw Material + Salaries + Side Expenses)
-    const finalProfitAll = totalProfit - costAll;
+    const finalProfitWeek = profitWeek - costWeek;
     const finalProfitMonth = profitMonth - costMonth;
     const finalProfitToday = profitToday - costToday;
     const products = productList || [];
@@ -1274,12 +1276,12 @@ const App = {
                   <td class="text-right p-3 font-bold ${finalProfitMonth >= 0 ? 'text-green-700' : 'text-red-700'}">PKR ${this.fmt(finalProfitMonth)}</td>
                 </tr>
                 <tr class="border-t-2 bg-amber-50 font-bold">
-                  <td class="p-3 text-amber-800"><i class="fas fa-trophy mr-1"></i>All Time</td>
-                  <td class="text-right p-3 amount-received">PKR ${this.fmt(totalProfit)}</td>
-                  <td class="text-right p-3 text-orange-600">PKR ${this.fmt(rawCostAll)}</td>
-                  <td class="text-right p-3 text-purple-600">PKR ${this.fmt(salaryAll)}</td>
-                  <td class="text-right p-3 text-red-600">PKR ${this.fmt(sideExpTotal)}</td>
-                  <td class="text-right p-3 ${finalProfitAll >= 0 ? 'text-green-700' : 'text-red-700'}" style="font-size:1.05rem;">PKR ${this.fmt(finalProfitAll)}</td>
+                  <td class="p-3 text-amber-800"><i class="fas fa-calendar-week mr-1"></i>This Week</td>
+                  <td class="text-right p-3 amount-received">PKR ${this.fmt(profitWeek)}</td>
+                  <td class="text-right p-3 text-orange-600">PKR ${this.fmt(rawCostWeek)}</td>
+                  <td class="text-right p-3 text-purple-600">PKR ${this.fmt(salaryWeek)}</td>
+                  <td class="text-right p-3 text-red-600">PKR ${this.fmt(sideExpWeek)}</td>
+                  <td class="text-right p-3 ${finalProfitWeek >= 0 ? 'text-green-700' : 'text-red-700'}" style="font-size:1.05rem;">PKR ${this.fmt(finalProfitWeek)}</td>
                 </tr>
               </tbody>
             </table>
@@ -1338,25 +1340,25 @@ const App = {
               </div>
             </div>
 
-            <!-- All Time -->
+            <!-- This Week -->
             <div class="rounded-lg border border-green-200 bg-green-50 p-4">
               <div class="flex items-center justify-between mb-2">
-                <span class="text-sm font-semibold text-green-800"><i class="fas fa-infinity mr-1"></i>All Time</span>
-                <span class="text-xs text-green-700">${(salesAllTimeStats?.bill_count) || 0} bill(s)</span>
+                <span class="text-sm font-semibold text-green-800"><i class="fas fa-calendar-week mr-1"></i>This Week</span>
+                <span class="text-xs text-green-700">${(salesWeekStats?.bill_count) || 0} bill(s)</span>
               </div>
               <p class="text-xs text-green-700">Units Sold</p>
-              <p class="text-2xl font-extrabold text-green-700">${this.fmt(salesAllTimeStats?.units_sold || 0)}</p>
+              <p class="text-2xl font-extrabold text-green-700">${this.fmt(salesWeekStats?.units_sold || 0)}</p>
               <p class="text-xs text-green-700 mt-2">Revenue</p>
-              <p class="text-lg font-bold text-green-800">PKR ${this.fmt(salesAllTimeStats?.total_revenue || 0)}</p>
+              <p class="text-lg font-bold text-green-800">PKR ${this.fmt(salesWeekStats?.total_revenue || 0)}</p>
               <div class="mt-3 pt-3 border-t border-green-200">
                 <p class="text-xs text-green-800 font-semibold mb-1">Products Sold:</p>
-                ${(!salesAllTimeProducts || salesAllTimeProducts.length === 0) ? '<p class="text-xs text-gray-500 italic">No sales yet</p>' :
-                  salesAllTimeProducts.slice(0, 8).map(p => `
+                ${(!salesWeekProducts || salesWeekProducts.length === 0) ? '<p class="text-xs text-gray-500 italic">No sales this week</p>' :
+                  salesWeekProducts.slice(0, 8).map(p => `
                     <div class="flex justify-between text-xs py-0.5">
                       <span class="text-gray-700 truncate" title="${this.escapeAttr(p.product_name || '')}">${this.escapeHtml(p.product_name || '-')}</span>
                       <span class="font-semibold text-green-700">${this.fmt(p.units_sold)}</span>
                     </div>`).join('')}
-                ${salesAllTimeProducts && salesAllTimeProducts.length > 8 ? `<p class="text-xs text-gray-400 mt-1">+${salesAllTimeProducts.length - 8} more</p>` : ''}
+                ${salesWeekProducts && salesWeekProducts.length > 8 ? `<p class="text-xs text-gray-400 mt-1">+${salesWeekProducts.length - 8} more</p>` : ''}
               </div>
             </div>
           </div>
@@ -1406,38 +1408,43 @@ const App = {
             <span><i class="fas fa-boxes text-orange-500 mr-2"></i>Inventory Summary</span>
             <button onclick="App.showInventory()" class="dash-link-btn">View All <i class="fas fa-arrow-right ml-1"></i></button>
           </h2>
-          ${(!invMfg || invMfg.length === 0) ? '<p class="text-gray-500 text-center py-4">No inventory products yet. <a href="#" onclick="App.showInventory(); return false;" class="text-blue-600 hover:underline">Add a product →</a></p>' : `
+          ${(!invMfg || invMfg.length === 0) ? '<p class="text-gray-500 text-center py-4">No inventory products yet. <a href="#" onclick="App.showInventory(); return false;" class="text-blue-600 hover:underline">Add a product →</a></p>' : (() => {
+            // Show only critical items: low stock (qty <= 10) or overstock (qty >= 100)
+            // Sort: low stock first, then overstock
+            const withQty = invMfg.map(it => ({ ...it, qty: parseFloat(it.quantity) || 0 }));
+            const avgQty = withQty.length > 0 ? withQty.reduce((s,i) => s + i.qty, 0) / withQty.length : 50;
+            const lowThreshold = Math.min(10, avgQty * 0.2);
+            const highThreshold = Math.max(100, avgQty * 3);
+            const lowStock = withQty.filter(i => i.qty <= lowThreshold).sort((a,b) => a.qty - b.qty);
+            const overStock = withQty.filter(i => i.qty >= highThreshold).sort((a,b) => b.qty - a.qty);
+            // Pick up to 2-3 from each category, max 5 total
+            const critical = [...lowStock.slice(0,3), ...overStock.slice(0, Math.max(0, 5 - lowStock.slice(0,3).length))].slice(0,5);
+            if (critical.length === 0) {
+              return `<p class="text-gray-500 text-center py-3 text-sm"><i class="fas fa-check-circle text-green-500 mr-1"></i>All products have normal stock levels. <a href="#" onclick="App.showInventory(); return false;" class="text-blue-600 hover:underline">View All →</a></p>`;
+            }
+            return `<p class="text-xs text-gray-500 mb-2"><i class="fas fa-exclamation-triangle text-amber-500 mr-1"></i>Showing ${critical.length} critical items (low stock / overstock)</p>
             <div class="overflow-x-auto"><table class="w-full text-sm">
               <thead class="bg-gray-50"><tr>
-                <th class="text-left p-3">Product</th>
-                <th class="text-left p-3">SKU</th>
-                <th class="text-left p-3">Category</th>
-                <th class="text-right p-3" title="Quantity available in stock">Quantity</th>
-                <th class="text-right p-3" title="Manufacturing / purchase cost per unit">Cost</th>
-                <th class="text-right p-3" title="Selling / Sale price per unit">Sale Price</th>
-                <th class="text-right p-3" title="Total units sold to customers">Sold</th>
+                <th class="text-left p-2">Product</th>
+                <th class="text-right p-2">Qty</th>
+                <th class="text-right p-2 hidden md:table-cell">Cost</th>
+                <th class="text-right p-2 hidden md:table-cell">Sale Price</th>
+                <th class="text-center p-2">Alert</th>
               </tr></thead><tbody>
-                ${invMfg.map(it => {
-                  const qty = parseFloat(it.quantity) || 0;
+                ${critical.map(it => {
                   const cost = parseFloat(it.manufacturing_cost) || 0;
                   const rate = parseFloat(it.rate) || 0;
-                  const sold = soldMap[it.name] || {};
-                  const unitsSold = parseFloat(sold.units_sold) || 0;
-                  const lowStock = qty <= 5;
-                  return `
-                  <tr class="border-t hover:bg-gray-50 cursor-pointer" onclick="App.showInventory()">
-                    <td class="p-3"><i class="fas fa-box text-orange-500 mr-2"></i><strong>${this.escapeHtml(it.name)}</strong>
-                      <div class="text-xs text-gray-400">per ${this.escapeHtml(it.unit || 'pcs')}</div></td>
-                    <td class="p-3 text-gray-600">${this.escapeHtml(it.sku || '-')}</td>
-                    <td class="p-3 text-gray-600">${this.escapeHtml(it.category || '-')}</td>
-                    <td class="text-right p-3 ${lowStock ? 'text-red-600 font-semibold' : 'text-green-700 font-semibold'}">${this.fmt(qty)} <span class="text-xs text-gray-400">${this.escapeHtml(it.unit || '')}</span></td>
-                    <td class="text-right p-3 text-orange-600">${cost > 0 ? 'PKR ' + this.fmt(cost) : '<span class="text-gray-400">—</span>'}</td>
-                    <td class="text-right p-3 font-medium">PKR ${this.fmt(rate)}</td>
-                    <td class="text-right p-3 text-blue-700 font-semibold">${this.fmt(unitsSold)}</td>
+                  const isLow = it.qty <= lowThreshold;
+                  return `<tr class="border-t hover:bg-gray-50 cursor-pointer" onclick="App.showInventory()">
+                    <td class="p-2"><i class="fas fa-box text-orange-500 mr-1"></i><strong class="text-sm">${this.escapeHtml(it.name)}</strong></td>
+                    <td class="text-right p-2 font-bold ${isLow ? 'text-red-600' : 'text-blue-600'}">${this.fmt(it.qty)}</td>
+                    <td class="text-right p-2 text-orange-600 text-xs hidden md:table-cell">${cost > 0 ? 'PKR '+this.fmt(cost) : '—'}</td>
+                    <td class="text-right p-2 text-xs hidden md:table-cell">PKR ${this.fmt(rate)}</td>
+                    <td class="text-center p-2"><span class="px-2 py-0.5 rounded-full text-xs font-semibold ${isLow ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}">${isLow ? 'Low Stock' : 'Overstock'}</span></td>
                   </tr>`;
                 }).join('')}
-              </tbody></table></div>
-          `}
+              </tbody></table></div>`;
+          })()}
         </section>
 
         <!-- Manufacturing Summary -->
@@ -1484,44 +1491,47 @@ const App = {
             <span><i class="fas fa-puzzle-piece text-teal-600 mr-2"></i>Components Production Summary</span>
             <button onclick="App.showComponents()" class="dash-link-btn">View All <i class="fas fa-arrow-right ml-1"></i></button>
           </h2>
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 text-xs">
+          <div class="grid grid-cols-3 gap-3 mb-4 text-xs">
             <div class="bg-teal-50 rounded p-3"><p class="text-gray-500"><i class="fas fa-sun mr-1"></i>Produced Today</p>
               <p class="font-bold text-teal-700 text-lg">${this.fmt(compProdStats.pieces_today || 0)} <span class="text-xs font-normal">pcs</span></p>
               <p class="text-xs text-gray-400">Payout PKR ${this.fmt(compProdStats.payout_today || 0)}</p></div>
+            <div class="bg-amber-50 rounded p-3"><p class="text-gray-500"><i class="fas fa-calendar-week mr-1"></i>This Week</p>
+              <p class="font-bold text-amber-700 text-lg">${this.fmt(compProdStats.pieces_week || 0)} <span class="text-xs font-normal">pcs</span></p>
+              <p class="text-xs text-gray-400">Payout PKR ${this.fmt(compProdStats.payout_week || 0)}</p></div>
             <div class="bg-cyan-50 rounded p-3"><p class="text-gray-500"><i class="fas fa-calendar-alt mr-1"></i>This Month</p>
               <p class="font-bold text-cyan-700 text-lg">${this.fmt(compProdStats.pieces_month || 0)} <span class="text-xs font-normal">pcs</span></p>
               <p class="text-xs text-gray-400">Payout PKR ${this.fmt(compProdStats.payout_month || 0)}</p></div>
-            <div class="bg-blue-50 rounded p-3"><p class="text-gray-500"><i class="fas fa-infinity mr-1"></i>All Time</p>
-              <p class="font-bold text-blue-700 text-lg">${this.fmt(compProdStats.pieces_all || 0)} <span class="text-xs font-normal">pcs</span></p>
-              <p class="text-xs text-gray-400">Payout PKR ${this.fmt(compProdStats.payout_all || 0)}</p></div>
-            <div class="bg-green-50 rounded p-3"><p class="text-gray-500"><i class="fas fa-cubes mr-1"></i>Total Components</p>
-              <p class="font-bold text-green-700 text-lg">${compProdList.length}</p>
-              <p class="text-xs text-gray-400">${this.fmt(compProdStats.log_count || 0)} production logs</p></div>
           </div>
+          <!-- Tab selector for comp prod period -->
+          <div class="flex gap-2 mb-3" id="comp-prod-tabs">
+            <button onclick="App._compProdTab='today'; App._dashRenderCompProd();" class="px-3 py-1 rounded-full text-xs font-semibold border border-teal-300 bg-teal-50 text-teal-700 comp-prod-tab-btn" data-tab="today">Today</button>
+            <button onclick="App._compProdTab='week'; App._dashRenderCompProd();" class="px-3 py-1 rounded-full text-xs font-semibold border border-gray-200 text-gray-500 comp-prod-tab-btn" data-tab="week">Weekly</button>
+            <button onclick="App._compProdTab='month'; App._dashRenderCompProd();" class="px-3 py-1 rounded-full text-xs font-semibold border border-gray-200 text-gray-500 comp-prod-tab-btn" data-tab="month">Monthly</button>
+          </div>
+          <div id="comp-prod-table-wrap">
           ${(!compProdList || compProdList.length === 0) ? '<p class="text-gray-500 text-center py-4">No components yet. <a href="#" onclick="App.showComponents(); return false;" class="text-blue-600 hover:underline">Add a component →</a></p>' : `
             <div class="overflow-x-auto"><table class="w-full text-sm">
               <thead class="bg-gray-50"><tr>
                 <th class="text-left p-3">Component</th>
                 <th class="text-right p-3" title="Current available stock">In Stock</th>
-                <th class="text-right p-3" title="Pieces produced this month">Produced (Month)</th>
-                <th class="text-right p-3" title="Total pieces produced all time">Produced (All)</th>
+                <th class="text-right p-3" title="Pieces produced today" id="comp-prod-col-header">Produced (Today)</th>
                 <th class="text-right p-3" title="Per-piece worker rate">Rate</th>
-              </tr></thead><tbody>
+              </tr></thead><tbody id="comp-prod-tbody">
                 ${compProdList.slice(0, 20).map(cp => {
                   const stock = parseFloat(cp.quantity) || 0;
                   return `
-                  <tr class="border-t hover:bg-gray-50 cursor-pointer" onclick="App.showComponents()">
+                  <tr class="border-t hover:bg-gray-50 cursor-pointer" onclick="App.showComponents()" data-today="${cp.produced_today||0}" data-week="${cp.produced_week||0}" data-month="${cp.produced_month||0}">
                     <td class="p-3"><i class="fas fa-puzzle-piece text-teal-600 mr-2"></i><strong>${this.escapeHtml(cp.name)}</strong>
                       <span class="text-xs text-gray-400">per ${this.escapeHtml(cp.unit || 'pcs')}</span></td>
                     <td class="text-right p-3 ${stock > 0 ? 'text-green-700 font-semibold' : 'text-gray-400'}">${this.fmt(stock)}</td>
-                    <td class="text-right p-3 text-cyan-700">${this.fmt(cp.produced_month || 0)}</td>
-                    <td class="text-right p-3 text-blue-700 font-semibold">${this.fmt(cp.produced_all || 0)}</td>
+                    <td class="text-right p-3 text-teal-700 font-semibold comp-prod-val">${this.fmt(cp.produced_today || 0)}</td>
                     <td class="text-right p-3">${parseFloat(cp.default_rate) > 0 ? 'PKR ' + this.fmt(cp.default_rate) : '<span class="text-gray-400">—</span>'}</td>
                   </tr>`;
                 }).join('')}
               </tbody></table></div>
             ${compProdList.length > 20 ? `<p class="text-xs text-gray-400 text-center mt-2">Showing 20 of ${compProdList.length} components</p>` : ''}
           `}
+          </div>
         </section>
 
         <!-- Raw Material Summary -->
@@ -1561,40 +1571,39 @@ const App = {
             <span><i class="fas fa-user-tie text-blue-500 mr-2"></i>Employees Summary</span>
             <button onclick="App.showEmployees()" class="dash-link-btn">View All <i class="fas fa-arrow-right ml-1"></i></button>
           </h2>
-          ${(!empList || empList.length === 0) ? '<p class="text-gray-500 text-center py-4">No employees yet</p>' : `
-            <div class="overflow-x-auto"><table class="w-full text-sm">
+          <!-- Emp production tab selector -->
+          <div class="flex gap-2 mb-3" id="emp-prod-tabs">
+            <button onclick="App._empProdTab='today'; App._dashRenderEmpProd();" class="px-3 py-1 rounded-full text-xs font-semibold border border-blue-300 bg-blue-50 text-blue-700 emp-prod-tab-btn" data-tab="today">Today</button>
+            <button onclick="App._empProdTab='week'; App._dashRenderEmpProd();" class="px-3 py-1 rounded-full text-xs font-semibold border border-gray-200 text-gray-500 emp-prod-tab-btn" data-tab="week">Weekly</button>
+            <button onclick="App._empProdTab='month'; App._dashRenderEmpProd();" class="px-3 py-1 rounded-full text-xs font-semibold border border-gray-200 text-gray-500 emp-prod-tab-btn" data-tab="month">Monthly</button>
+          </div>
+          <div id="emp-prod-wrap">
+          ${(!empList || empList.length === 0) ? '<p class="text-gray-500 text-center py-4">No employees yet</p>' : (() => {
+            const empTodayMap = {}; (data.empProdTodayList||[]).forEach(e => empTodayMap[e.id] = e);
+            const empWeekMap = {}; (data.empProdWeekList||[]).forEach(e => empWeekMap[e.id] = e);
+            const empMonthMap = {}; (data.empProdMonthList||[]).forEach(e => empMonthMap[e.id] = e);
+            return `<div class="overflow-x-auto"><table class="w-full text-sm">
               <thead class="bg-gray-50"><tr>
-                <th class="text-left p-3">Employee</th>
-                <th class="text-left p-3">Designation</th>
-                <th class="text-right p-3">Total Salary</th>
-                <th class="text-right p-3">Paid</th>
-                <th class="text-right p-3">Remaining</th>
-                <th class="text-center p-3">Status</th>
-              </tr></thead><tbody>
+                <th class="text-left p-2">Employee</th>
+                <th class="text-left p-2 hidden md:table-cell">Designation</th>
+                <th class="text-right p-2 emp-prod-col-header">Pcs (Today)</th>
+                <th class="text-right p-2 emp-prod-earn-header">Earned</th>
+              </tr></thead><tbody id="emp-prod-tbody">
                 ${empList.map(em => {
-                  const tAmt = parseFloat(em.total_amount) || 0;
-                  const tPaid = parseFloat(em.total_paid) || 0;
-                  const adv = (em.advance_active !== undefined && em.advance_active !== null)
-                    ? (parseFloat(em.advance_active) || 0)
-                    : (parseFloat(em.total_advance) || 0);
-                  const tRemain = (tAmt - tPaid) - adv;
-                  return `
-                  <tr class="border-t hover:bg-gray-50 cursor-pointer" onclick="App.openEmployee(${em.id})">
-                    <td class="p-3"><i class="fas fa-user text-blue-500 mr-2"></i>${this.escapeHtml(em.name)}${em.salary_type === 'per_piece' ? ' <i class="fas fa-cubes text-orange-500 ml-1" title="Per Piece"></i>' : ''}</td>
-                    <td class="p-3 text-gray-600">${this.escapeHtml(em.designation || '-')}</td>
-                    <td class="text-right p-3">PKR ${this.fmt(tAmt)}</td>
-                    <td class="text-right p-3 amount-received">PKR ${this.fmt(tPaid)}</td>
-                    <td class="text-right p-3 ${tRemain < 0 ? 'amount-running' : 'amount-pending'} font-semibold">PKR ${this.fmt(tRemain)}</td>
-                    <td class="text-center p-3"><span class="status-badge ${em.active ? 'status-received' : 'status-cancelled'}">${em.active ? 'Active' : 'Inactive'}</span></td>
-                  </tr>`}).join('')}
-                <tr class="border-t-2 bg-gray-50 font-bold">
-                  <td class="p-3" colspan="2">Totals</td>
-                  <td class="text-right p-3">PKR ${this.fmt(empTotalAmount)}</td>
-                  <td class="text-right p-3 amount-received">PKR ${this.fmt(empTotalPaid)}</td>
-                  <td class="text-right p-3 amount-pending">PKR ${this.fmt(empTotalRemaining)}</td>
-                  <td></td>
-                </tr>
-              </tbody></table></div>`}
+                  const td = empTodayMap[em.id] || {};
+                  return `<tr class="border-t hover:bg-gray-50 cursor-pointer" onclick="App.openEmployee(${em.id})"
+                    data-today-pcs="${td.pcs_today||0}" data-today-earn="${td.earn_today||0}"
+                    data-week-pcs="${(empWeekMap[em.id]||{}).pcs_week||0}" data-week-earn="${(empWeekMap[em.id]||{}).earn_week||0}"
+                    data-month-pcs="${(empMonthMap[em.id]||{}).pcs_month||0}" data-month-earn="${(empMonthMap[em.id]||{}).earn_month||0}">
+                    <td class="p-2"><i class="fas fa-user text-blue-500 mr-1"></i><span class="font-medium">${this.escapeHtml(em.name)}</span>${em.salary_type === 'per_piece' ? ' <i class="fas fa-cubes text-orange-400 ml-1 text-xs" title="Per Piece"></i>' : ''}</td>
+                    <td class="p-2 text-gray-500 text-xs hidden md:table-cell">${this.escapeHtml(em.designation || '-')}</td>
+                    <td class="text-right p-2 font-semibold text-teal-700 emp-prod-pcs">${this.fmt(td.pcs_today||0)}</td>
+                    <td class="text-right p-2 text-green-700 emp-prod-earn">PKR ${this.fmt(td.earn_today||0)}</td>
+                  </tr>`;
+                }).join('')}
+              </tbody></table></div>`;
+          })()}
+          </div>
         </section>
 
         <!-- Side Expenses Summary -->
@@ -1636,8 +1645,11 @@ const App = {
         <div id="dashboard-calendar"></div>
 
         <section class="bg-white rounded-xl shadow-sm p-5">
-          <h2 class="dash-card-title"><span><i class="fas fa-history text-gray-500 mr-2"></i>Recent Transactions</span></h2>
-          ${recent.length === 0 ? '<p class="text-gray-500 text-center py-4">No transactions</p>' : `
+          <h2 class="dash-card-title"><span><i class="fas fa-history text-gray-500 mr-2"></i>Recent Transactions</span>
+            <button onclick="App._dashTxPage=1; App._loadDashTx();" class="dash-link-btn"><i class="fas fa-sync-alt mr-1"></i>Refresh</button>
+          </h2>
+          <div id="dash-tx-wrap">
+            ${recent.length === 0 ? '<p class="text-gray-500 text-center py-4">No transactions</p>' : `
             <div class="overflow-x-auto"><table class="w-full text-sm">
               <thead class="bg-gray-50"><tr>
                 <th class="text-left p-2">Date</th><th class="text-left p-2">Client</th>
@@ -1652,13 +1664,112 @@ const App = {
                     <td class="p-2 text-right amount-received">PKR ${this.fmt(t.amount_received)}</td>
                     <td class="p-2"><span class="status-badge status-${(t.status||'').toLowerCase()}">${this.escapeHtml(t.status || '')}</span></td>
                   </tr>`).join('')}
-              </tbody></table></div>`}
+              </tbody></table></div>
+            <div class="flex items-center justify-between mt-3" id="dash-tx-pagination">
+              <span class="text-xs text-gray-500" id="dash-tx-info">Showing page 1</span>
+              <div class="flex gap-2">
+                <button id="dash-tx-prev" onclick="App._dashTxPage=Math.max(1,(App._dashTxPage||1)-1); App._loadDashTx();" class="btn btn-secondary btn-sm" disabled><i class="fas fa-chevron-left"></i> Prev</button>
+                <button id="dash-tx-next" onclick="App._dashTxPage=(App._dashTxPage||1)+1; App._loadDashTx();" class="btn btn-secondary btn-sm">Next <i class="fas fa-chevron-right"></i></button>
+              </div>
+            </div>`}
+          </div>
         </section>
       </div>`;
 
     // Render calendar
     this.renderCalendar('dashboard-calendar');
 
+    // Init tab states
+    this._compProdTab = this._compProdTab || 'today';
+    this._empProdTab = this._empProdTab || 'today';
+    this._dashTxPage = 1;
+    this._dashTxTotal = 0;
+    this._dashTxPages = 1;
+
+  },
+
+  // --- Component Production Tab switcher ---
+  _dashRenderCompProd() {
+    const tab = this._compProdTab || 'today';
+    const rows = document.querySelectorAll('#comp-prod-tbody tr');
+    const header = document.getElementById('comp-prod-col-header');
+    const labelMap = { today: 'Produced (Today)', week: 'Produced (Weekly)', month: 'Produced (Monthly)' };
+    if (header) header.textContent = labelMap[tab] || 'Produced (Today)';
+    rows.forEach(tr => {
+      const val = tr.getAttribute('data-' + tab) || '0';
+      const cell = tr.querySelector('.comp-prod-val');
+      if (cell) cell.textContent = this.fmt(parseFloat(val) || 0);
+    });
+    document.querySelectorAll('.comp-prod-tab-btn').forEach(btn => {
+      const isActive = btn.getAttribute('data-tab') === tab;
+      btn.className = isActive
+        ? 'px-3 py-1 rounded-full text-xs font-semibold border border-teal-300 bg-teal-50 text-teal-700 comp-prod-tab-btn'
+        : 'px-3 py-1 rounded-full text-xs font-semibold border border-gray-200 text-gray-500 comp-prod-tab-btn';
+    });
+  },
+
+  // --- Employee Production Tab switcher ---
+  _dashRenderEmpProd() {
+    const tab = this._empProdTab || 'today';
+    const rows = document.querySelectorAll('#emp-prod-tbody tr');
+    const colHeader = document.querySelector('.emp-prod-col-header');
+    const earnHeader = document.querySelector('.emp-prod-earn-header');
+    const labelMap = { today: 'Pcs (Today)', week: 'Pcs (Weekly)', month: 'Pcs (Monthly)' };
+    if (colHeader) colHeader.textContent = labelMap[tab] || 'Pcs (Today)';
+    if (earnHeader) earnHeader.textContent = 'Earned';
+    rows.forEach(tr => {
+      const pcs = tr.getAttribute('data-' + tab + '-pcs') || '0';
+      const earn = tr.getAttribute('data-' + tab + '-earn') || '0';
+      const pcsCell = tr.querySelector('.emp-prod-pcs');
+      const earnCell = tr.querySelector('.emp-prod-earn');
+      if (pcsCell) pcsCell.textContent = this.fmt(parseFloat(pcs) || 0);
+      if (earnCell) earnCell.textContent = 'PKR ' + this.fmt(parseFloat(earn) || 0);
+    });
+    document.querySelectorAll('.emp-prod-tab-btn').forEach(btn => {
+      const isActive = btn.getAttribute('data-tab') === tab;
+      btn.className = isActive
+        ? 'px-3 py-1 rounded-full text-xs font-semibold border border-blue-300 bg-blue-50 text-blue-700 emp-prod-tab-btn'
+        : 'px-3 py-1 rounded-full text-xs font-semibold border border-gray-200 text-gray-500 emp-prod-tab-btn';
+    });
+  },
+
+  // --- Dashboard Transactions lazy loader ---
+  async _loadDashTx() {
+    const page = this._dashTxPage || 1;
+    const wrap = document.getElementById('dash-tx-wrap');
+    if (!wrap) return;
+    try {
+      const data = await this.api.get('/api/dashboard/transactions?page=' + page);
+      const txs = data.transactions || [];
+      const total = data.total || 0;
+      const pages = data.pages || 1;
+      this._dashTxTotal = total;
+      this._dashTxPages = pages;
+      const tableHtml = txs.length === 0 ? '<p class="text-gray-500 text-center py-4">No transactions</p>' : `
+        <div class="overflow-x-auto"><table class="w-full text-sm">
+          <thead class="bg-gray-50"><tr>
+            <th class="text-left p-2">Date</th><th class="text-left p-2">Client</th>
+            <th class="text-left p-2">Bill</th><th class="text-right p-2">Received</th>
+            <th class="text-left p-2">Status</th>
+          </tr></thead><tbody>
+            ${txs.map(t => `
+              <tr class="border-t hover:bg-gray-50 cursor-pointer" onclick="App.openClient(${t.client_id})">
+                <td class="p-2">${t.entry_date||''}</td>
+                <td class="p-2">${this.escapeHtml(t.client_name||'')} <span class="text-xs text-gray-500">/ ${this.escapeHtml(t.folder_name||'')}</span></td>
+                <td class="p-2">${this.escapeHtml(t.bill_no||'-')}</td>
+                <td class="p-2 text-right amount-received">PKR ${this.fmt(t.amount_received)}</td>
+                <td class="p-2"><span class="status-badge status-${(t.status||'').toLowerCase()}">${this.escapeHtml(t.status||'')}</span></td>
+              </tr>`).join('')}
+          </tbody></table></div>
+        <div class="flex items-center justify-between mt-3">
+          <span class="text-xs text-gray-500">Page ${page} of ${pages} (${total} total)</span>
+          <div class="flex gap-2">
+            <button ${page <= 1 ? 'disabled' : ''} onclick="App._dashTxPage=Math.max(1,(App._dashTxPage||1)-1); App._loadDashTx();" class="btn btn-secondary btn-sm"><i class="fas fa-chevron-left"></i> Prev</button>
+            <button ${page >= pages ? 'disabled' : ''} onclick="App._dashTxPage=(App._dashTxPage||1)+1; App._loadDashTx();" class="btn btn-secondary btn-sm">Next <i class="fas fa-chevron-right"></i></button>
+          </div>
+        </div>`;
+      wrap.innerHTML = tableHtml;
+    } catch(e) { /* ignore */ }
   },
 
   // ========= INVENTORY =========

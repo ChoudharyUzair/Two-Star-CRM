@@ -440,11 +440,12 @@ app.post('/api/inventory/movements', requireAuth, async (c) => {
   const supplier_name = body.supplier_name || ''
 
   await c.env.DB.prepare(
-    `INSERT INTO inventory_movements (inventory_id, product_name, entry_date, type, quantity, rate, total, customer_name, notes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO inventory_movements (inventory_id, product_name, entry_date, type, quantity, rate, total, customer_name, notes, supplier_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(inventory_id, item.name, entry_date, type, quantity, rate, total,
     type === 'restock' ? (supplier_name || body.customer_name || '') : (body.customer_name || ''),
-    body.notes || '').run()
+    body.notes || '',
+    type === 'restock' ? (supplier_id || null) : null).run()
 
   await c.env.DB.prepare(
     `UPDATE inventory SET quantity = quantity + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
@@ -2435,15 +2436,34 @@ app.delete('/api/custom-sections/rows/:rowId', requireAuth, async (c) => {
   return c.json({ success: true })
 })
 
+// ============ DASHBOARD TRANSACTIONS (paginated) ============
+app.get('/api/dashboard/transactions', requireAuth, async (c) => {
+  const page = parseInt(c.req.query('page') || '1')
+  const limit = 10
+  const offset = (page - 1) * limit
+  const [rows, countRow] = await Promise.all([
+    c.env.DB.prepare(`
+      SELECT t.*, cl.name as client_name, f.name as folder_name
+      FROM transactions t LEFT JOIN clients cl ON cl.id = t.client_id
+      LEFT JOIN folders f ON f.id = cl.folder_id
+      ORDER BY t.created_at DESC LIMIT ? OFFSET ?
+    `).bind(limit, offset).all(),
+    c.env.DB.prepare('SELECT COUNT(*) as c FROM transactions').first()
+  ])
+  const total = (countRow as any)?.c || 0
+  return c.json({ transactions: rows.results, total, page, pages: Math.ceil(total / limit) })
+})
+
 // ============ DASHBOARD ============
 app.get('/api/dashboard', requireAuth, async (c) => {
   const [totals, perFolder, topPending, recent, statuses, clientCount, folderCount, billStats,
          empCount, empPaid, empAdvance, expenseStats, rawStats, customSecCount,
          rawList, empList, expenseList, profitStats, productList, invMfgList,
          supplierStats, mfgProducts, mfgIngredients, builtSoldStats,
-         salesTodayStats, salesMonthStats, salesAllTimeStats,
-         salesTodayProducts, salesMonthProducts, salesAllTimeProducts,
-         rawCostStats, salaryPaidStats, compProdStats, compProdList] = await Promise.all([
+         salesTodayStats, salesMonthStats, salesWeekStats,
+         salesTodayProducts, salesMonthProducts, salesWeekProducts,
+         rawCostStats, salaryPaidStats, compProdStats, compProdList,
+         empProdTodayList, empProdWeekList, empProdMonthList] = await Promise.all([
     // NET receivable / payable computed PER CLIENT first, then summed.
     // For each client: net = opening_balance + SUM(amount_pending) - SUM(amount_received).
     //   net > 0  => an outstanding balance (customer owes us / we owe supplier)
@@ -2534,6 +2554,7 @@ app.get('/api/dashboard', requireAuth, async (c) => {
     c.env.DB.prepare(`SELECT COALESCE(SUM(amount),0) as a FROM employee_transactions WHERE type='advance'`).first(),
     c.env.DB.prepare(`SELECT COUNT(*) as count, COALESCE(SUM(amount),0) as total,
        COALESCE(SUM(CASE WHEN entry_date = date('now') THEN amount ELSE 0 END), 0) as total_today,
+       COALESCE(SUM(CASE WHEN entry_date >= date('now','weekday 0','-6 days') THEN amount ELSE 0 END), 0) as total_week,
        COALESCE(SUM(CASE WHEN entry_date >= date('now','start of month') THEN amount ELSE 0 END), 0) as total_month
        FROM side_expenses`).first(),
     c.env.DB.prepare(`SELECT COUNT(*) as count, COALESCE(SUM(total_value),0) as total, COALESCE(SUM(quantity),0) as qty FROM raw_materials`).first(),
@@ -2562,7 +2583,8 @@ app.get('/api/dashboard', requireAuth, async (c) => {
       SELECT
         COALESCE(SUM(net_profit), 0) as total_profit,
         COALESCE(SUM(CASE WHEN bill_date >= date('now','start of month') THEN net_profit ELSE 0 END), 0) as profit_this_month,
-        COALESCE(SUM(CASE WHEN bill_date = date('now') THEN net_profit ELSE 0 END), 0) as profit_today
+        COALESCE(SUM(CASE WHEN bill_date = date('now') THEN net_profit ELSE 0 END), 0) as profit_today,
+        COALESCE(SUM(CASE WHEN bill_date >= date('now','weekday 0','-6 days') THEN net_profit ELSE 0 END), 0) as profit_this_week
       FROM bills
     `).first(),
     // Products / Manufacturing summary
@@ -2619,13 +2641,14 @@ app.get('/api/dashboard', requireAuth, async (c) => {
       LEFT JOIN bills b ON b.id = bi.bill_id
       WHERE b.bill_date >= date('now','start of month')
     `).first(),
-    // Sales totals — all time
+    // Sales totals — this week (Mon-Sun)
     c.env.DB.prepare(`
       SELECT COALESCE(SUM(bi.quantity), 0) as units_sold,
              COALESCE(SUM(bi.total), 0) as total_revenue,
              COUNT(DISTINCT b.id) as bill_count
       FROM bill_items bi
       LEFT JOIN bills b ON b.id = bi.bill_id
+      WHERE b.bill_date >= date('now','weekday 0','-6 days')
     `).first(),
     // Per-product sales — today
     c.env.DB.prepare(`
@@ -2649,31 +2672,39 @@ app.get('/api/dashboard', requireAuth, async (c) => {
       GROUP BY bi.product_name
       ORDER BY units_sold DESC
     `).all(),
-    // Per-product sales — all time
+    // Per-product sales — this week
     c.env.DB.prepare(`
       SELECT bi.product_name,
              COALESCE(SUM(bi.quantity), 0) as units_sold,
              COALESCE(SUM(bi.total), 0) as total_revenue
       FROM bill_items bi
       LEFT JOIN bills b ON b.id = bi.bill_id
-      WHERE bi.product_name IS NOT NULL AND bi.product_name != ''
+      WHERE b.bill_date >= date('now','weekday 0','-6 days') AND bi.product_name IS NOT NULL AND bi.product_name != ''
       GROUP BY bi.product_name
       ORDER BY units_sold DESC
     `).all(),
-    // Raw material PURCHASE cost (actual money spent buying raw material) — today / month / all
+    // Raw material + supplier inventory restock cost — today / week / month / all
+    // supplier_id NOT NULL in inventory_movements = bought from supplier (deduct from profit)
+    // supplier_id IS NULL = own manufactured product (do NOT deduct - cost already in mfg_cost)
     c.env.DB.prepare(`
       SELECT
-        COALESCE(SUM(total_amount), 0) as total_all,
-        COALESCE(SUM(CASE WHEN entry_date = date('now') THEN total_amount ELSE 0 END), 0) as total_today,
-        COALESCE(SUM(CASE WHEN entry_date >= date('now','start of month') THEN total_amount ELSE 0 END), 0) as total_month
-      FROM raw_material_purchases
+        COALESCE(SUM(rmp.total_amount), 0) +
+          COALESCE((SELECT SUM(im.total) FROM inventory_movements im WHERE im.type='restock' AND im.supplier_id IS NOT NULL), 0) as total_all,
+        COALESCE(SUM(CASE WHEN rmp.entry_date = date('now') THEN rmp.total_amount ELSE 0 END), 0) +
+          COALESCE((SELECT SUM(im.total) FROM inventory_movements im WHERE im.type='restock' AND im.supplier_id IS NOT NULL AND im.entry_date = date('now')), 0) as total_today,
+        COALESCE(SUM(CASE WHEN rmp.entry_date >= date('now','weekday 0','-6 days') THEN rmp.total_amount ELSE 0 END), 0) +
+          COALESCE((SELECT SUM(im.total) FROM inventory_movements im WHERE im.type='restock' AND im.supplier_id IS NOT NULL AND im.entry_date >= date('now','weekday 0','-6 days')), 0) as total_week,
+        COALESCE(SUM(CASE WHEN rmp.entry_date >= date('now','start of month') THEN rmp.total_amount ELSE 0 END), 0) +
+          COALESCE((SELECT SUM(im.total) FROM inventory_movements im WHERE im.type='restock' AND im.supplier_id IS NOT NULL AND im.entry_date >= date('now','start of month')), 0) as total_month
+      FROM raw_material_purchases rmp
     `).first(),
-    // Employee salary/payments actually PAID (salary paid + advance + bonus) — today / month / all
+    // Employee salary/payments actually PAID (salary paid + advance + bonus) — today / week / month / all
     // We treat the actual cash that went out to workers as a cost for Net Profit.
     c.env.DB.prepare(`
       SELECT
         COALESCE(SUM(paidval), 0) as total_all,
         COALESCE(SUM(CASE WHEN entry_date = date('now') THEN paidval ELSE 0 END), 0) as total_today,
+        COALESCE(SUM(CASE WHEN entry_date >= date('now','weekday 0','-6 days') THEN paidval ELSE 0 END), 0) as total_week,
         COALESCE(SUM(CASE WHEN entry_date >= date('now','start of month') THEN paidval ELSE 0 END), 0) as total_month
       FROM (
         SELECT entry_date,
@@ -2685,25 +2716,59 @@ app.get('/api/dashboard', requireAuth, async (c) => {
         FROM employee_transactions
       )
     `).first(),
-    // #5: Components Production summary — overall totals (pieces produced today / month / all + payout)
+    // #5: Components Production summary — overall totals (pieces produced today / week / month + payout)
     c.env.DB.prepare(`
       SELECT
-        COALESCE(SUM(quantity),0) as pieces_all,
-        COALESCE(SUM(payout),0) as payout_all,
         COALESCE(SUM(CASE WHEN entry_date = date('now') THEN quantity ELSE 0 END),0) as pieces_today,
         COALESCE(SUM(CASE WHEN entry_date = date('now') THEN payout ELSE 0 END),0) as payout_today,
+        COALESCE(SUM(CASE WHEN entry_date >= date('now','weekday 0','-6 days') THEN quantity ELSE 0 END),0) as pieces_week,
+        COALESCE(SUM(CASE WHEN entry_date >= date('now','weekday 0','-6 days') THEN payout ELSE 0 END),0) as payout_week,
         COALESCE(SUM(CASE WHEN entry_date >= date('now','start of month') THEN quantity ELSE 0 END),0) as pieces_month,
         COALESCE(SUM(CASE WHEN entry_date >= date('now','start of month') THEN payout ELSE 0 END),0) as payout_month,
         COUNT(*) as log_count
       FROM production_logs
     `).first(),
-    // #5: Components list with current stock + total produced (all time)
+    // #5: Components list with current stock + produced today/week/month
     c.env.DB.prepare(`
       SELECT cmp.id, cmp.name, cmp.unit, cmp.quantity, cmp.default_rate,
-        (SELECT COALESCE(SUM(pl.quantity),0) FROM production_logs pl WHERE pl.component_id = cmp.id) as produced_all,
+        (SELECT COALESCE(SUM(pl.quantity),0) FROM production_logs pl WHERE pl.component_id = cmp.id AND pl.entry_date = date('now')) as produced_today,
+        (SELECT COALESCE(SUM(pl.quantity),0) FROM production_logs pl WHERE pl.component_id = cmp.id AND pl.entry_date >= date('now','weekday 0','-6 days')) as produced_week,
         (SELECT COALESCE(SUM(pl.quantity),0) FROM production_logs pl WHERE pl.component_id = cmp.id AND pl.entry_date >= date('now','start of month')) as produced_month
       FROM components cmp
       ORDER BY cmp.name ASC
+    `).all(),
+    // Employee production today - per employee: pieces made today
+    c.env.DB.prepare(`
+      SELECT e.id, e.name, e.designation, e.salary_type,
+        COALESCE(SUM(CASE WHEN et.entry_date = date('now') AND et.entry_type='per_piece' THEN et.quantity ELSE 0 END),0) as pcs_today,
+        COALESCE(SUM(CASE WHEN et.entry_date = date('now') AND et.entry_type='per_piece' THEN et.amount ELSE 0 END),0) as earn_today,
+        COUNT(DISTINCT CASE WHEN et.entry_date = date('now') AND et.entry_type='per_piece' THEN et.item_name ELSE NULL END) as items_today
+      FROM employees e
+      LEFT JOIN employee_transactions et ON et.employee_id = e.id AND et.type='salary'
+      WHERE e.active = 1
+      GROUP BY e.id ORDER BY e.name
+    `).all(),
+    // Employee production this week
+    c.env.DB.prepare(`
+      SELECT e.id, e.name, e.designation, e.salary_type,
+        COALESCE(SUM(CASE WHEN et.entry_date >= date('now','weekday 0','-6 days') AND et.entry_type='per_piece' THEN et.quantity ELSE 0 END),0) as pcs_week,
+        COALESCE(SUM(CASE WHEN et.entry_date >= date('now','weekday 0','-6 days') AND et.entry_type='per_piece' THEN et.amount ELSE 0 END),0) as earn_week,
+        COUNT(DISTINCT CASE WHEN et.entry_date >= date('now','weekday 0','-6 days') AND et.entry_type='per_piece' THEN et.item_name ELSE NULL END) as items_week
+      FROM employees e
+      LEFT JOIN employee_transactions et ON et.employee_id = e.id AND et.type='salary'
+      WHERE e.active = 1
+      GROUP BY e.id ORDER BY e.name
+    `).all(),
+    // Employee production this month
+    c.env.DB.prepare(`
+      SELECT e.id, e.name, e.designation, e.salary_type,
+        COALESCE(SUM(CASE WHEN et.entry_date >= date('now','start of month') AND et.entry_type='per_piece' THEN et.quantity ELSE 0 END),0) as pcs_month,
+        COALESCE(SUM(CASE WHEN et.entry_date >= date('now','start of month') AND et.entry_type='per_piece' THEN et.amount ELSE 0 END),0) as earn_month,
+        COUNT(DISTINCT CASE WHEN et.entry_date >= date('now','start of month') AND et.entry_type='per_piece' THEN et.item_name ELSE NULL END) as items_month
+      FROM employees e
+      LEFT JOIN employee_transactions et ON et.employee_id = e.id AND et.type='salary'
+      WHERE e.active = 1
+      GROUP BY e.id ORDER BY e.name
     `).all()
   ])
 
@@ -2735,14 +2800,17 @@ app.get('/api/dashboard', requireAuth, async (c) => {
     builtSoldStats: builtSoldStats.results,
     salesTodayStats,
     salesMonthStats,
-    salesAllTimeStats,
+    salesWeekStats,
     salesTodayProducts: salesTodayProducts.results,
     salesMonthProducts: salesMonthProducts.results,
-    salesAllTimeProducts: salesAllTimeProducts.results,
+    salesWeekProducts: salesWeekProducts.results,
     rawCostStats,
     salaryPaidStats,
     compProdStats,
-    compProdList: compProdList.results
+    compProdList: compProdList.results,
+    empProdTodayList: empProdTodayList.results,
+    empProdWeekList: empProdWeekList.results,
+    empProdMonthList: empProdMonthList.results
   })
 })
 
