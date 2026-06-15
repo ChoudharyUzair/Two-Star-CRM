@@ -1267,14 +1267,6 @@ const App = {
                   <td class="text-right p-3 text-red-600">PKR ${this.fmt(sideExpToday)}</td>
                   <td class="text-right p-3 font-bold ${finalProfitToday >= 0 ? 'text-green-700' : 'text-red-700'}">PKR ${this.fmt(finalProfitToday)}</td>
                 </tr>
-                <tr class="border-t">
-                  <td class="p-3 font-semibold text-teal-700"><i class="fas fa-calendar-alt mr-1"></i>This Month</td>
-                  <td class="text-right p-3 amount-received">PKR ${this.fmt(profitMonth)}</td>
-                  <td class="text-right p-3 text-orange-600">PKR ${this.fmt(rawCostMonth)}</td>
-                  <td class="text-right p-3 text-purple-600">PKR ${this.fmt(salaryMonth)}</td>
-                  <td class="text-right p-3 text-red-600">PKR ${this.fmt(sideExpMonth)}</td>
-                  <td class="text-right p-3 font-bold ${finalProfitMonth >= 0 ? 'text-green-700' : 'text-red-700'}">PKR ${this.fmt(finalProfitMonth)}</td>
-                </tr>
                 <tr class="border-t-2 bg-amber-50 font-bold">
                   <td class="p-3 text-amber-800"><i class="fas fa-calendar-week mr-1"></i>This Week</td>
                   <td class="text-right p-3 amount-received">PKR ${this.fmt(profitWeek)}</td>
@@ -1282,6 +1274,14 @@ const App = {
                   <td class="text-right p-3 text-purple-600">PKR ${this.fmt(salaryWeek)}</td>
                   <td class="text-right p-3 text-red-600">PKR ${this.fmt(sideExpWeek)}</td>
                   <td class="text-right p-3 ${finalProfitWeek >= 0 ? 'text-green-700' : 'text-red-700'}" style="font-size:1.05rem;">PKR ${this.fmt(finalProfitWeek)}</td>
+                </tr>
+                <tr class="border-t">
+                  <td class="p-3 font-semibold text-teal-700"><i class="fas fa-calendar-alt mr-1"></i>This Month</td>
+                  <td class="text-right p-3 amount-received">PKR ${this.fmt(profitMonth)}</td>
+                  <td class="text-right p-3 text-orange-600">PKR ${this.fmt(rawCostMonth)}</td>
+                  <td class="text-right p-3 text-purple-600">PKR ${this.fmt(salaryMonth)}</td>
+                  <td class="text-right p-3 text-red-600">PKR ${this.fmt(sideExpMonth)}</td>
+                  <td class="text-right p-3 font-bold ${finalProfitMonth >= 0 ? 'text-green-700' : 'text-red-700'}">PKR ${this.fmt(finalProfitMonth)}</td>
                 </tr>
               </tbody>
             </table>
@@ -1318,28 +1318,6 @@ const App = {
               </div>
             </div>
 
-            <!-- This Month -->
-            <div class="rounded-lg border border-teal-200 bg-teal-50 p-4">
-              <div class="flex items-center justify-between mb-2">
-                <span class="text-sm font-semibold text-teal-800"><i class="fas fa-calendar-alt mr-1"></i>This Month</span>
-                <span class="text-xs text-teal-700">${(salesMonthStats?.bill_count) || 0} bill(s)</span>
-              </div>
-              <p class="text-xs text-teal-700">Units Sold</p>
-              <p class="text-2xl font-extrabold text-teal-700">${this.fmt(salesMonthStats?.units_sold || 0)}</p>
-              <p class="text-xs text-teal-700 mt-2">Revenue</p>
-              <p class="text-lg font-bold text-teal-800">PKR ${this.fmt(salesMonthStats?.total_revenue || 0)}</p>
-              <div class="mt-3 pt-3 border-t border-teal-200">
-                <p class="text-xs text-teal-800 font-semibold mb-1">Products Sold:</p>
-                ${(!salesMonthProducts || salesMonthProducts.length === 0) ? '<p class="text-xs text-gray-500 italic">No sales this month</p>' :
-                  salesMonthProducts.slice(0, 8).map(p => `
-                    <div class="flex justify-between text-xs py-0.5">
-                      <span class="text-gray-700 truncate" title="${this.escapeAttr(p.product_name || '')}">${this.escapeHtml(p.product_name || '-')}</span>
-                      <span class="font-semibold text-teal-700">${this.fmt(p.units_sold)}</span>
-                    </div>`).join('')}
-                ${salesMonthProducts && salesMonthProducts.length > 8 ? `<p class="text-xs text-gray-400 mt-1">+${salesMonthProducts.length - 8} more</p>` : ''}
-              </div>
-            </div>
-
             <!-- This Week -->
             <div class="rounded-lg border border-green-200 bg-green-50 p-4">
               <div class="flex items-center justify-between mb-2">
@@ -1359,6 +1337,28 @@ const App = {
                       <span class="font-semibold text-green-700">${this.fmt(p.units_sold)}</span>
                     </div>`).join('')}
                 ${salesWeekProducts && salesWeekProducts.length > 8 ? `<p class="text-xs text-gray-400 mt-1">+${salesWeekProducts.length - 8} more</p>` : ''}
+              </div>
+            </div>
+
+            <!-- This Month -->
+            <div class="rounded-lg border border-teal-200 bg-teal-50 p-4">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-sm font-semibold text-teal-800"><i class="fas fa-calendar-alt mr-1"></i>This Month</span>
+                <span class="text-xs text-teal-700">${(salesMonthStats?.bill_count) || 0} bill(s)</span>
+              </div>
+              <p class="text-xs text-teal-700">Units Sold</p>
+              <p class="text-2xl font-extrabold text-teal-700">${this.fmt(salesMonthStats?.units_sold || 0)}</p>
+              <p class="text-xs text-teal-700 mt-2">Revenue</p>
+              <p class="text-lg font-bold text-teal-800">PKR ${this.fmt(salesMonthStats?.total_revenue || 0)}</p>
+              <div class="mt-3 pt-3 border-t border-teal-200">
+                <p class="text-xs text-teal-800 font-semibold mb-1">Products Sold:</p>
+                ${(!salesMonthProducts || salesMonthProducts.length === 0) ? '<p class="text-xs text-gray-500 italic">No sales this month</p>' :
+                  salesMonthProducts.slice(0, 8).map(p => `
+                    <div class="flex justify-between text-xs py-0.5">
+                      <span class="text-gray-700 truncate" title="${this.escapeAttr(p.product_name || '')}">${this.escapeHtml(p.product_name || '-')}</span>
+                      <span class="font-semibold text-teal-700">${this.fmt(p.units_sold)}</span>
+                    </div>`).join('')}
+                ${salesMonthProducts && salesMonthProducts.length > 8 ? `<p class="text-xs text-gray-400 mt-1">+${salesMonthProducts.length - 8} more</p>` : ''}
               </div>
             </div>
           </div>
@@ -5643,11 +5643,10 @@ const App = {
           <div class="invoice-header">
             <div class="logo-block">${logoHtml}</div>
             <div class="company-block">
-              ${!b.logo_url ? `<h1>${this.escapeHtml(b.company_name || 'Two Star Industries')}</h1>` : ''}
+              <h1>${this.escapeHtml(b.company_name || 'Two Star Industries')}</h1>
               ${b.bill_address ? `<p><i class="fas fa-map-marker-alt mr-1"></i>${this.escapeHtml(b.bill_address)}</p>` : ''}
               ${b.bill_phone ? `<p><i class="fas fa-phone mr-1"></i>${this.escapeHtml(b.bill_phone)}</p>` : ''}
               ${b.bill_email ? `<p><i class="fas fa-envelope mr-1"></i>${this.escapeHtml(b.bill_email)}</p>` : ''}
-              ${b.bill_website ? `<p><i class="fas fa-globe mr-1"></i>${this.escapeHtml(b.bill_website)}</p>` : ''}
             </div>
             <div class="invoice-label-block"><h2>INVOICE</h2></div>
           </div>
