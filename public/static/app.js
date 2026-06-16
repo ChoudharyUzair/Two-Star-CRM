@@ -5635,18 +5635,26 @@ const App = {
       const total = parseFloat(bill.total) || 0;
       const paid = parseFloat(bill.paid) || 0;
       const due = total - paid;
-      const logoHtml = b.logo_url ? `<img src="${this.escapeAttr(b.logo_url)}" alt="logo" style="width:300px;height:150px;max-width:300px;min-width:120px;object-fit:contain;display:block;">` :
-        `<div class="logo-fallback">${this.escapeHtml((b.company_name || 'TS').split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase())}</div>`;
+      const hasLogo = !!(b.logo_url && String(b.logo_url).trim());
+      // When a logo is present the brand name is part of the logo image, so we
+      // do NOT print the company name text. The fallback initials block (with the
+      // company name beside it) is only used when there is no logo.
+      const logoHtml = hasLogo
+        ? `<img src="${this.escapeAttr(b.logo_url)}" alt="logo" class="bill-logo-img">`
+        : `<div class="logo-fallback">${this.escapeHtml((b.company_name || 'TS').split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase())}</div>`;
+      // Contact lines are always useful on an invoice.
+      const contactHtml = `
+              ${b.bill_address ? `<p><i class="fas fa-map-marker-alt mr-1"></i>${this.escapeHtml(b.bill_address)}</p>` : ''}
+              ${b.bill_phone ? `<p><i class="fas fa-phone mr-1"></i>${this.escapeHtml(b.bill_phone)}</p>` : ''}
+              ${b.bill_email ? `<p><i class="fas fa-envelope mr-1"></i>${this.escapeHtml(b.bill_email)}</p>` : ''}`;
       const html = `
         <div class="invoice-page print-area" id="bill-print-area">
 
-          <div class="invoice-header">
+          <div class="invoice-header${hasLogo ? ' has-logo' : ''}">
             <div class="logo-block">${logoHtml}</div>
             <div class="company-block">
-              <h1>${this.escapeHtml(b.company_name || 'Two Star Industries')}</h1>
-              ${b.bill_address ? `<p><i class="fas fa-map-marker-alt mr-1"></i>${this.escapeHtml(b.bill_address)}</p>` : ''}
-              ${b.bill_phone ? `<p><i class="fas fa-phone mr-1"></i>${this.escapeHtml(b.bill_phone)}</p>` : ''}
-              ${b.bill_email ? `<p><i class="fas fa-envelope mr-1"></i>${this.escapeHtml(b.bill_email)}</p>` : ''}
+              ${hasLogo ? '' : `<h1>${this.escapeHtml(b.company_name || 'Two Star Industries')}</h1>`}
+              ${contactHtml}
             </div>
             <div class="invoice-label-block"><h2>INVOICE</h2></div>
           </div>

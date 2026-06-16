@@ -460,15 +460,31 @@ body {
   line-height: 1.2;
 }
 .invoice-header .company-block p { margin: 2px 0; font-size: 0.82rem; color: #475569; }
-.invoice-header .logo-block img,
-.invoice-header .logo-block .logo-fallback {
-  width: 300px; height: 150px;
-  max-width: 300px;
-  min-width: 120px;
+
+/* Logo: ALWAYS preserve the natural aspect ratio (never stretch / squish).
+   We constrain the box with max-width/max-height and let width & height stay
+   auto so the browser keeps the original proportions. */
+.invoice-header .logo-block { flex-shrink: 0; display: flex; align-items: center; }
+.invoice-header .logo-block .bill-logo-img {
+  width: auto;
+  height: auto;
+  max-width: 260px;
+  max-height: 110px;
   object-fit: contain;
   display: block;
 }
-.invoice-header .logo-block { flex-shrink: 0; }
+.invoice-header .logo-block .logo-fallback {
+  width: 130px;
+  height: 110px;
+  object-fit: contain;
+  display: flex;
+}
+/* When a logo image is used, give it a touch more room and pull the
+   contact details right next to it for a clean header like the screenshot. */
+.invoice-header.has-logo .logo-block .bill-logo-img {
+  max-width: 320px;
+  max-height: 120px;
+}
 .invoice-header .invoice-label-block { flex-shrink: 0; text-align: right; align-self: flex-start; }
 .invoice-header .invoice-label-block h2 {
   margin: 0; font-size: 1.3rem; font-weight: 800; color: #94a3b8;
@@ -574,6 +590,20 @@ body {
   }
   .no-print { display: none !important; }
   .invoice-page { box-shadow: none; padding: 0; }
+  /* Keep the dark backgrounds (table header & grand total) when printing,
+     exactly like the on-screen preview / screenshot. */
+  .print-area, .print-area * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  /* Never let the logo stretch or distort on the printed page. */
+  .invoice-header .logo-block .bill-logo-img {
+    width: auto !important;
+    height: auto !important;
+    max-width: 320px !important;
+    max-height: 120px !important;
+    object-fit: contain !important;
+  }
   @page { margin: 0.5in; size: A4; }
 }
 
