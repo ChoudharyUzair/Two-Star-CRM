@@ -353,7 +353,11 @@ Calendar widget redesigned to be ~30% smaller (cells, gaps, fonts, paddings) whi
 - **Platform**: Cloudflare Pages
 - **Status**: ✅ Active
 - **Tech Stack**: Hono + TypeScript + Vite + Cloudflare D1 + TailwindCSS
-- **Last Updated**: 2026-06-13
+- **Last Updated**: 2026-06-16
+
+### Latest changes (2026-06-16)
+- **Invoice brand name logic:** Agar logo set hai to invoice header me company/brand **name text show nahi hota** (logo hi brand hai). Logo na ho to hi brand name aata hai.
+- **Logo aspect ratio fix (Print / PDF / WhatsApp):** Logo ab kabhi pichka/stretch nahi hota. Logo ki **natural aspect ratio** preload karke explicit width/height set ki jaati hai, aur PDF banane se pehle image fully load hone ka wait hota hai — teeno outputs (Print, PDF, WhatsApp) me clean, undistorted logo aata hai.
 
 ## Local Development
 ```bash

@@ -5621,6 +5621,26 @@ const App = {
     } catch (e) { this.toast('Failed', 'error'); }
   },
 
+  // Preload an image and resolve its natural pixel dimensions.
+  // Resolves { w, h } or null (never rejects) so the caller can fall back to
+  // CSS-based auto sizing if the image can't be measured.
+  _loadImageSize(src) {
+    return new Promise((resolve) => {
+      try {
+        const img = new Image();
+        let done = false;
+        const finish = (val) => { if (!done) { done = true; resolve(val); } };
+        img.onload = () => finish({ w: img.naturalWidth || img.width, h: img.naturalHeight || img.height });
+        img.onerror = () => finish(null);
+        // Safety timeout in case the image never loads (e.g. broken data URL).
+        setTimeout(() => finish(null), 4000);
+        img.src = src;
+        // Cached images may already be complete before onload binds.
+        if (img.complete && img.naturalWidth) finish({ w: img.naturalWidth, h: img.naturalHeight });
+      } catch { resolve(null); }
+    });
+  },
+
   async printBill(id) {
     try {
       const data = await this.api.get(`/api/bills/${id}`);
@@ -5639,9 +5659,30 @@ const App = {
       // When a logo is present the brand name is part of the logo image, so we
       // do NOT print the company name text. The fallback initials block (with the
       // company name beside it) is only used when there is no logo.
-      const logoHtml = hasLogo
-        ? `<img src="${this.escapeAttr(b.logo_url)}" alt="logo" class="bill-logo-img">`
-        : `<div class="logo-fallback">${this.escapeHtml((b.company_name || 'TS').split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase())}</div>`;
+      //
+      // IMPORTANT (logo never squished/stretched): html2canvas (used for PDF /
+      // WhatsApp) does not reliably honour CSS `width:auto;height:auto`, which can
+      // distort the logo. So we preload the image, read its NATURAL aspect ratio
+      // and apply EXPLICIT pixel width & height that keep the original proportions
+      // and fit inside the header box. This guarantees a clean, undistorted logo
+      // in Print, PDF and WhatsApp output alike.
+      let logoHtml;
+      if (hasLogo) {
+        const MAX_W = 300, MAX_H = 120; // header logo box bounds
+        let dim = await this._loadImageSize(b.logo_url);
+        let w, h;
+        if (dim && dim.w > 0 && dim.h > 0) {
+          const scale = Math.min(MAX_W / dim.w, MAX_H / dim.h);
+          w = Math.round(dim.w * scale);
+          h = Math.round(dim.h * scale);
+        }
+        const sizeAttrs = (w && h)
+          ? `width="${w}" height="${h}" style="width:${w}px;height:${h}px;object-fit:contain;display:block;"`
+          : `style="width:auto;height:auto;max-width:${MAX_W}px;max-height:${MAX_H}px;object-fit:contain;display:block;"`;
+        logoHtml = `<img src="${this.escapeAttr(b.logo_url)}" alt="logo" class="bill-logo-img" ${sizeAttrs}>`;
+      } else {
+        logoHtml = `<div class="logo-fallback">${this.escapeHtml((b.company_name || 'TS').split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase())}</div>`;
+      }
       // Contact lines are always useful on an invoice.
       const contactHtml = `
               ${b.bill_address ? `<p><i class="fas fa-map-marker-alt mr-1"></i>${this.escapeHtml(b.bill_address)}</p>` : ''}
@@ -5729,6 +5770,19 @@ const App = {
     if (!node) { this.toast('Pehle bill preview kholें', 'error'); return null; }
     const jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
     if (!jsPDFCtor || !window.html2canvas) { this.toast('PDF library load nahi hui — page refresh karein', 'error'); return null; }
+    // Make sure every <img> inside the bill (especially the logo) is fully
+    // decoded before we rasterize. This prevents a blank / squished logo in the
+    // generated PDF.
+    try {
+      const imgs = Array.from(node.querySelectorAll('img'));
+      await Promise.all(imgs.map(img => {
+        if (img.complete && img.naturalWidth) return Promise.resolve();
+        return new Promise((res) => {
+          img.onload = img.onerror = () => res();
+          setTimeout(res, 4000);
+        });
+      }));
+    } catch {}
     // Render the DOM node to a high-resolution canvas
     const canvas = await window.html2canvas(node, { scale: 2, backgroundColor: '#ffffff', useCORS: true, allowTaint: true, logging: false, imageTimeout: 5000 });
     const imgData = canvas.toDataURL('image/jpeg', 0.95);
