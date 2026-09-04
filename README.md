@@ -6,6 +6,52 @@
 - **Goal**: Complete business CRM for Two Star Industries — manage clients, ledgers, inventory, raw materials, manufacturing recipes, employees, side expenses, and bills with auto Net Profit tracking.
 - **Stack**: Hono (TypeScript) + Cloudflare Pages + Cloudflare D1 (SQLite) + TailwindCSS + Vanilla JS frontend
 
+## What's New (latest update — 2026-09-04) — 🏦 Banking / Payments System (fully integrated)
+
+Ab CRM me ek **proper industrial-level Banking / Payments system** add ho gaya hai jahan **har paisa jo aata (IN) ya jata (OUT) hai woh kisi na kisi bank/cash account se linked hota hai**. Poora system ek jagah linked hai.
+
+### Core idea (jaisa owner ne maanga)
+1. **Apne banks / cash accounts add karo** — har account me opening balance (e.g. "is bank account me itni amount hai").
+2. **Customer se payment aayi** → uski ledger me entry karo → jis bank account me aayi woh **select** karo → utni amount us bank ke balance me **plus (+)** ho jati hai.
+3. **Kisi ko pay kiya** (supplier, salary, employee, expense, raw material — kuch bhi) → jis account se diya woh **select** karo → utni amount us balance se **minus (−)** ho jati hai.
+4. Neeche **proper records** (last transactions, running balance) dikhte hain.
+5. **Bank statement PDF** form me nikal sakte ho (Two Star branding ke saath).
+
+### Golden rule (data integrity)
+`current_balance = opening_balance + Σ(money IN) − Σ(money OUT)` — balance kabhi incrementally drift nahi karta; har change ke baad server-side `recomputeBankBalance()` se **poora dobara compute** hota hai. Isliye edit / move / delete sab **hamesha sahi** rehta hai (regression-tested).
+
+### Everything is LINKED (single system)
+In sab modules ki har money-flow entry me ab ek **Bank/Cash account selector** hai, aur woh entry us account ke ledger me automatically reflect hoti hai:
+
+| Module | Direction | Category |
+|---|---|---|
+| Customer ledger payment (Received) | **IN (+)** | `customer_payment` |
+| Supplier ledger payment (Paid) | **OUT (−)** | `supplier_payment` |
+| Bill — Paid amount | **IN (+)** | `bill` |
+| Employee salary / payment / advance (paid) | **OUT (−)** | `salary` / `employee` |
+| Side expense | **OUT (−)** | `expense` |
+| Raw material purchase / restock / pay-supplier (paid) | **OUT (−)** | `raw_material` |
+| Bank ↔ Bank transfer | OUT of one, IN to other | `transfer` |
+
+Har linked table par `bank_account_id` + `bank_txn_id` columns hain; ek central `syncModuleBankTxn()` helper linked bank transaction ko idempotently create / update / move / remove karta hai (source entry edit/delete karo to bank txn bhi khud adjust ho jata hai).
+
+### UI
+- **Nav → "Banking / Payments"**: saare accounts ka grid + KPIs (Total Balance, Money In, Money Out, Net Flow), aur Money In / Money Out / Transfer / Add Account buttons.
+- **Account detail page**: full statement table with **running balance** + date filter (from/to).
+- **Dashboard**: ek "Banking / Payments" strip — total balance across all accounts, total in/out (transfers excluded), aur per-account balance cards (click → detail).
+- **Bank Statement PDF**: jsPDF se branded statement (header, summary, running-balance table, multi-page footer).
+
+### API endpoints (banking)
+- `GET/POST /api/bank-accounts`, `GET/PUT/DELETE /api/bank-accounts/:id` (`GET :id` returns account + transactions with running_balance + period_opening; supports `?from=&to=`; `DELETE ?force=1`)
+- `GET/POST/PUT/DELETE /api/bank-transactions` (sirf `source='manual'` txns directly edit/delete honge; module-linked txns unke source se manage hote hain)
+- `POST /api/bank-transfers` (two-leg transfer, `transfer_group`)
+- `GET /api/banking/summary` (accounts, total_balance, total_in/out **excluding transfers**, by_category)
+
+### New DB schema
+- Migration `0020_banking_system.sql` — `bank_accounts` + `bank_transactions` tables, plus `bank_account_id` + `bank_txn_id` columns on `bills`, `transactions`, `employee_transactions`, `side_expenses`, `raw_material_purchases`.
+
+---
+
 ## What's New (latest update — 2026-07-22) — 7 Confirmed Bug Fixes + Hardening
 
 Ye 7 confirmed bugs fix kiye gaye hain (sab regression-tested — `tests/regression.sh`, 19/19 pass):
