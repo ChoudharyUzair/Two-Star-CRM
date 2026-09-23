@@ -6,7 +6,28 @@
 - **Goal**: Complete business CRM for Two Star Industries — manage clients, ledgers, inventory, raw materials, manufacturing recipes, employees, side expenses, and bills with auto Net Profit tracking.
 - **Stack**: Hono (TypeScript) + Cloudflare Pages + Cloudflare D1 (SQLite) + TailwindCSS + Vanilla JS frontend
 
-## What's New (latest update — 2026-09-23) — 3 Requested Features
+## What's New (latest update — 2026-09-23b) — 5 Requested Fixes
+
+> Owner (Muhammad Uzair) ki 5 requests. Khaas dhyan: **kahin bhi cheez duplicate nahi ki** — return ka pura system ab **ek hi jagah (Record Stock Movement)** me hai, aur supplier ke rate ek hi shared list se chalte hain.
+
+### 1. 🔎 Ledger ke ANDAR entry search
+Har customer/supplier ke **ledger (Khata)** ke upar, "Add Row" ke saath ab ek **search box** hai. Yahan type karke us ledger ki **entries** filter hoti hain — **date, bill no, amount (pending/received), status, description aur custom columns** sab par search chalta hai. Search ke waqt saari matching rows ek page par dikhti hain (pager chhup jata hai) aur running balance sahi rehta hai. Doosra client kholte hi search reset ho jata hai.
+
+### 2. 🔁 Customer Return — ab sirf EK jagah (Record Stock Movement)
+Inventory ka alag **"Customer Return"** button **hata diya** gaya. Ab return sirf **"ReStock / Return" → Record Stock Movement** modal ke andar hai. Type = **Customer Return** karo → customer select karo → stock **barh** jata hai aur customer ke **ledger me CREDIT** ho jata hai (jitna dena tha usme se minus). Rate customer ke saved special-rate se auto-fill hota hai. (Endpoint wahi: `POST /api/inventory/customer-return`.)
+
+### 3. ↩️ Supplier Return (naya)
+Usi Record Stock Movement modal me naya type **Supplier Return**. Jab hum supplier se liya maal **wapas** karte hain → supplier select karo → stock **kam** ho jata hai aur supplier ke **ledger me credit-note** (negative bill amount) lag jata hai — yaani jitna hum ne unhe dena tha usme se minus. API: `POST /api/inventory/supplier-return` (`supplier_id`, `entry_date`, `notes`, `items:[{inventory_id, quantity, rate}]`). Delete karne par stock aur ledger dono auto-revert.
+
+### 4. 🏷️ Supplier profile me "Product Rates" (buy rate list)
+Jaise Customer profile me selling-rate list hai, waise ab **Supplier profile** me bhi **"Product Rates"** button. Yahan supplier se har item ka **buy rate** (jis rate par hum lete hain) set/edit/delete hota hai — **Inventory products** aur **Raw Materials** dono. API: `GET/POST /api/clients/:id/supplier-rates`, `DELETE .../supplier-rates/:rid`, `GET .../supplier-rate-map`.
+
+### 5. 🛠️ Restock rate bug fix — ab SUPPLIER ka buy rate lagta hai
+Pehle restock par product change karne se **selling rate** lag jata tha. Ab jab restock/supplier-return me **supplier select** hota hai, rate us supplier ki **buy-rate list** se auto-fill hota hai (selling rate nahi). Ye **same shared list Raw Material restock** me bhi use hoti hai — supplier + raw material chunne par uska buy rate khud aa jata hai. Restock save karte hi naya rate list me **save** bhi ho jata hai, taake agli dafa auto lage. (Kuch bhi duplicate nahi — ek `supplier_product_rates` table dono modules ko drive karti hai.)
+
+- DB migration: `0022_supplier_rates_and_returns.sql` (`supplier_product_rates` table + `supplier_return` movement type).
+
+## What's New (2026-09-23) — 3 Earlier Features
 
 ### 1. 🔍 Customer Ledger Search (Ledgers)
 Sidebar ke **Sections** ke neeche ek naya **search box** aur ek 🔍 icon add ho gaya hai. Ab **kisi bhi customer ka naam / phone / section type karke uska ledger direct khola** ja sakta hai — chahe woh kisi bhi section (folder) me ho.

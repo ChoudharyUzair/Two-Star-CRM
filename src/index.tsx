@@ -761,6 +761,7 @@ app.delete('/api/inventory/movements/:id', requireAuth, async (c) => {
   // being skipped — so create+delete is a true no-op round trip for every type.
   let reverse = 0
   if (mov.type === 'sale') reverse = mov.quantity            // add back what was sold
+  else if (mov.type === 'supplier_return') reverse = mov.quantity // add back what we returned to supplier
   else if (mov.type === 'return') reverse = -mov.quantity    // remove what was returned
   else if (mov.type === 'restock') reverse = -mov.quantity   // remove what was restocked
   else if (mov.type === 'production') reverse = -mov.quantity // remove what was produced/packed
@@ -777,6 +778,22 @@ app.delete('/api/inventory/movements/:id', requireAuth, async (c) => {
   }
   stmts.push(c.env.DB.prepare('DELETE FROM inventory_movements WHERE id = ?').bind(id))
   await c.env.DB.batch(stmts)
+
+  // If this movement belongs to a customer/supplier return that posted a ledger
+  // transaction (label ends with "Return #<id>"), remove that ledger row too —
+  // but only when it was the LAST movement of that return group, so a multi-item
+  // return's ledger note survives until every line is gone.
+  const label = String(mov.customer_name || '')
+  const m = label.match(/Return #(\d+)\)?\s*$/)
+  if (m) {
+    const txId = parseInt(m[1])
+    const remaining = await c.env.DB.prepare(
+      "SELECT COUNT(*) as n FROM inventory_movements WHERE customer_name = ?"
+    ).bind(label).first() as any
+    if (!remaining || (remaining.n || 0) === 0) {
+      await c.env.DB.prepare('DELETE FROM transactions WHERE id = ? AND auto_generated = 1').bind(txId).run()
+    }
+  }
   return c.json({ success: true })
 })
 
@@ -847,6 +864,132 @@ app.get('/api/clients/:id/rate-map', requireAuth, async (c) => {
   const map: Record<string, number> = {}
   for (const r of (rows.results as any[])) map[String(r.inventory_id)] = parseFloat(r.rate) || 0
   return c.json({ rateMap: map })
+})
+
+// ============ SUPPLIER PRODUCT RATES (#4 + #5 — the BUY rate we pay a supplier) ============
+// One shared table drives BOTH inventory restock and raw-material restock so the
+// rate is never duplicated. item_type distinguishes the two catalogues.
+
+// All saved buy-rates for one supplier (joined with the item's info for display).
+app.get('/api/clients/:id/supplier-rates', requireAuth, async (c) => {
+  const supplierId = c.req.param('id')
+  const rows = await c.env.DB.prepare(`
+    SELECT spr.id, spr.item_type, spr.item_id, spr.rate,
+           spr.item_name,
+           CASE WHEN spr.item_type = 'inventory' THEN inv.name ELSE rm.name END AS live_name,
+           CASE WHEN spr.item_type = 'inventory' THEN inv.unit ELSE rm.unit END AS item_unit,
+           CASE WHEN spr.item_type = 'inventory' THEN inv.rate ELSE rm.rate END AS current_rate
+    FROM supplier_product_rates spr
+    LEFT JOIN inventory inv ON spr.item_type = 'inventory' AND inv.id = spr.item_id
+    LEFT JOIN raw_materials rm ON spr.item_type = 'raw' AND rm.id = spr.item_id
+    WHERE spr.supplier_id = ?
+    ORDER BY spr.item_type, COALESCE(live_name, spr.item_name) ASC
+  `).bind(supplierId).all()
+  return c.json({ rates: rows.results })
+})
+
+// Save (upsert) a supplier buy-rate for one item.
+app.post('/api/clients/:id/supplier-rates', requireAuth, async (c) => {
+  const supplierId = parseInt(c.req.param('id'))
+  const body = await c.req.json()
+  const item_type = body.item_type === 'raw' ? 'raw' : 'inventory'
+  const item_id = parseInt(body.item_id)
+  if (!item_id) return c.json({ error: 'Item required' }, 400)
+  const rate = parseFloat(body.rate) || 0
+  // Snapshot the item name for convenience/history.
+  let item_name = ''
+  if (item_type === 'inventory') {
+    const it = await c.env.DB.prepare('SELECT name FROM inventory WHERE id = ?').bind(item_id).first() as any
+    item_name = it?.name || ''
+  } else {
+    const it = await c.env.DB.prepare('SELECT name FROM raw_materials WHERE id = ?').bind(item_id).first() as any
+    item_name = it?.name || ''
+  }
+  await c.env.DB.prepare(`
+    INSERT INTO supplier_product_rates (supplier_id, item_type, item_id, item_name, rate)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(supplier_id, item_type, item_id)
+    DO UPDATE SET rate = excluded.rate, item_name = excluded.item_name, updated_at = CURRENT_TIMESTAMP
+  `).bind(supplierId, item_type, item_id, item_name, rate).run()
+  return c.json({ success: true })
+})
+
+app.delete('/api/clients/:id/supplier-rates/:rid', requireAuth, async (c) => {
+  const supplierId = c.req.param('id')
+  const rid = c.req.param('rid')
+  await c.env.DB.prepare('DELETE FROM supplier_product_rates WHERE id = ? AND supplier_id = ?').bind(rid, supplierId).run()
+  return c.json({ success: true })
+})
+
+// Map for a supplier keyed by "type:id" → rate. Used by the restock modals to
+// auto-fill the buy rate when a supplier+item is chosen.
+app.get('/api/clients/:id/supplier-rate-map', requireAuth, async (c) => {
+  const supplierId = c.req.param('id')
+  const rows = await c.env.DB.prepare(
+    'SELECT item_type, item_id, rate FROM supplier_product_rates WHERE supplier_id = ?'
+  ).bind(supplierId).all()
+  const map: Record<string, number> = {}
+  for (const r of (rows.results as any[])) map[`${r.item_type}:${r.item_id}`] = parseFloat(r.rate) || 0
+  return c.json({ rateMap: map })
+})
+
+// ============ SUPPLIER RETURN (#3) ============
+// We return one or more inventory products BACK to a supplier.
+//   • Each item → a 'supplier_return' inventory movement (stock DECREASES).
+//   • The whole return → ONE ledger transaction on the supplier as a DEBIT that
+//     REDUCES what we owe them. In the supplier ledger the running balance is
+//     opening + Σ amount_pending − Σ amount_received, and "amount_received" is
+//     shown as "Amount Paid" (money OUT to them). A return is the opposite of a
+//     purchase: it lowers the bill total we owe, so we record it as a NEGATIVE
+//     amount_pending (a credit note) — mirrors the money we DON'T have to pay.
+app.post('/api/inventory/supplier-return', requireAuth, async (c) => {
+  const body = await c.req.json()
+  const supplierId = parseInt(body.supplier_id)
+  if (!supplierId) return c.json({ error: 'Supplier required' }, 400)
+  const items = Array.isArray(body.items) ? body.items : []
+  if (items.length === 0) return c.json({ error: 'At least one product required' }, 400)
+  const entry_date = body.entry_date || new Date().toISOString().slice(0, 10)
+
+  const supplier = await c.env.DB.prepare('SELECT id, name FROM clients WHERE id = ?').bind(supplierId).first() as any
+  if (!supplier) return c.json({ error: 'Supplier not found' }, 404)
+
+  const resolved: { inventory_id: number; name: string; quantity: number; rate: number; total: number }[] = []
+  for (const it of items) {
+    const invId = parseInt(it.inventory_id)
+    const qty = Math.abs(parseFloat(it.quantity) || 0)
+    if (!invId || qty <= 0) continue
+    const inv = await c.env.DB.prepare('SELECT id, name, rate FROM inventory WHERE id = ?').bind(invId).first() as any
+    if (!inv) continue
+    const rate = (it.rate != null && it.rate !== '') ? (parseFloat(it.rate) || 0) : (parseFloat(inv.rate) || 0)
+    resolved.push({ inventory_id: invId, name: inv.name, quantity: qty, rate, total: qty * rate })
+  }
+  if (resolved.length === 0) return c.json({ error: 'No valid products to return' }, 400)
+
+  const grandTotal = resolved.reduce((s, r) => s + r.total, 0)
+  const productSummary = resolved.map(r => `${r.name} × ${r.quantity}`).join(', ')
+  const desc = `Supplier Return: ${productSummary}${body.notes ? ' — ' + body.notes : ''}`
+
+  // Ledger credit note: negative amount_pending lowers what we owe the supplier.
+  const ledgerRes = await c.env.DB.prepare(
+    `INSERT INTO transactions (client_id, entry_date, bill_no, amount_received, amount_pending, status, description, auto_generated)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1)`
+  ).bind(supplierId, entry_date, '', 0, -grandTotal, 'Return', desc).run()
+  const ledgerTxId = ledgerRes.meta.last_row_id
+
+  const stmts: any[] = []
+  const supLabel = `${supplier.name} (Sup. Return #${ledgerTxId})`
+  for (const r of resolved) {
+    stmts.push(c.env.DB.prepare(
+      `INSERT INTO inventory_movements (inventory_id, product_name, entry_date, type, quantity, rate, total, customer_name, notes, supplier_id, direction)
+       VALUES (?, ?, ?, 'supplier_return', ?, ?, ?, ?, ?, ?, -1)`
+    ).bind(r.inventory_id, r.name, entry_date, r.quantity, r.rate, r.total, supLabel, body.notes || '', supplierId))
+    stmts.push(c.env.DB.prepare(
+      `UPDATE inventory SET quantity = quantity - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+    ).bind(r.quantity, r.inventory_id))
+  }
+  await c.env.DB.batch(stmts)
+
+  return c.json({ success: true, ledger_transaction_id: ledgerTxId, total: grandTotal, items: resolved.length })
 })
 
 // ============ Helper: sync bill ↔ ledger ============

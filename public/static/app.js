@@ -721,6 +721,7 @@ const App = {
   async openClient(clientId) {
     this.state.currentClientId = clientId;
     this.state.view = 'ledger';
+    this._ledgerSearch = '';   // reset the ledger entry search for the new client
     this.setActiveNav('');
     this.closeSidebarOnMobile();
     try {
@@ -801,7 +802,9 @@ const App = {
           </div>
         </div>
         <div class="flex gap-2 flex-wrap">
-          ${isSupplier ? '' : `<button onclick="App.showCustomerRates()" class="btn btn-primary btn-sm" title="Is customer ke liye products ke special selling rate set karein"><i class="fas fa-tags"></i> Product Rates</button>`}
+          ${isSupplier
+            ? `<button onclick="App.showSupplierRates()" class="btn btn-primary btn-sm" title="Is supplier se items kis rate par lete hain — buy rate set karein"><i class="fas fa-tags"></i> Product Rates</button>`
+            : `<button onclick="App.showCustomerRates()" class="btn btn-primary btn-sm" title="Is customer ke liye products ke special selling rate set karein"><i class="fas fa-tags"></i> Product Rates</button>`}
           <button onclick="App.showLedgerPdfModal()" class="btn btn-success btn-sm" title="Customer ko ledger PDF form mein bhejein"><i class="fas fa-file-pdf"></i> Send PDF</button>
           <button onclick="App.showEditClient()" class="btn btn-secondary btn-sm"><i class="fas fa-edit"></i> Edit</button>
           <button onclick="App.showCustomColumns()" class="btn btn-secondary btn-sm"><i class="fas fa-columns"></i> Columns</button>
@@ -825,7 +828,16 @@ const App = {
         <div class="bg-white rounded-xl shadow-sm overflow-hidden">
           <div class="px-4 py-3 border-b flex items-center justify-between flex-wrap gap-2">
             <h2 class="font-bold text-gray-800"><i class="fas fa-book mr-2"></i>Khata / Ledger</h2>
-            <button onclick="App.addRow()" class="btn btn-success btn-sm"><i class="fas fa-plus"></i> Add Row</button>
+            <div class="flex items-center gap-2 flex-wrap">
+              <div class="relative">
+                <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs"></i>
+                <input type="text" id="ledger-search" placeholder="Search entries (date, bill, amount, note)..."
+                  class="input-field pl-8" style="max-width:280px;padding-top:6px;padding-bottom:6px;"
+                  value="${this.escapeAttr(this._ledgerSearch || '')}"
+                  oninput="App.onLedgerSearch(this.value)">
+              </div>
+              <button onclick="App.addRow()" class="btn btn-success btn-sm"><i class="fas fa-plus"></i> Add Row</button>
+            </div>
           </div>
           <div class="overflow-x-auto">
             <table class="ledger-table" id="ledger-table">
@@ -860,6 +872,8 @@ const App = {
   },
 
   _renderLedgerPager() {
+    // While a search is active we show all matches on one page, so hide the pager.
+    if ((this._ledgerSearch || '').trim()) return '';
     const total = this.state.transactions.length;
     const { totalPages, page } = this.paginate(this.state.transactions, 'ledger');
     return this.renderPager('ledger', page, totalPages, total, 'refreshLedgerBody');
@@ -875,22 +889,52 @@ const App = {
     try { document.getElementById('ledger-table').scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {}
   },
 
+  // Does a ledger transaction match the current search term? Searches across
+  // date, bill no, amounts, status, description and any custom-column values.
+  _ledgerRowMatches(t, term) {
+    if (!term) return true;
+    const q = term.toLowerCase();
+    const customData = (() => { try { return JSON.parse(t.custom_data || '{}'); } catch { return {}; } })();
+    const parts = [
+      t.entry_date, t.bill_no, t.description, t.status,
+      String(parseFloat(t.amount_pending) || 0),
+      String(parseFloat(t.amount_received) || 0),
+      ...Object.values(customData || {})
+    ];
+    return parts.some(v => v != null && String(v).toLowerCase().includes(q));
+  },
+
+  onLedgerSearch(val) {
+    this._ledgerSearch = val || '';
+    // Reset to first page whenever the filter changes so results are visible.
+    this._setPage('ledger', 1);
+    this.refreshLedgerBody();
+    // Keep focus in the search box after re-render.
+    const el = document.getElementById('ledger-search');
+    if (el) { el.focus(); try { el.setSelectionRange(el.value.length, el.value.length); } catch (e) {} }
+  },
+
   renderRows(opening) {
     if (this.state.transactions.length === 0) {
       return `<tr><td colspan="${9 + this.state.customColumns.length}" class="text-center py-8 text-gray-500">
         <i class="fas fa-inbox text-3xl mb-2 block"></i>No transactions yet. Click "Add Row" to start.</td></tr>`;
     }
-    // Compute the running balance across ALL rows (so page slices stay correct),
-    // but only render the rows that belong to the current page.
+    const term = (this._ledgerSearch || '').trim();
+    // When searching, show ALL matching rows (ignore pagination) but still
+    // compute the running balance from the full, unfiltered list so every row's
+    // balance stays correct. When not searching, paginate as before.
     const { page } = this.paginate(this.state.transactions, 'ledger');
-    const startIdx = (page - 1) * this.PAGE_SIZE;
-    const endIdx = startIdx + this.PAGE_SIZE;
+    const startIdx = term ? 0 : (page - 1) * this.PAGE_SIZE;
+    const endIdx = term ? this.state.transactions.length : startIdx + this.PAGE_SIZE;
     let running = opening;
-    return this.state.transactions.map((t, i) => {
+    let shown = 0;
+    const html = this.state.transactions.map((t, i) => {
       const rec = parseFloat(t.amount_received) || 0;
       const pen = parseFloat(t.amount_pending) || 0;
       running = running + pen - rec;
       if (i < startIdx || i >= endIdx) return '';
+      if (term && !this._ledgerRowMatches(t, term)) return '';
+      shown++;
       const customData = (() => { try { return JSON.parse(t.custom_data || '{}'); } catch { return {}; } })();
       const isAuto = t.auto_generated == 1;
       const lockIcon = isAuto ? `<i class="fas fa-link text-blue-400 ml-1" title="Auto-linked from Bill #${this.escapeAttr(t.bill_no || '')}"></i>` : '';
@@ -917,6 +961,11 @@ const App = {
           </td>
         </tr>`;
     }).join('');
+    if (term && shown === 0) {
+      return `<tr><td colspan="${9 + this.state.customColumns.length}" class="text-center py-8 text-gray-500">
+        <i class="fas fa-magnifying-glass text-3xl mb-2 block"></i>"${this.escapeHtml(term)}" ke liye koi entry nahi mili.</td></tr>`;
+    }
+    return html;
   },
 
   // === EDIT LEDGER ROW (POPUP, BILL-STYLE) ===
@@ -1489,6 +1538,141 @@ const App = {
       await this.api.delete(`/api/clients/${c.id}/product-rates/${rid}`);
       this.toast('Rate removed', 'success');
       this.showCustomerRates();
+    } catch (e) { this.toast('Failed', 'error'); }
+  },
+
+  // ===== #4 + #5: Per-supplier BUY rate list (mirrors Customer Product Rates) =====
+  // The supplier profile gets a "Product Rates" list where we record the rate we
+  // PAY this supplier for each item. It covers BOTH inventory products and raw
+  // materials (one shared list). These rates auto-fill when restocking from this
+  // supplier — so restock uses the buy rate, never the selling rate.
+  async showSupplierRates() {
+    const c = this.state.currentClient;
+    if (!c) return;
+    // Load inventory + raw materials for the item picker
+    if (!this.state.inventory || this.state.inventory.length === 0) {
+      try { const inv = await this.api.get('/api/inventory'); this.state.inventory = inv.inventory || inv.items || []; } catch (e) {}
+    }
+    let rawItems = [];
+    try { const rm = await this.api.get('/api/raw-materials'); rawItems = rm.items || []; } catch (e) {}
+    this._supRawItems = rawItems;
+    let rates = [];
+    try { const r = await this.api.get(`/api/clients/${c.id}/supplier-rates`); rates = r.rates || []; } catch (e) {}
+    this._supRates = rates;
+    const products = this.state.inventory || [];
+
+    const renderRows = () => (this._supRates.length === 0)
+      ? '<tr><td colspan="5" class="text-center text-gray-500 py-4">Abhi koi buy-rate set nahi. Neeche se add karein.</td></tr>'
+      : this._supRates.map(rt => `
+        <tr class="border-t">
+          <td class="p-2"><strong>${this.escapeHtml(rt.live_name || rt.item_name || '-')}</strong>
+            ${rt.item_unit ? `<span class="text-xs text-gray-400 ml-1">${this.escapeHtml(rt.item_unit)}</span>` : ''}</td>
+          <td class="p-2"><span class="px-2 py-0.5 rounded-full text-xs ${rt.item_type === 'raw' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'}">${rt.item_type === 'raw' ? 'Raw Material' : 'Inventory'}</span></td>
+          <td class="p-2 text-right text-gray-500">PKR ${this.fmt(rt.current_rate || 0)}</td>
+          <td class="p-2 text-right font-bold text-green-700">PKR ${this.fmt(rt.rate || 0)}</td>
+          <td class="p-2 text-center whitespace-nowrap">
+            <button onclick="App._editSupplierRate('${rt.item_type}', ${rt.item_id})" class="text-blue-500 hover:text-blue-700 mr-2" title="Edit rate"><i class="fas fa-edit text-sm"></i></button>
+            <button onclick="App._deleteSupplierRate(${rt.id})" class="text-red-500 hover:text-red-700" title="Delete rate"><i class="fas fa-trash text-sm"></i></button>
+          </td>
+        </tr>`).join('');
+
+    this.openModal(`
+      <h2 class="text-xl font-bold mb-1"><i class="fas fa-tags text-amber-600 mr-2"></i>Supplier Buy Rates — ${this.escapeHtml(c.name)}</h2>
+      <p class="text-sm text-gray-500 mb-3"><i class="fas fa-info-circle mr-1"></i>Yahan is supplier se har item ka <b>buy rate</b> (jis rate par hum lete hain) set karein. Jab is supplier se restock karenge (Inventory ya Raw Material), ye rate <b>khud-ba-khud</b> lag jayega — selling rate nahi.</p>
+
+      <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
+          <div>
+            <label class="block text-xs font-medium mb-1">Type</label>
+            <select id="sr-type" class="input-field" onchange="App._srTypeChange()">
+              <option value="inventory">Inventory Product</option>
+              <option value="raw">Raw Material</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium mb-1">Item</label>
+            <select id="sr-item" class="input-field"></select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium mb-1">Buy Rate (PKR)</label>
+            <input id="sr-rate" type="number" step="any" min="0" class="input-field" placeholder="Is supplier ka rate">
+          </div>
+          <div>
+            <button onclick="App._saveSupplierRate()" class="btn btn-primary w-full"><i class="fas fa-plus"></i> Add / Update</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white border rounded-lg overflow-hidden">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50"><tr>
+            <th class="text-left p-2">Item</th>
+            <th class="text-left p-2">Type</th>
+            <th class="text-right p-2">Current Rate</th>
+            <th class="text-right p-2">Supplier Buy Rate</th>
+            <th class="text-center p-2"></th>
+          </tr></thead>
+          <tbody id="sr-rows">${renderRows()}</tbody>
+        </table>
+      </div>
+      <div class="flex justify-end pt-3"><button class="btn btn-secondary" onclick="App.closeModal()">Close</button></div>
+    `, 'modal-lg');
+
+    this._srTypeChange();
+    const sel = document.getElementById('sr-item');
+    if (sel) sel.addEventListener('change', () => {
+      const type = document.getElementById('sr-type').value;
+      const existing = this._supRates.find(r => r.item_type === type && String(r.item_id) === sel.value);
+      const opt = sel.options[sel.selectedIndex];
+      const box = document.getElementById('sr-rate');
+      if (box) box.value = existing ? (existing.rate || 0) : (opt?.dataset.rate || 0);
+    });
+  },
+
+  // Populate the item dropdown based on the chosen type (inventory vs raw).
+  _srTypeChange() {
+    const type = document.getElementById('sr-type')?.value || 'inventory';
+    const sel = document.getElementById('sr-item');
+    if (!sel) return;
+    const list = type === 'raw' ? (this._supRawItems || []) : (this.state.inventory || []);
+    sel.innerHTML = '<option value="">-- Select item --</option>' +
+      list.map(p => `<option value="${p.id}" data-rate="${p.rate || 0}">${this.escapeHtml(p.name)} (rate PKR ${this.fmt(p.rate || 0)})</option>`).join('');
+  },
+
+  async _saveSupplierRate() {
+    const c = this.state.currentClient;
+    const type = document.getElementById('sr-type')?.value || 'inventory';
+    const itemId = document.getElementById('sr-item')?.value;
+    const rate = parseFloat(document.getElementById('sr-rate')?.value);
+    if (!itemId) { this.toast('Pehle item select karein', 'error'); return; }
+    if (isNaN(rate)) { this.toast('Rate likhein', 'error'); return; }
+    try {
+      await this.api.post(`/api/clients/${c.id}/supplier-rates`, { item_type: type, item_id: parseInt(itemId), rate });
+      this.toast('Buy rate saved', 'success');
+      this.showSupplierRates();
+    } catch (e) { this.toast('Save failed', 'error'); }
+  },
+
+  _editSupplierRate(itemType, itemId) {
+    const rt = (this._supRates || []).find(r => r.item_type === itemType && String(r.item_id) === String(itemId));
+    if (!rt) return;
+    const typeSel = document.getElementById('sr-type');
+    if (typeSel) { typeSel.value = itemType; this._srTypeChange(); }
+    const sel = document.getElementById('sr-item');
+    const box = document.getElementById('sr-rate');
+    if (sel) sel.value = String(itemId);
+    if (box) { box.value = rt.rate || 0; box.focus(); box.select(); }
+    try { typeSel && typeSel.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+    this.toast('Rate box mein value aa gayi — update karke "Add / Update" dabayen', 'info');
+  },
+
+  async _deleteSupplierRate(rid) {
+    const c = this.state.currentClient;
+    if (!confirm('Is buy-rate ko hata dein?')) return;
+    try {
+      await this.api.delete(`/api/clients/${c.id}/supplier-rates/${rid}`);
+      this.toast('Rate removed', 'success');
+      this.showSupplierRates();
     } catch (e) { this.toast('Failed', 'error'); }
   },
 
@@ -2347,7 +2531,6 @@ const App = {
           <p class="page-subtitle">${this.state.inventory.length} product(s) · Total Value: PKR ${this.fmt(totalValue)}</p></div>
         <div class="flex gap-2 flex-wrap">
           <input type="text" id="inv-search" placeholder="Search..." class="input-field" style="max-width:240px;" oninput="App.renderInventory(this.value)" value="${this.escapeAttr(filter)}">
-          <button onclick="App.showCustomerReturnModal()" class="btn btn-warning" title="Customer se ek saath multiple products ki return entry karein — ledger auto-sync"><i class="fas fa-rotate-left"></i> Customer Return</button>
           <button onclick="App.showMovementModal()" class="btn btn-secondary"><i class="fas fa-right-left"></i> ReStock / Return</button>
           <button onclick="App.showInventoryEditor()" class="btn btn-primary"><i class="fas fa-plus"></i> Add Product</button>
         </div>
@@ -2415,7 +2598,8 @@ const App = {
     }
     const badge = (t) => {
       if (t === 'sale')    return '<span class="px-2 py-0.5 rounded-full text-xs bg-red-100 text-red-700"><i class="fas fa-arrow-up mr-1"></i>Sold</span>';
-      if (t === 'return')  return '<span class="px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700"><i class="fas fa-arrow-down mr-1"></i>Returned</span>';
+      if (t === 'return')  return '<span class="px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700"><i class="fas fa-arrow-down mr-1"></i>Cust. Return</span>';
+      if (t === 'supplier_return') return '<span class="px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-700"><i class="fas fa-rotate-left mr-1"></i>Sup. Return</span>';
       if (t === 'restock') return '<span class="px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-700"><i class="fas fa-truck-ramp-box mr-1"></i>Restocked</span>';
       if (t === 'production') return '<span class="px-2 py-0.5 rounded-full text-xs bg-purple-100 text-purple-700"><i class="fas fa-industry mr-1"></i>Packed</span>';
       return '<span class="px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-700"><i class="fas fa-sliders mr-1"></i>Adjusted</span>';
@@ -2429,7 +2613,7 @@ const App = {
         <td class="text-gray-600">${this.escapeHtml(m.entry_date || '')}</td>
         <td class="font-medium">${this.escapeHtml(m.item_name || m.product_name || '—')}</td>
         <td>${badge(m.type)}</td>
-        <td class="text-right ${m.type === 'sale' ? 'text-red-600' : (m.type === 'return' || m.type === 'restock' || m.type === 'production') ? 'text-green-600' : 'text-gray-700'} font-semibold">${m.type === 'sale' ? '-' : (m.type === 'return' || m.type === 'restock' || m.type === 'production') ? '+' : ''}${this.fmt(qty)}</td>
+        <td class="text-right ${(m.type === 'sale' || m.type === 'supplier_return') ? 'text-red-600' : (m.type === 'return' || m.type === 'restock' || m.type === 'production') ? 'text-green-600' : 'text-gray-700'} font-semibold">${(m.type === 'sale' || m.type === 'supplier_return') ? '-' : (m.type === 'return' || m.type === 'restock' || m.type === 'production') ? '+' : ''}${this.fmt(qty)}</td>
         <td class="text-right">${rate > 0 ? this.fmt(rate) : '<span class="text-gray-400">—</span>'}</td>
         <td class="text-right">${total > 0 ? 'PKR ' + this.fmt(total) : '<span class="text-gray-400">—</span>'}</td>
         <td class="text-gray-600 text-sm">${noteBits || '<span class="text-gray-400">—</span>'}</td>
@@ -2461,6 +2645,13 @@ const App = {
     const m = (this.state.invMovements || []).find(x => x.id === id);
     if (!m) return;
     if (m.type === 'production') { this.toast('Packed entries ki edit Products Manufacturing se karein', 'error'); return; }
+    if (m.type === 'return' || m.type === 'supplier_return') {
+      // These carry a linked ledger transaction — editing quantity/rate here would
+      // desync the ledger. Ask the user to delete & re-add instead (delete also
+      // removes the linked ledger row).
+      this.toast('Return entry ko edit karne ke liye ise delete karke dobara add karein (ledger auto-adjust ho jayega).', 'info');
+      return;
+    }
     const today = new Date().toISOString().slice(0, 10);
     // BUG1 FIX: prefer the stored direction (+1/-1) over guessing from notes text
     const dirGuess = (m.direction === -1) ? 'out' : (m.direction === 1 ? 'in' : ((m.notes && /out/i.test(m.notes)) ? 'out' : 'in'));
@@ -2471,10 +2662,10 @@ const App = {
         <div><label class="block text-sm font-medium mb-1">Type *</label>
           <select id="me-type" class="input-field" onchange="App._meToggleDir()">
             <option value="sale" ${m.type === 'sale' ? 'selected' : ''}>Sold (stock decreases)</option>
-            <option value="return" ${m.type === 'return' ? 'selected' : ''}>Returned (stock increases)</option>
             <option value="restock" ${m.type === 'restock' ? 'selected' : ''}>Restock (stock increases)</option>
             <option value="adjust" ${m.type === 'adjust' ? 'selected' : ''}>Adjustment</option>
-          </select></div>
+          </select>
+          <p class="text-xs text-gray-500 mt-1"><i class="fas fa-info-circle mr-1"></i>Customer/Supplier return ki entry yahan se edit nahi hoti — delete karke dobara add karein (ledger auto-adjust).</p></div>
         <div id="me-dir-wrap" style="display:${m.type === 'adjust' ? 'block' : 'none'};"><label class="block text-sm font-medium mb-1">Adjust Direction</label>
           <select id="me-dir" class="input-field">
             <option value="in" ${dirGuess === 'in' ? 'selected' : ''}>Add to stock (+)</option>
@@ -2522,254 +2713,23 @@ const App = {
     if (wrap) wrap.style.display = (t === 'adjust') ? 'block' : 'none';
   },
 
-  // ============ Customer Return (multi-product) — Task 2 ============
-  // Select a customer, add multiple products being returned in ONE entry.
-  // - Rate auto-fills from that customer's saved product-rate map (falls back
-  //   to the product's default selling rate).
-  // - On save each product creates a `return` stock movement (stock increases)
-  //   AND the whole return is synced to the customer's ledger as a CREDIT
-  //   (reduces what the customer owes), just like a returned/refunded sale.
-  async showCustomerReturnModal() {
-    const items = this.state.inventory || [];
-    if (items.length === 0) { this.toast('Pehle koi product add karein', 'error'); return; }
-    const today = new Date().toISOString().slice(0, 10);
-    this._returnRows = [];       // [{ inventory_id, quantity, rate }]
-    this._returnRateMap = {};    // { inventory_id: rate } for the selected customer
-    this.openModal(`
-      <h2 class="text-xl font-bold mb-1"><i class="fas fa-rotate-left text-amber-500 mr-2"></i>Customer Return</h2>
-      <p class="text-sm text-gray-500 mb-4">Customer select karein, phir jo jo products return hue add karein. Har product ka rate customer ke saved rate se apne aap lag jayega. Ledger auto-sync ho jayega.</p>
-      <form id="cust-return-form" class="space-y-3">
-        <div class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="block text-sm font-medium mb-1">Customer *</label>
-            <select id="ret-customer" class="input-field" required onchange="App._onReturnCustomerChange()">
-              <option value="">-- Loading customers --</option>
-            </select>
-          </div>
-          <div>
-            <label class="block text-sm font-medium mb-1">Date</label>
-            <input id="ret-date" type="date" class="input-field" value="${today}">
-          </div>
-        </div>
-        <div id="ret-rate-hint" class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2" style="display:none;">
-          <i class="fas fa-tags mr-1"></i><span id="ret-rate-hint-text"></span>
-        </div>
 
-        <div class="border rounded-lg overflow-hidden">
-          <div class="bg-gray-50 px-3 py-2 flex items-center justify-between">
-            <span class="text-sm font-semibold text-gray-700"><i class="fas fa-boxes-stacked mr-1"></i>Returned Products</span>
-            <button type="button" class="btn btn-success btn-sm" onclick="App._addReturnRow()"><i class="fas fa-plus"></i> Add Product</button>
-          </div>
-          <div class="overflow-x-auto">
-            <table class="ledger-table" style="min-width:520px;">
-              <thead><tr>
-                <th>Product</th>
-                <th style="width:100px;">Qty *</th>
-                <th style="width:120px;" title="Customer ke saved rate se auto — edit bhi kar sakte hain">Rate (PKR)</th>
-                <th style="width:120px;" class="text-right">Line Total</th>
-                <th style="width:44px;"></th>
-              </tr></thead>
-              <tbody id="ret-rows"></tbody>
-              <tfoot>
-                <tr class="bg-gray-100 font-bold">
-                  <td colspan="3" class="text-right">Total Return Value:</td>
-                  <td class="text-right amount-running" id="ret-grand-total">PKR 0.00</td>
-                  <td></td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        </div>
-
-        <div><label class="block text-sm font-medium mb-1">Note (optional)</label>
-          <input id="ret-notes" type="text" class="input-field" placeholder="e.g. damaged pieces wapas"></div>
-
-        <div class="bg-blue-50 border border-blue-200 rounded p-2 text-xs text-blue-800">
-          <i class="fas fa-info-circle mr-1"></i>Ledger mein is return ko customer ke <strong>credit</strong> (Amount Received) ke tor par likha jayega — jitna customer aap ko dena tha usme se minus ho jayega.
-        </div>
-
-        <div class="flex gap-2 justify-end pt-2 border-t">
-          <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
-          <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Return</button>
-        </div>
-      </form>`);
-
-    // Populate customer dropdown (only customer-type folders, not suppliers)
-    await this._returnLoadCustomers();
-    // Start with one empty row
-    this._addReturnRow();
-
-    document.getElementById('cust-return-form').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const custEl = document.getElementById('ret-customer');
-      const clientId = custEl ? parseInt(custEl.value) : 0;
-      if (!clientId) { this.toast('Customer select karein', 'error'); return; }
-      const rows = this._collectReturnRows();
-      if (rows.length === 0) { this.toast('Kam se kam ek product add karein (qty > 0)', 'error'); return; }
-      const payload = {
-        client_id: clientId,
-        entry_date: document.getElementById('ret-date').value,
-        notes: document.getElementById('ret-notes').value,
-        items: rows
-      };
-      try {
-        const res = await this.api.post('/api/inventory/customer-return', payload);
-        if (res && res.error) { this.toast(res.error, 'error'); return; }
-        this.closeModal();
-        await this.showInventory();
-        this.toast('Return recorded & customer ledger updated', 'success');
-      } catch (err) { this.toast('Return save failed', 'error'); }
-    });
-  },
-
-  async _returnLoadCustomers() {
-    const sel = document.getElementById('ret-customer');
-    if (!sel) return;
-    try {
-      const data = await this.api.get('/api/clients');
-      const allClients = data.clients || [];
-      const allFolders = this.state.folders || [];
-      // Customer folders = NOT supplier
-      const supFolderIds = new Set(allFolders.filter(f => f.ledger_type === 'supplier' || /supplier/i.test(f.name || '')).map(f => f.id));
-      const customers = allClients.filter(cl => !supFolderIds.has(cl.folder_id));
-      sel.innerHTML = '<option value="">-- Select Customer --</option>' +
-        customers.map(c => `<option value="${c.id}">${this.escapeHtml(c.name)}${c.folder_name ? ' (' + this.escapeHtml(c.folder_name) + ')' : ''}</option>`).join('');
-    } catch (e) {
-      sel.innerHTML = '<option value="">-- Failed to load --</option>';
-    }
-  },
-
-  async _onReturnCustomerChange() {
-    const sel = document.getElementById('ret-customer');
-    const hint = document.getElementById('ret-rate-hint');
-    const hintText = document.getElementById('ret-rate-hint-text');
-    this._returnRateMap = {};
-    const clientId = sel ? parseInt(sel.value) : 0;
-    if (clientId) {
-      try {
-        const data = await this.api.get(`/api/clients/${clientId}/rate-map`);
-        this._returnRateMap = data.rateMap || {};
-      } catch (e) { this._returnRateMap = {}; }
-      const n = Object.keys(this._returnRateMap).length;
-      if (hint && hintText) {
-        hint.style.display = 'block';
-        hintText.textContent = n > 0
-          ? `Is customer ke ${n} product(s) ke special rate save hain — wo apne aap lag jayenge. Baaki products ke liye default selling rate lagega.`
-          : `Is customer ke koi special rate save nahi — sab products par default selling rate lagega. Chahein to rate edit kar sakte hain.`;
-      }
-    } else if (hint) {
-      hint.style.display = 'none';
-    }
-    // Re-apply auto rates to any existing rows that user hasn't manually edited
-    (this._returnRows || []).forEach(r => { this._applyReturnRate(r.uid, false); });
-    this._recalcReturnTotals();
-  },
-
-  _rateForProduct(inventoryId) {
-    const id = String(inventoryId);
-    if (this._returnRateMap && this._returnRateMap[id] != null) return parseFloat(this._returnRateMap[id]) || 0;
-    const item = (this.state.inventory || []).find(x => String(x.id) === id);
-    return item ? (parseFloat(item.rate) || 0) : 0;
-  },
-
-  _addReturnRow() {
-    if (!this._returnRows) this._returnRows = [];
-    const uid = 'r' + Date.now() + Math.floor(Math.random() * 1000);
-    this._returnRows.push({ uid, inventory_id: '', quantity: 1, rate: 0, rateEdited: false });
-    const tbody = document.getElementById('ret-rows');
-    if (!tbody) return;
-    const items = this.state.inventory || [];
-    const tr = document.createElement('tr');
-    tr.id = 'retrow-' + uid;
-    tr.innerHTML = `
-      <td>
-        <select class="input-field" style="min-width:180px;" onchange="App._onReturnProductChange('${uid}', this.value)">
-          <option value="">-- Select Product --</option>
-          ${items.map(it => `<option value="${it.id}">${this.escapeHtml(it.name)} (stock: ${this.fmt(parseFloat(it.quantity) || 0)})</option>`).join('')}
-        </select>
-      </td>
-      <td><input type="number" step="any" min="0" class="input-field" value="1" style="width:90px;" oninput="App._onReturnQtyChange('${uid}', this.value)"></td>
-      <td><input type="number" step="any" min="0" class="input-field" value="0" style="width:110px;" oninput="App._onReturnRateChange('${uid}', this.value)"></td>
-      <td class="text-right" id="retline-${uid}">PKR 0.00</td>
-      <td class="text-center"><button type="button" class="text-red-500 hover:text-red-700" onclick="App._removeReturnRow('${uid}')" title="Remove"><i class="fas fa-times"></i></button></td>`;
-    tbody.appendChild(tr);
-  },
-
-  _removeReturnRow(uid) {
-    this._returnRows = (this._returnRows || []).filter(r => r.uid !== uid);
-    const tr = document.getElementById('retrow-' + uid);
-    if (tr) tr.remove();
-    this._recalcReturnTotals();
-  },
-
-  _findReturnRow(uid) { return (this._returnRows || []).find(r => r.uid === uid); },
-
-  _onReturnProductChange(uid, val) {
-    const r = this._findReturnRow(uid);
-    if (!r) return;
-    r.inventory_id = val;
-    r.rateEdited = false; // new product → reapply auto rate
-    this._applyReturnRate(uid, false);
-    this._recalcReturnTotals();
-  },
-
-  _onReturnQtyChange(uid, val) {
-    const r = this._findReturnRow(uid);
-    if (!r) return;
-    r.quantity = parseFloat(val) || 0;
-    this._recalcReturnTotals();
-  },
-
-  _onReturnRateChange(uid, val) {
-    const r = this._findReturnRow(uid);
-    if (!r) return;
-    r.rate = parseFloat(val) || 0;
-    r.rateEdited = true; // user overrode — don't auto-replace
-    this._recalcReturnTotals();
-  },
-
-  // Fill the rate input for a row from the customer rate-map / default rate.
-  // If force=false, skip rows the user manually edited.
-  _applyReturnRate(uid, force) {
-    const r = this._findReturnRow(uid);
-    if (!r || !r.inventory_id) return;
-    if (r.rateEdited && !force) return;
-    const rate = this._rateForProduct(r.inventory_id);
-    r.rate = rate;
-    const tr = document.getElementById('retrow-' + uid);
-    if (tr) { const rateInput = tr.querySelectorAll('input')[1]; if (rateInput) rateInput.value = rate; }
-  },
-
-  _recalcReturnTotals() {
-    let grand = 0;
-    (this._returnRows || []).forEach(r => {
-      const line = (parseFloat(r.quantity) || 0) * (parseFloat(r.rate) || 0);
-      grand += line;
-      const cell = document.getElementById('retline-' + r.uid);
-      if (cell) cell.textContent = 'PKR ' + this.fmt(line);
-    });
-    const gt = document.getElementById('ret-grand-total');
-    if (gt) gt.textContent = 'PKR ' + this.fmt(grand);
-  },
-
-  _collectReturnRows() {
-    return (this._returnRows || [])
-      .filter(r => r.inventory_id && (parseFloat(r.quantity) || 0) > 0)
-      .map(r => ({
-        inventory_id: parseInt(r.inventory_id),
-        quantity: parseFloat(r.quantity) || 0,
-        rate: parseFloat(r.rate) || 0
-      }));
-  },
-
+  // ============ UNIFIED Record Stock Movement (Tasks 2, 3, 5) ============
+  // ONE modal handles every stock change so nothing is duplicated:
+  //   • Sold            → stock down (optional customer name)
+  //   • Customer Return → stock up  + customer ledger CREDIT   (was the old
+  //                       separate "Customer Return" button — now merged here)
+  //   • Supplier Return → stock down + supplier ledger credit-note (money we
+  //                       no longer owe)  [NEW — request #3]
+  //   • Restock         → stock up  + supplier ledger DEBIT; rate auto-fills
+  //                       from the SUPPLIER's buy-rate list, not the selling
+  //                       rate  [bug fix — request #5]
+  //   • Adjustment      → manual in/out
   showMovementModal() {
     const items = this.state.inventory || [];
     if (items.length === 0) { this.toast('Add a product first', 'error'); return; }
     const today = new Date().toISOString().slice(0, 10);
-    // Build supplier options from folders with ledger_type = supplier
-    const allFolders = this.state.folders || [];
-    const supplierFolders = allFolders.filter(f => f.ledger_type === 'supplier' || /supplier/i.test(f.name));
-    // Build clients for supplier folders — we'll lazy-load via API
+    this._movSupRateMap = {};   // { "inventory:<id>": buyRate } for the selected supplier
     this.openModal(`
       <h2 class="text-xl font-bold mb-4"><i class="fas fa-right-left text-blue-500 mr-2"></i>Record Stock Movement</h2>
       <form id="mov-form" class="space-y-3">
@@ -2780,7 +2740,8 @@ const App = {
         <div><label class="block text-sm font-medium mb-1">Type *</label>
           <select id="m-type" class="input-field" onchange="App._movToggleDir()">
             <option value="sale">Sold (stock decreases)</option>
-            <option value="return">Returned (stock increases)</option>
+            <option value="return">Customer Return (stock increases — customer ledger credit)</option>
+            <option value="supplier_return">Supplier Return (stock decreases — return to supplier)</option>
             <option value="restock">Restock (stock increases — from supplier)</option>
             <option value="adjust">Adjustment</option>
           </select></div>
@@ -2789,23 +2750,38 @@ const App = {
             <option value="in">Add to stock (+)</option>
             <option value="out">Remove from stock (−)</option>
           </select></div>
-        <!-- Restock supplier fields -->
-        <div id="m-restock-wrap" style="display:none;" class="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-2">
-          <p class="text-xs text-blue-800 font-semibold"><i class="fas fa-truck mr-1"></i>Supplier Ledger Entry — is restock ki entry supplier ke ledger mein bhi ho gi</p>
+
+        <!-- Supplier fields (restock + supplier return) -->
+        <div id="m-supplier-wrap" style="display:none;" class="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-2">
+          <p id="m-supplier-hint" class="text-xs text-blue-800 font-semibold"><i class="fas fa-truck mr-1"></i>Supplier Ledger Entry — is entry ki nakal supplier ke ledger mein bhi ho gi</p>
           <div>
-            <label class="block text-sm font-medium mb-1">Supplier (optional)</label>
+            <label class="block text-sm font-medium mb-1">Supplier</label>
             <select id="m-supplier" class="input-field" onchange="App._movSupplierChange()">
-              <option value="">-- Select Supplier (optional) --</option>
+              <option value="">-- Select Supplier --</option>
             </select>
           </div>
           <div id="m-supplier-name-wrap" style="display:none;">
             <label class="block text-sm font-medium mb-1">Supplier Name (manual)</label>
             <input id="m-supplier-name" type="text" class="input-field" placeholder="e.g. Ali Enterprises">
           </div>
+          <p id="m-supplier-rate-hint" class="text-xs text-blue-700" style="display:none;"><i class="fas fa-tags mr-1"></i><span></span></p>
         </div>
+
+        <!-- Customer field (customer return) -->
+        <div id="m-custreturn-wrap" style="display:none;" class="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+          <p class="text-xs text-amber-800 font-semibold"><i class="fas fa-rotate-left mr-1"></i>Customer Return — is return ki entry customer ke ledger mein credit ke tor par ho gi (jitna customer ne dena tha usme se minus)</p>
+          <div>
+            <label class="block text-sm font-medium mb-1">Customer</label>
+            <select id="m-return-customer" class="input-field" onchange="App._movReturnCustomerChange()">
+              <option value="">-- Select Customer --</option>
+            </select>
+          </div>
+          <p id="m-return-rate-hint" class="text-xs text-amber-700" style="display:none;"><i class="fas fa-tags mr-1"></i><span></span></p>
+        </div>
+
         <div class="grid grid-cols-2 gap-3">
           <div><label class="block text-sm font-medium mb-1">Quantity *</label><input id="m-qty" type="number" step="any" min="0" required class="input-field" placeholder="e.g. 10"></div>
-          <div><label class="block text-sm font-medium mb-1">Rate / Cost (PKR)</label><input id="m-rate" type="number" step="any" class="input-field" placeholder="Purchase rate"></div>
+          <div><label id="m-rate-label" class="block text-sm font-medium mb-1">Rate / Cost (PKR)</label><input id="m-rate" type="number" step="any" class="input-field" placeholder="Rate"></div>
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div><label class="block text-sm font-medium mb-1">Date</label><input id="m-date" type="date" class="input-field" value="${today}"></div>
@@ -2818,33 +2794,69 @@ const App = {
         </div>
       </form>`);
     this._movFillRate();
-    // Load suppliers into dropdown
     this._movLoadSuppliers();
+    this._movLoadReturnCustomers();
+    this._movToggleDir();
     document.getElementById('mov-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const typeVal = document.getElementById('m-type').value;
-      const supplierEl = document.getElementById('m-supplier');
-      const supplierNameEl = document.getElementById('m-supplier-name');
-      const supplierId = supplierEl ? supplierEl.value : '';
-      const supplierName = supplierId === '__manual__' ? (supplierNameEl ? supplierNameEl.value.trim() : '') :
-        (supplierEl && supplierEl.options[supplierEl.selectedIndex] ? supplierEl.options[supplierEl.selectedIndex].text : '');
-      const payload = {
-        inventory_id: parseInt(document.getElementById('m-item').value),
-        type: typeVal,
-        direction: document.getElementById('m-dir').value,
-        quantity: parseFloat(document.getElementById('m-qty').value) || 0,
-        rate: parseFloat(document.getElementById('m-rate').value) || 0,
-        entry_date: document.getElementById('m-date').value,
-        customer_name: document.getElementById('m-cust').value,
-        notes: document.getElementById('m-notes').value,
-        supplier_id: supplierId && supplierId !== '__manual__' ? parseInt(supplierId) : null,
-        supplier_name: typeVal === 'restock' ? supplierName : ''
-      };
-      if (payload.quantity <= 0) { this.toast('Quantity must be greater than 0', 'error'); return; }
+      const inventory_id = parseInt(document.getElementById('m-item').value);
+      const quantity = parseFloat(document.getElementById('m-qty').value) || 0;
+      const rate = parseFloat(document.getElementById('m-rate').value) || 0;
+      const entry_date = document.getElementById('m-date').value;
+      const notes = document.getElementById('m-notes').value;
+      if (quantity <= 0) { this.toast('Quantity must be greater than 0', 'error'); return; }
+
       try {
+        if (typeVal === 'return') {
+          // Customer Return → the unified customer-return endpoint (single item).
+          const custEl = document.getElementById('m-return-customer');
+          const clientId = custEl ? parseInt(custEl.value) : 0;
+          if (!clientId) { this.toast('Customer select karein', 'error'); return; }
+          const res = await this.api.post('/api/inventory/customer-return', {
+            client_id: clientId, entry_date, notes,
+            items: [{ inventory_id, quantity, rate }]
+          });
+          if (res && res.error) { this.toast(res.error, 'error'); return; }
+          this.closeModal(); await this.showInventory();
+          this.toast('Customer return recorded & ledger updated', 'success');
+          return;
+        }
+        if (typeVal === 'supplier_return') {
+          const supEl = document.getElementById('m-supplier');
+          const supId = supEl ? parseInt(supEl.value) : 0;
+          if (!supId) { this.toast('Supplier select karein', 'error'); return; }
+          const res = await this.api.post('/api/inventory/supplier-return', {
+            supplier_id: supId, entry_date, notes,
+            items: [{ inventory_id, quantity, rate }]
+          });
+          if (res && res.error) { this.toast(res.error, 'error'); return; }
+          this.closeModal(); await this.showInventory();
+          this.toast('Supplier return recorded & ledger updated', 'success');
+          return;
+        }
+        // sale / restock / adjust → the generic movement endpoint
+        const supplierEl = document.getElementById('m-supplier');
+        const supplierNameEl = document.getElementById('m-supplier-name');
+        const supplierId = supplierEl ? supplierEl.value : '';
+        const supplierName = supplierId === '__manual__' ? (supplierNameEl ? supplierNameEl.value.trim() : '') :
+          (supplierEl && supplierEl.options[supplierEl.selectedIndex] ? supplierEl.options[supplierEl.selectedIndex].text : '');
+        const payload = {
+          inventory_id, type: typeVal,
+          direction: document.getElementById('m-dir').value,
+          quantity, rate, entry_date,
+          customer_name: document.getElementById('m-cust').value,
+          notes,
+          supplier_id: supplierId && supplierId !== '__manual__' ? parseInt(supplierId) : null,
+          supplier_name: typeVal === 'restock' ? supplierName : ''
+        };
         await this.api.post('/api/inventory/movements', payload);
-        this.closeModal();
-        await this.showInventory();
+        // Restock with a linked supplier → remember the buy rate for this product
+        // under that supplier, so it auto-fills next time (request #5).
+        if (typeVal === 'restock' && payload.supplier_id && rate > 0) {
+          try { await this.api.post(`/api/clients/${payload.supplier_id}/supplier-rates`, { item_type: 'inventory', item_id: inventory_id, rate }); } catch (e) {}
+        }
+        this.closeModal(); await this.showInventory();
         const msg = typeVal === 'restock' && payload.supplier_id ? 'Restocked & supplier ledger entry added' : 'Movement recorded';
         this.toast(msg, 'success');
       } catch (err) { this.toast('Failed', 'error'); }
@@ -2857,20 +2869,16 @@ const App = {
     try {
       const data = await this.api.get('/api/clients');
       const allClients = data.clients || [];
-      // Filter only supplier folder clients
       const allFolders = this.state.folders || [];
       const supFolderIds = new Set(allFolders.filter(f => f.ledger_type === 'supplier' || /supplier/i.test(f.name)).map(f => f.id));
       const suppliers = allClients.filter(cl => supFolderIds.has(cl.folder_id));
-      sel.innerHTML = '<option value="">-- Select Supplier (optional) --</option>';
-      if (suppliers.length > 0) {
-        suppliers.forEach(s => {
-          const opt = document.createElement('option');
-          opt.value = s.id;
-          opt.textContent = `${s.name}${s.folder_name ? ' (' + s.folder_name + ')' : ''}`;
-          sel.appendChild(opt);
-        });
-      }
-      // Option to enter manually
+      sel.innerHTML = '<option value="">-- Select Supplier --</option>';
+      suppliers.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        opt.textContent = `${s.name}${s.folder_name ? ' (' + s.folder_name + ')' : ''}`;
+        sel.appendChild(opt);
+      });
       const manOpt = document.createElement('option');
       manOpt.value = '__manual__';
       manOpt.textContent = '+ Enter supplier name manually';
@@ -2878,18 +2886,94 @@ const App = {
     } catch (e) {}
   },
 
-  _movSupplierChange() {
+  async _movLoadReturnCustomers() {
+    const sel = document.getElementById('m-return-customer');
+    if (!sel) return;
+    try {
+      const data = await this.api.get('/api/clients');
+      const allClients = data.clients || [];
+      const allFolders = this.state.folders || [];
+      const supFolderIds = new Set(allFolders.filter(f => f.ledger_type === 'supplier' || /supplier/i.test(f.name || '')).map(f => f.id));
+      const customers = allClients.filter(cl => !supFolderIds.has(cl.folder_id));
+      sel.innerHTML = '<option value="">-- Select Customer --</option>' +
+        customers.map(c => `<option value="${c.id}">${this.escapeHtml(c.name)}${c.folder_name ? ' (' + this.escapeHtml(c.folder_name) + ')' : ''}</option>`).join('');
+    } catch (e) {}
+  },
+
+  // Supplier chosen → load their buy-rate map and auto-fill the rate for the
+  // currently selected product (request #5: use SUPPLIER buy rate, not selling).
+  async _movSupplierChange() {
     const sel = document.getElementById('m-supplier');
     const manualWrap = document.getElementById('m-supplier-name-wrap');
-    if (sel && manualWrap) {
-      manualWrap.style.display = sel.value === '__manual__' ? 'block' : 'none';
+    if (sel && manualWrap) manualWrap.style.display = sel.value === '__manual__' ? 'block' : 'none';
+    this._movSupRateMap = {};
+    const rateHint = document.getElementById('m-supplier-rate-hint');
+    const id = sel ? parseInt(sel.value) : 0;
+    if (id && sel.value !== '__manual__') {
+      try {
+        const data = await this.api.get(`/api/clients/${id}/supplier-rate-map`);
+        this._movSupRateMap = data.rateMap || {};
+      } catch (e) { this._movSupRateMap = {}; }
+    }
+    this._movApplySupplierRate();
+    if (rateHint) {
+      const n = Object.keys(this._movSupRateMap).length;
+      rateHint.style.display = (id && sel.value !== '__manual__') ? 'block' : 'none';
+      const span = rateHint.querySelector('span');
+      if (span) span.textContent = n > 0
+        ? `Is supplier ke ${n} item ke buy-rate save hain — select product ka rate khud lag jayega. (edit bhi kar sakte hain)`
+        : `Is supplier ke koi saved buy-rate nahi — rate manually likhein. Supplier profile > Product Rates se save kar sakte hain.`;
+    }
+  },
+
+  // Fill the rate box from the supplier buy-rate map for the current product.
+  _movApplySupplierRate() {
+    const itemSel = document.getElementById('m-item');
+    const rateEl = document.getElementById('m-rate');
+    if (!itemSel || !rateEl) return;
+    const key = 'inventory:' + itemSel.value;
+    if (this._movSupRateMap && this._movSupRateMap[key] != null) {
+      rateEl.value = this._movSupRateMap[key];
+    }
+  },
+
+  async _movReturnCustomerChange() {
+    const sel = document.getElementById('m-return-customer');
+    const hint = document.getElementById('m-return-rate-hint');
+    this._movRetRateMap = {};
+    const id = sel ? parseInt(sel.value) : 0;
+    if (id) {
+      try { const data = await this.api.get(`/api/clients/${id}/rate-map`); this._movRetRateMap = data.rateMap || {}; }
+      catch (e) { this._movRetRateMap = {}; }
+    }
+    // Auto-fill rate for current product from the customer's selling-rate map.
+    const itemSel = document.getElementById('m-item');
+    const rateEl = document.getElementById('m-rate');
+    if (itemSel && rateEl && this._movRetRateMap && this._movRetRateMap[itemSel.value] != null) {
+      rateEl.value = this._movRetRateMap[itemSel.value];
+    }
+    if (hint) {
+      const n = Object.keys(this._movRetRateMap).length;
+      hint.style.display = id ? 'block' : 'none';
+      const span = hint.querySelector('span');
+      if (span) span.textContent = n > 0
+        ? `Is customer ke ${n} product ke special rate save hain — select product ka rate khud lag jayega.`
+        : `Is customer ke koi special rate save nahi — default selling rate lagega.`;
     }
   },
 
   _movFillRate() {
+    const t = document.getElementById('m-type') ? document.getElementById('m-type').value : 'sale';
+    // If a supplier is chosen for a restock, prefer its buy-rate.
+    if (t === 'restock' || t === 'supplier_return') { this._movApplySupplierRate(); }
+    else if (t === 'return') { this._movReturnCustomerChange(); return; }
     const sel = document.getElementById('m-item');
     const rateEl = document.getElementById('m-rate');
     if (sel && rateEl) {
+      const key = 'inventory:' + sel.value;
+      if ((t === 'restock' || t === 'supplier_return') && this._movSupRateMap && this._movSupRateMap[key] != null) {
+        rateEl.value = this._movSupRateMap[key]; return;
+      }
       const opt = sel.options[sel.selectedIndex];
       if (opt && (!rateEl.value || parseFloat(rateEl.value) === 0)) rateEl.value = opt.getAttribute('data-rate') || 0;
     }
@@ -2898,12 +2982,23 @@ const App = {
   _movToggleDir() {
     const t = document.getElementById('m-type').value;
     const dirWrap = document.getElementById('m-dir-wrap');
-    const restockWrap = document.getElementById('m-restock-wrap');
+    const supplierWrap = document.getElementById('m-supplier-wrap');
+    const custReturnWrap = document.getElementById('m-custreturn-wrap');
     const custWrap = document.getElementById('m-cust-wrap');
-    const rateLabel = document.querySelector('label[for="m-rate"]');
+    const rateLabel = document.getElementById('m-rate-label');
+    const supHint = document.getElementById('m-supplier-hint');
+    const usesSupplier = (t === 'restock' || t === 'supplier_return');
     if (dirWrap) dirWrap.style.display = (t === 'adjust') ? 'block' : 'none';
-    if (restockWrap) restockWrap.style.display = (t === 'restock') ? 'block' : 'none';
-    if (custWrap) custWrap.style.display = (t === 'restock') ? 'none' : 'block';
+    if (supplierWrap) supplierWrap.style.display = usesSupplier ? 'block' : 'none';
+    if (custReturnWrap) custReturnWrap.style.display = (t === 'return') ? 'block' : 'none';
+    // The free-text customer box only makes sense for a plain sale.
+    if (custWrap) custWrap.style.display = (t === 'sale' || t === 'adjust') ? 'block' : 'none';
+    if (rateLabel) rateLabel.textContent = usesSupplier ? 'Rate / Cost — Supplier buy rate (PKR)' : (t === 'return' ? 'Rate — Customer sell rate (PKR)' : 'Rate (PKR)');
+    if (supHint) supHint.innerHTML = (t === 'supplier_return')
+      ? '<i class="fas fa-rotate-left mr-1"></i>Supplier Return — jo maal supplier ko wapas kiya, uski entry supplier ke ledger mein credit ho gi (jitna hum ne dena tha usme se minus).'
+      : '<i class="fas fa-truck mr-1"></i>Supplier Ledger Entry — is restock ki entry supplier ke ledger mein bhi ho gi.';
+    // Re-apply the correct rate source for the new type.
+    this._movFillRate();
   },
 
   async deleteMovement(id) {
@@ -3557,10 +3652,11 @@ const App = {
           <h3 class="text-sm font-semibold text-green-900 mb-2"><i class="fas fa-money-bill-wave mr-1"></i>Supplier &amp; Payment</h3>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Supplier (link to client)</label>
-              <select id="rs-supplier" class="input-field">
+              <select id="rs-supplier" class="input-field" onchange="App._rsSupplierChange(${id})">
                 <option value="">-- None / Manual --</option>
                 ${supplierOpts}
-              </select></div>
+              </select>
+              <p id="rs-rate-hint" class="text-xs text-green-700 mt-1" style="display:none;"><i class="fas fa-tags mr-1"></i><span></span></p></div>
             <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Supplier Name (manual, if not linked)</label>
               <input id="rs-supname" type="text" class="input-field" value=""></div>
             <div><label class="block text-sm font-medium mb-1">Amount Paid Now (PKR)</label>
@@ -3603,11 +3699,36 @@ const App = {
       };
       try {
         await this.api.post(`/api/raw-materials/${id}/restock`, payload);
+        // Remember this supplier's buy-rate for this raw material so it auto-fills next time.
+        if (payload.supplier_id) {
+          try { await this.api.post(`/api/clients/${payload.supplier_id}/supplier-rates`, { item_type: 'raw', item_id: id, rate }); } catch (e) {}
+        }
         this.closeModal();
         await this.showRawMaterials();
         this.toast('Stock added', 'success');
       } catch (err) { this.toast('Failed', 'error'); }
     });
+  },
+
+  // When a supplier is linked in the raw-material restock, auto-fill the batch
+  // rate from that supplier's saved buy-rate for this material (request #5).
+  async _rsSupplierChange(rawId) {
+    const sel = document.getElementById('rs-supplier');
+    const hint = document.getElementById('rs-rate-hint');
+    const supId = sel ? parseInt(sel.value) : 0;
+    if (!supId) { if (hint) hint.style.display = 'none'; return; }
+    try {
+      const data = await this.api.get(`/api/clients/${supId}/supplier-rate-map`);
+      const map = data.rateMap || {};
+      const key = 'raw:' + rawId;
+      if (map[key] != null) {
+        const rateEl = document.getElementById('rs-rate');
+        if (rateEl) { rateEl.value = map[key]; this._calcRestockPreview(rawId); }
+        if (hint) { hint.style.display = 'block'; const s = hint.querySelector('span'); if (s) s.textContent = `Is supplier ka saved buy-rate laga diya (PKR ${this.fmt(map[key])}). Zaroorat ho to edit karein.`; }
+      } else if (hint) {
+        hint.style.display = 'block'; const s = hint.querySelector('span'); if (s) s.textContent = 'Is supplier ka koi saved buy-rate nahi — rate manually likhein (save ho jayega).';
+      }
+    } catch (e) { if (hint) hint.style.display = 'none'; }
   },
 
   _calcRestockPreview(id) {
