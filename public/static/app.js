@@ -288,7 +288,22 @@ const App = {
         <div class="nav-section" id="sections-nav">
           <div class="nav-section-title">
             <span>Sections</span>
-            <button onclick="App.showAddFolder()" class="text-blue-400 hover:text-blue-300" title="Add Section"><i class="fas fa-plus-circle"></i></button>
+            <span>
+              <button onclick="App.showCustomerSearch()" class="text-green-400 hover:text-green-300 mr-2" title="Search any customer's ledger by name"><i class="fas fa-search"></i></button>
+              <button onclick="App.showAddFolder()" class="text-blue-400 hover:text-blue-300" title="Add Section"><i class="fas fa-plus-circle"></i></button>
+            </span>
+          </div>
+          <div style="padding:0 0.75rem 0.5rem;">
+            <div style="position:relative;">
+              <i class="fas fa-search" style="position:absolute; left:10px; top:50%; transform:translateY(-50%); color:#94a3b8; font-size:12px; pointer-events:none;"></i>
+              <input type="text" id="global-cust-search" placeholder="Search customer ledger..."
+                autocomplete="off"
+                onfocus="App._ensureClientsForSearch()"
+                oninput="App._onGlobalCustSearch(this.value)"
+                onkeydown="if(event.key==='Escape'){this.value='';App._onGlobalCustSearch('');this.blur();}"
+                style="width:100%; padding:7px 10px 7px 30px; border-radius:8px; border:1px solid rgba(148,163,184,0.35); background:rgba(255,255,255,0.08); color:#e5e7eb; font-size:13px; outline:none;">
+              <div id="global-cust-results" style="display:none; max-height:260px; overflow-y:auto; margin-top:4px; background:#0f172a; border:1px solid rgba(148,163,184,0.25); border-radius:8px;"></div>
+            </div>
           </div>
           <div id="folders-nav-list"></div>
           <div id="folders-list" style="display:none;"></div>
@@ -320,6 +335,9 @@ const App = {
     try {
       const data = await this.api.get('/api/folders');
       this.state.folders = data.folders || [];
+      // Invalidate the global customer-search cache so newly added/edited
+      // clients show up in the sidebar search.
+      this._allClientsCache = null;
     } catch (e) {}
   },
   async loadCustomSections() {
@@ -350,6 +368,106 @@ const App = {
           </button>
         </div>`;
     }).join('');
+  },
+
+  // ========= Global Customer Ledger Search (Task 1) =========
+  // Loads ALL clients (across every section) once so the sidebar search box
+  // can find any customer by name and jump straight to their ledger.
+  async _ensureClientsForSearch(force = false) {
+    if (this._allClientsCache && !force) return this._allClientsCache;
+    try {
+      const data = await this.api.get('/api/clients');
+      this._allClientsCache = data.clients || [];
+    } catch (e) { this._allClientsCache = this._allClientsCache || []; }
+    return this._allClientsCache;
+  },
+
+  _onGlobalCustSearch(q) {
+    const box = document.getElementById('global-cust-results');
+    if (!box) return;
+    const term = (q || '').trim().toLowerCase();
+    if (!term) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    const all = this._allClientsCache || [];
+    const matches = all.filter(c =>
+      (c.name || '').toLowerCase().includes(term) ||
+      (c.phone || '').toLowerCase().includes(term) ||
+      (c.folder_name || '').toLowerCase().includes(term)
+    ).slice(0, 30);
+    if (matches.length === 0) {
+      box.style.display = 'block';
+      box.innerHTML = `<div style="padding:10px 12px; color:#94a3b8; font-size:13px;"><i class="fas fa-user-slash mr-1"></i>No customer found</div>`;
+      return;
+    }
+    box.style.display = 'block';
+    box.innerHTML = matches.map(c => `
+      <a href="#" onclick="App._openClientFromSearch(${c.id}, ${c.folder_id}); return false;"
+         style="display:flex; align-items:center; gap:8px; padding:8px 12px; color:#e5e7eb; font-size:13px; border-bottom:1px solid rgba(148,163,184,0.12); text-decoration:none;"
+         onmouseover="this.style.background='rgba(59,130,246,0.15)'" onmouseout="this.style.background='transparent'">
+        <i class="fas fa-user-circle" style="color:#60a5fa;"></i>
+        <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+          <strong>${this.escapeHtml(c.name)}</strong>
+          ${c.phone ? `<span style="color:#94a3b8;"> · ${this.escapeHtml(c.phone)}</span>` : ''}
+          <span style="display:block; color:#64748b; font-size:11px;">${this.escapeHtml(c.folder_name || '')}</span>
+        </span>
+        <i class="fas fa-arrow-right" style="color:#60a5fa; font-size:11px;"></i>
+      </a>`).join('');
+  },
+
+  async _openClientFromSearch(clientId, folderId) {
+    const box = document.getElementById('global-cust-results');
+    const inp = document.getElementById('global-cust-search');
+    if (box) { box.style.display = 'none'; box.innerHTML = ''; }
+    if (inp) inp.value = '';
+    // Ensure the folder's clients are loaded before opening the ledger
+    this.state.currentFolderId = folderId;
+    await this.openClient(clientId);
+    this.closeSidebarOnMobile();
+  },
+
+  // Full-screen modal search (opened from the search icon) — same data, bigger UI.
+  async showCustomerSearch() {
+    await this._ensureClientsForSearch(true);
+    this.openModal(`
+      <h2 class="text-xl font-bold mb-3"><i class="fas fa-search text-green-600 mr-2"></i>Search Customer Ledger</h2>
+      <p class="text-sm text-gray-500 mb-3">Customer ka naam, phone ya section type karein — uska ledger direct khul jayega.</p>
+      <div class="relative mb-3">
+        <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+        <input type="text" id="cust-search-modal" class="input-field" style="padding-left:2.25rem;" placeholder="Type customer name..." autocomplete="off"
+          oninput="App._onModalCustSearch(this.value)">
+      </div>
+      <div id="cust-search-modal-results" style="max-height:50vh; overflow-y:auto;"></div>
+    `);
+    setTimeout(() => { const el = document.getElementById('cust-search-modal'); if (el) el.focus(); }, 50);
+    this._onModalCustSearch('');
+  },
+
+  _onModalCustSearch(q) {
+    const box = document.getElementById('cust-search-modal-results');
+    if (!box) return;
+    const term = (q || '').trim().toLowerCase();
+    const all = this._allClientsCache || [];
+    const list = !term ? all.slice(0, 50) : all.filter(c =>
+      (c.name || '').toLowerCase().includes(term) ||
+      (c.phone || '').toLowerCase().includes(term) ||
+      (c.folder_name || '').toLowerCase().includes(term)
+    ).slice(0, 50);
+    if (list.length === 0) {
+      box.innerHTML = `<div class="text-center py-8 text-gray-400"><i class="fas fa-user-slash text-3xl mb-2 block"></i>No customer found</div>`;
+      return;
+    }
+    box.innerHTML = list.map(c => `
+      <div class="flex items-center gap-3 p-3 rounded-lg hover:bg-blue-50 cursor-pointer border-b"
+           onclick="App.closeModal(); App._openClientFromSearch(${c.id}, ${c.folder_id});">
+        <i class="fas fa-user-circle text-2xl text-blue-500"></i>
+        <div class="flex-1 min-w-0">
+          <p class="font-semibold text-gray-800 truncate">${this.escapeHtml(c.name)}</p>
+          <p class="text-xs text-gray-500 truncate">
+            ${c.phone ? `<i class="fas fa-phone mr-1"></i>${this.escapeHtml(c.phone)} · ` : ''}
+            <i class="fas fa-folder mr-1"></i>${this.escapeHtml(c.folder_name || '')}
+          </p>
+        </div>
+        <i class="fas fa-arrow-right text-blue-400"></i>
+      </div>`).join('');
   },
 
   renderCustomSections() {
@@ -2229,6 +2347,7 @@ const App = {
           <p class="page-subtitle">${this.state.inventory.length} product(s) · Total Value: PKR ${this.fmt(totalValue)}</p></div>
         <div class="flex gap-2 flex-wrap">
           <input type="text" id="inv-search" placeholder="Search..." class="input-field" style="max-width:240px;" oninput="App.renderInventory(this.value)" value="${this.escapeAttr(filter)}">
+          <button onclick="App.showCustomerReturnModal()" class="btn btn-warning" title="Customer se ek saath multiple products ki return entry karein — ledger auto-sync"><i class="fas fa-rotate-left"></i> Customer Return</button>
           <button onclick="App.showMovementModal()" class="btn btn-secondary"><i class="fas fa-right-left"></i> ReStock / Return</button>
           <button onclick="App.showInventoryEditor()" class="btn btn-primary"><i class="fas fa-plus"></i> Add Product</button>
         </div>
@@ -2401,6 +2520,246 @@ const App = {
     const t = document.getElementById('me-type').value;
     const wrap = document.getElementById('me-dir-wrap');
     if (wrap) wrap.style.display = (t === 'adjust') ? 'block' : 'none';
+  },
+
+  // ============ Customer Return (multi-product) — Task 2 ============
+  // Select a customer, add multiple products being returned in ONE entry.
+  // - Rate auto-fills from that customer's saved product-rate map (falls back
+  //   to the product's default selling rate).
+  // - On save each product creates a `return` stock movement (stock increases)
+  //   AND the whole return is synced to the customer's ledger as a CREDIT
+  //   (reduces what the customer owes), just like a returned/refunded sale.
+  async showCustomerReturnModal() {
+    const items = this.state.inventory || [];
+    if (items.length === 0) { this.toast('Pehle koi product add karein', 'error'); return; }
+    const today = new Date().toISOString().slice(0, 10);
+    this._returnRows = [];       // [{ inventory_id, quantity, rate }]
+    this._returnRateMap = {};    // { inventory_id: rate } for the selected customer
+    this.openModal(`
+      <h2 class="text-xl font-bold mb-1"><i class="fas fa-rotate-left text-amber-500 mr-2"></i>Customer Return</h2>
+      <p class="text-sm text-gray-500 mb-4">Customer select karein, phir jo jo products return hue add karein. Har product ka rate customer ke saved rate se apne aap lag jayega. Ledger auto-sync ho jayega.</p>
+      <form id="cust-return-form" class="space-y-3">
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium mb-1">Customer *</label>
+            <select id="ret-customer" class="input-field" required onchange="App._onReturnCustomerChange()">
+              <option value="">-- Loading customers --</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">Date</label>
+            <input id="ret-date" type="date" class="input-field" value="${today}">
+          </div>
+        </div>
+        <div id="ret-rate-hint" class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2" style="display:none;">
+          <i class="fas fa-tags mr-1"></i><span id="ret-rate-hint-text"></span>
+        </div>
+
+        <div class="border rounded-lg overflow-hidden">
+          <div class="bg-gray-50 px-3 py-2 flex items-center justify-between">
+            <span class="text-sm font-semibold text-gray-700"><i class="fas fa-boxes-stacked mr-1"></i>Returned Products</span>
+            <button type="button" class="btn btn-success btn-sm" onclick="App._addReturnRow()"><i class="fas fa-plus"></i> Add Product</button>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="ledger-table" style="min-width:520px;">
+              <thead><tr>
+                <th>Product</th>
+                <th style="width:100px;">Qty *</th>
+                <th style="width:120px;" title="Customer ke saved rate se auto — edit bhi kar sakte hain">Rate (PKR)</th>
+                <th style="width:120px;" class="text-right">Line Total</th>
+                <th style="width:44px;"></th>
+              </tr></thead>
+              <tbody id="ret-rows"></tbody>
+              <tfoot>
+                <tr class="bg-gray-100 font-bold">
+                  <td colspan="3" class="text-right">Total Return Value:</td>
+                  <td class="text-right amount-running" id="ret-grand-total">PKR 0.00</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+
+        <div><label class="block text-sm font-medium mb-1">Note (optional)</label>
+          <input id="ret-notes" type="text" class="input-field" placeholder="e.g. damaged pieces wapas"></div>
+
+        <div class="bg-blue-50 border border-blue-200 rounded p-2 text-xs text-blue-800">
+          <i class="fas fa-info-circle mr-1"></i>Ledger mein is return ko customer ke <strong>credit</strong> (Amount Received) ke tor par likha jayega — jitna customer aap ko dena tha usme se minus ho jayega.
+        </div>
+
+        <div class="flex gap-2 justify-end pt-2 border-t">
+          <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Return</button>
+        </div>
+      </form>`);
+
+    // Populate customer dropdown (only customer-type folders, not suppliers)
+    await this._returnLoadCustomers();
+    // Start with one empty row
+    this._addReturnRow();
+
+    document.getElementById('cust-return-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const custEl = document.getElementById('ret-customer');
+      const clientId = custEl ? parseInt(custEl.value) : 0;
+      if (!clientId) { this.toast('Customer select karein', 'error'); return; }
+      const rows = this._collectReturnRows();
+      if (rows.length === 0) { this.toast('Kam se kam ek product add karein (qty > 0)', 'error'); return; }
+      const payload = {
+        client_id: clientId,
+        entry_date: document.getElementById('ret-date').value,
+        notes: document.getElementById('ret-notes').value,
+        items: rows
+      };
+      try {
+        const res = await this.api.post('/api/inventory/customer-return', payload);
+        if (res && res.error) { this.toast(res.error, 'error'); return; }
+        this.closeModal();
+        await this.showInventory();
+        this.toast('Return recorded & customer ledger updated', 'success');
+      } catch (err) { this.toast('Return save failed', 'error'); }
+    });
+  },
+
+  async _returnLoadCustomers() {
+    const sel = document.getElementById('ret-customer');
+    if (!sel) return;
+    try {
+      const data = await this.api.get('/api/clients');
+      const allClients = data.clients || [];
+      const allFolders = this.state.folders || [];
+      // Customer folders = NOT supplier
+      const supFolderIds = new Set(allFolders.filter(f => f.ledger_type === 'supplier' || /supplier/i.test(f.name || '')).map(f => f.id));
+      const customers = allClients.filter(cl => !supFolderIds.has(cl.folder_id));
+      sel.innerHTML = '<option value="">-- Select Customer --</option>' +
+        customers.map(c => `<option value="${c.id}">${this.escapeHtml(c.name)}${c.folder_name ? ' (' + this.escapeHtml(c.folder_name) + ')' : ''}</option>`).join('');
+    } catch (e) {
+      sel.innerHTML = '<option value="">-- Failed to load --</option>';
+    }
+  },
+
+  async _onReturnCustomerChange() {
+    const sel = document.getElementById('ret-customer');
+    const hint = document.getElementById('ret-rate-hint');
+    const hintText = document.getElementById('ret-rate-hint-text');
+    this._returnRateMap = {};
+    const clientId = sel ? parseInt(sel.value) : 0;
+    if (clientId) {
+      try {
+        const data = await this.api.get(`/api/clients/${clientId}/rate-map`);
+        this._returnRateMap = data.rateMap || {};
+      } catch (e) { this._returnRateMap = {}; }
+      const n = Object.keys(this._returnRateMap).length;
+      if (hint && hintText) {
+        hint.style.display = 'block';
+        hintText.textContent = n > 0
+          ? `Is customer ke ${n} product(s) ke special rate save hain — wo apne aap lag jayenge. Baaki products ke liye default selling rate lagega.`
+          : `Is customer ke koi special rate save nahi — sab products par default selling rate lagega. Chahein to rate edit kar sakte hain.`;
+      }
+    } else if (hint) {
+      hint.style.display = 'none';
+    }
+    // Re-apply auto rates to any existing rows that user hasn't manually edited
+    (this._returnRows || []).forEach(r => { this._applyReturnRate(r.uid, false); });
+    this._recalcReturnTotals();
+  },
+
+  _rateForProduct(inventoryId) {
+    const id = String(inventoryId);
+    if (this._returnRateMap && this._returnRateMap[id] != null) return parseFloat(this._returnRateMap[id]) || 0;
+    const item = (this.state.inventory || []).find(x => String(x.id) === id);
+    return item ? (parseFloat(item.rate) || 0) : 0;
+  },
+
+  _addReturnRow() {
+    if (!this._returnRows) this._returnRows = [];
+    const uid = 'r' + Date.now() + Math.floor(Math.random() * 1000);
+    this._returnRows.push({ uid, inventory_id: '', quantity: 1, rate: 0, rateEdited: false });
+    const tbody = document.getElementById('ret-rows');
+    if (!tbody) return;
+    const items = this.state.inventory || [];
+    const tr = document.createElement('tr');
+    tr.id = 'retrow-' + uid;
+    tr.innerHTML = `
+      <td>
+        <select class="input-field" style="min-width:180px;" onchange="App._onReturnProductChange('${uid}', this.value)">
+          <option value="">-- Select Product --</option>
+          ${items.map(it => `<option value="${it.id}">${this.escapeHtml(it.name)} (stock: ${this.fmt(parseFloat(it.quantity) || 0)})</option>`).join('')}
+        </select>
+      </td>
+      <td><input type="number" step="any" min="0" class="input-field" value="1" style="width:90px;" oninput="App._onReturnQtyChange('${uid}', this.value)"></td>
+      <td><input type="number" step="any" min="0" class="input-field" value="0" style="width:110px;" oninput="App._onReturnRateChange('${uid}', this.value)"></td>
+      <td class="text-right" id="retline-${uid}">PKR 0.00</td>
+      <td class="text-center"><button type="button" class="text-red-500 hover:text-red-700" onclick="App._removeReturnRow('${uid}')" title="Remove"><i class="fas fa-times"></i></button></td>`;
+    tbody.appendChild(tr);
+  },
+
+  _removeReturnRow(uid) {
+    this._returnRows = (this._returnRows || []).filter(r => r.uid !== uid);
+    const tr = document.getElementById('retrow-' + uid);
+    if (tr) tr.remove();
+    this._recalcReturnTotals();
+  },
+
+  _findReturnRow(uid) { return (this._returnRows || []).find(r => r.uid === uid); },
+
+  _onReturnProductChange(uid, val) {
+    const r = this._findReturnRow(uid);
+    if (!r) return;
+    r.inventory_id = val;
+    r.rateEdited = false; // new product → reapply auto rate
+    this._applyReturnRate(uid, false);
+    this._recalcReturnTotals();
+  },
+
+  _onReturnQtyChange(uid, val) {
+    const r = this._findReturnRow(uid);
+    if (!r) return;
+    r.quantity = parseFloat(val) || 0;
+    this._recalcReturnTotals();
+  },
+
+  _onReturnRateChange(uid, val) {
+    const r = this._findReturnRow(uid);
+    if (!r) return;
+    r.rate = parseFloat(val) || 0;
+    r.rateEdited = true; // user overrode — don't auto-replace
+    this._recalcReturnTotals();
+  },
+
+  // Fill the rate input for a row from the customer rate-map / default rate.
+  // If force=false, skip rows the user manually edited.
+  _applyReturnRate(uid, force) {
+    const r = this._findReturnRow(uid);
+    if (!r || !r.inventory_id) return;
+    if (r.rateEdited && !force) return;
+    const rate = this._rateForProduct(r.inventory_id);
+    r.rate = rate;
+    const tr = document.getElementById('retrow-' + uid);
+    if (tr) { const rateInput = tr.querySelectorAll('input')[1]; if (rateInput) rateInput.value = rate; }
+  },
+
+  _recalcReturnTotals() {
+    let grand = 0;
+    (this._returnRows || []).forEach(r => {
+      const line = (parseFloat(r.quantity) || 0) * (parseFloat(r.rate) || 0);
+      grand += line;
+      const cell = document.getElementById('retline-' + r.uid);
+      if (cell) cell.textContent = 'PKR ' + this.fmt(line);
+    });
+    const gt = document.getElementById('ret-grand-total');
+    if (gt) gt.textContent = 'PKR ' + this.fmt(grand);
+  },
+
+  _collectReturnRows() {
+    return (this._returnRows || [])
+      .filter(r => r.inventory_id && (parseFloat(r.quantity) || 0) > 0)
+      .map(r => ({
+        inventory_id: parseInt(r.inventory_id),
+        quantity: parseFloat(r.quantity) || 0,
+        rate: parseFloat(r.rate) || 0
+      }));
   },
 
   showMovementModal() {
@@ -3311,19 +3670,22 @@ const App = {
       <div class="page-header"><h1 class="page-title"><i class="fas fa-industry text-purple-600"></i>Products Manufacturing</h1></div>
       <div class="p-6"><div class="text-gray-400 text-center py-8"><i class="fas fa-spinner fa-spin text-2xl"></i></div></div>`;
     try {
-      const [pData, rmData, cData, eData, ppData] = await Promise.all([
+      const [pData, rmData, cData, eData, ppData, scData] = await Promise.all([
         this.api.get('/api/products'),
         this.api.get('/api/raw-materials'),
         this.api.get('/api/components'),
         this.api.get('/api/employees'),
-        this.api.get('/api/product-production')
+        this.api.get('/api/product-production'),
+        this.api.get('/api/stage-corrections?limit=200')
       ]);
       this.state.products = pData.products || [];
       this.state.rawMaterials = rmData.items || [];
       this.state.componentsList = cData.components || [];
       this.state.employees = eData.employees || [];
       this.state.productProductionLogs = ppData.production || [];
+      this.state.stageCorrections = (scData && scData.corrections) || [];
       this._setPage('prodLog', 1);
+      this._setPage('stageCorr', 1);
       this.renderProducts();
     } catch (e) { this.toast('Failed to load', 'error'); }
   },
@@ -3426,11 +3788,12 @@ const App = {
                   <td>${this.escapeHtml(p.category || '')}</td>
                   <td style="min-width: 300px;">${recipeStr}</td>
                   <td class="text-center"><span class="text-lg font-bold ${buildableClass}">${this.fmt(buildable)}</span></td>
-                  <td class="text-center"><span class="text-lg font-bold ${assembled>0?'text-amber-600':'text-gray-300'}">${this.fmt(assembled)}</span></td>
-                  <td class="text-center"><span class="text-lg font-bold ${painted>0?'text-indigo-600':'text-gray-300'}">${this.fmt(painted)}</span></td>
-                  <td class="text-center"><span class="text-lg font-bold ${packed>0?'text-green-600':'text-gray-300'}">${this.fmt(packed)}</span></td>
+                  <td class="text-center stage-cell" title="Click to correct Assembled stock" onclick="App.showStageCorrection(${p.id}, 'assembled')"><span class="text-lg font-bold ${assembled>0?'text-amber-600':'text-gray-300'}">${this.fmt(assembled)}</span> <i class="fas fa-pen stage-edit-ic"></i></td>
+                  <td class="text-center stage-cell" title="Click to correct Painted stock" onclick="App.showStageCorrection(${p.id}, 'painted')"><span class="text-lg font-bold ${painted>0?'text-indigo-600':'text-gray-300'}">${this.fmt(painted)}</span> <i class="fas fa-pen stage-edit-ic"></i></td>
+                  <td class="text-center stage-cell" title="Click to correct Packed (final) stock" onclick="App.showStageCorrection(${p.id}, 'packed')"><span class="text-lg font-bold ${packed>0?'text-green-600':'text-gray-300'}">${this.fmt(packed)}</span> <i class="fas fa-pen stage-edit-ic"></i></td>
                   <td>
                     <button onclick="App.showProductProductionEditor(null, ${p.id})" class="btn btn-secondary btn-sm" title="Log Production (Assemble / Paint / Pack)"><i class="fas fa-hard-hat"></i></button>
+                    <button onclick="App.showStageCorrection(${p.id})" class="btn btn-secondary btn-sm ml-1" title="Correct stage stock (Assembled / Painted / Packed)"><i class="fas fa-sliders"></i></button>
                     <button onclick="App.showProductEditor(${p.id})" class="btn btn-secondary btn-sm ml-1" title="Edit recipe"><i class="fas fa-edit"></i></button>
                     <button onclick="App.deleteProduct(${p.id})" class="text-red-500 hover:text-red-700 ml-1" title="Delete"><i class="fas fa-trash text-sm"></i></button>
                   </td>
@@ -3445,6 +3808,14 @@ const App = {
             <span class="text-xs text-gray-500">kis ne kitne assemble/paint/pack kiye</span>
           </div>
           <div id="prod-log-body">${this.renderProductProductionLog()}</div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+          <div class="px-4 py-3 border-b flex items-center justify-between flex-wrap gap-2">
+            <h2 class="font-bold text-gray-800"><i class="fas fa-sliders mr-2 text-rose-600"></i>Recent Correction Log</h2>
+            <span class="text-xs text-gray-500">Assembled / Painted / Packed stock ki manual corrections</span>
+          </div>
+          <div id="stage-corr-body">${this.renderStageCorrections()}</div>
         </div>
 
         <div class="bg-purple-50 border border-purple-200 rounded-xl p-4 text-sm text-purple-900">
@@ -3500,6 +3871,160 @@ const App = {
   refreshProductProductionLog() {
     const el = document.getElementById('prod-log-body');
     if (el) el.innerHTML = this.renderProductProductionLog();
+  },
+
+  // ========= Stage Stock Correction (Task 3) =========
+  // Directly edit / correct the Assembled / Painted / Packed stock of a product.
+  // stagePreselect: optional 'assembled' | 'painted' | 'packed' to preselect.
+  showStageCorrection(productId, stagePreselect = 'assembled') {
+    const p = (this.state.products || []).find(x => x.id === productId);
+    if (!p) { this.toast('Product not found', 'error'); return; }
+    const today = new Date().toISOString().slice(0, 10);
+    const stageVal = ['assembled', 'painted', 'packed'].includes(stagePreselect) ? stagePreselect : 'assembled';
+    const cur = {
+      assembled: parseFloat(p.assembled_qty) || 0,
+      painted: parseFloat(p.painted_qty) || 0,
+      packed: parseFloat(p.packed_qty) || 0
+    };
+    this.openModal(`
+      <h2 class="text-xl font-bold mb-1"><i class="fas fa-sliders text-rose-600 mr-2"></i>Correct Stage Stock</h2>
+      <p class="text-sm text-gray-500 mb-4">Product: <strong>${this.escapeHtml(p.name)}</strong>. Agar stock upar-neeche ho gaya ho to yahan se sahi value set karein — correction log mein record ho jayega.</p>
+      <form id="stage-corr-form" class="space-y-3">
+        <div>
+          <label class="block text-sm font-medium mb-1">Stage *</label>
+          <select id="sc-stage" class="input-field" onchange="App._scStageChange()">
+            <option value="assembled" ${stageVal==='assembled'?'selected':''}>Assembled (un-painted)</option>
+            <option value="painted" ${stageVal==='painted'?'selected':''}>Painted</option>
+            <option value="packed" ${stageVal==='packed'?'selected':''}>Packed (final)</option>
+          </select>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium mb-1">Current Stock</label>
+            <input id="sc-current" type="text" class="input-field bg-gray-100" readonly value="${this.fmt(cur[stageVal])}">
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">Correct / New Stock *</label>
+            <input id="sc-new" type="number" step="any" min="0" required class="input-field" value="${cur[stageVal]}" oninput="App._scCalcDelta()">
+          </div>
+        </div>
+        <div class="text-sm bg-gray-50 border rounded p-2 flex items-center justify-between">
+          <span class="text-gray-600">Change (delta):</span>
+          <span id="sc-delta" class="font-bold">0</span>
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Date</label>
+          <input id="sc-date" type="date" class="input-field" value="${today}">
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Reason (optional)</label>
+          <input id="sc-reason" type="text" class="input-field" placeholder="e.g. physical count, spoilage, miscount fix">
+        </div>
+        <div class="flex gap-2 justify-end pt-2 border-t">
+          <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Apply Correction</button>
+        </div>
+      </form>`);
+    // stash current values for the stage switcher
+    this._scCurrent = cur;
+    this._scCalcDelta();
+    document.getElementById('stage-corr-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const stage = document.getElementById('sc-stage').value;
+      const newQty = parseFloat(document.getElementById('sc-new').value);
+      if (isNaN(newQty) || newQty < 0) { this.toast('Valid new stock daalein', 'error'); return; }
+      if (newQty === (this._scCurrent[stage] || 0)) { this.toast('New value current jaisa hi hai — koi change nahi', 'error'); return; }
+      const payload = {
+        product_id: productId,
+        stage,
+        new_qty: newQty,
+        entry_date: document.getElementById('sc-date').value,
+        reason: document.getElementById('sc-reason').value
+      };
+      try {
+        const res = await this.api.post('/api/stage-corrections', payload);
+        if (res && res.error) { this.toast(res.error, 'error'); return; }
+        this.closeModal();
+        await this.showProducts();
+        this.toast('Stock corrected & logged', 'success');
+      } catch (err) { this.toast('Correction failed', 'error'); }
+    });
+  },
+
+  _scStageChange() {
+    const stage = document.getElementById('sc-stage').value;
+    const cur = (this._scCurrent && this._scCurrent[stage]) || 0;
+    const curEl = document.getElementById('sc-current');
+    const newEl = document.getElementById('sc-new');
+    if (curEl) curEl.value = this.fmt(cur);
+    if (newEl) newEl.value = cur;
+    this._scCalcDelta();
+  },
+
+  _scCalcDelta() {
+    const stage = document.getElementById('sc-stage').value;
+    const cur = (this._scCurrent && this._scCurrent[stage]) || 0;
+    const newQty = parseFloat(document.getElementById('sc-new').value) || 0;
+    const delta = newQty - cur;
+    const el = document.getElementById('sc-delta');
+    if (el) {
+      const sign = delta > 0 ? '+' : '';
+      el.textContent = sign + this.fmt(delta);
+      el.className = 'font-bold ' + (delta > 0 ? 'text-green-600' : delta < 0 ? 'text-red-600' : 'text-gray-500');
+    }
+  },
+
+  renderStageCorrections() {
+    const logs = this.state.stageCorrections || [];
+    const stageBadge = (s) => {
+      const map = { assembled: 'bg-amber-100 text-amber-700 border-amber-200', painted: 'bg-indigo-100 text-indigo-700 border-indigo-200', packed: 'bg-green-100 text-green-700 border-green-200' };
+      const label = { assembled: 'Assembled', painted: 'Painted', packed: 'Packed' };
+      return `<span class="inline-block px-2 py-0.5 rounded text-xs border ${map[s] || 'bg-gray-100 text-gray-700'}">${label[s] || s}</span>`;
+    };
+    if (logs.length === 0) {
+      return `<div class="overflow-x-auto"><table class="ledger-table"><tbody>
+        <tr><td class="text-center py-8 text-gray-500"><i class="fas fa-inbox text-3xl mb-2 block"></i>Abhi tak koi correction nahi. Kisi stage stock number par click karein ya "Correct stock" button se stock theek karein.</td></tr>
+        </tbody></table></div>`;
+    }
+    const { pageItems, totalPages, page, total, start } = this.paginate(logs, 'stageCorr');
+    const rows = pageItems.map((l, i) => {
+      const delta = parseFloat(l.delta) || 0;
+      const sign = delta > 0 ? '+' : '';
+      const deltaClass = delta > 0 ? 'text-green-600' : delta < 0 ? 'text-red-600' : 'text-gray-500';
+      return `<tr>
+        <td>${start + i + 1}</td>
+        <td>${l.entry_date}</td>
+        <td class="font-medium">${this.escapeHtml(l.product_name || '')}</td>
+        <td>${stageBadge(l.stage)}</td>
+        <td class="text-right text-gray-500">${this.fmt(l.old_qty)}</td>
+        <td class="text-right font-bold">${this.fmt(l.new_qty)}</td>
+        <td class="text-right font-bold ${deltaClass}">${sign}${this.fmt(delta)}</td>
+        <td>${l.reason ? this.escapeHtml(l.reason) : '<span class="text-gray-400">—</span>'}</td>
+        <td class="text-center"><button onclick="App.deleteStageCorrection(${l.id})" class="text-red-500 hover:text-red-700" title="Delete log entry"><i class="fas fa-trash text-sm"></i></button></td>
+      </tr>`;
+    }).join('');
+    return `
+      <div class="overflow-x-auto"><table class="ledger-table">
+        <thead><tr>
+          <th style="width:40px;">#</th><th>Date</th><th>Product</th><th>Stage</th>
+          <th class="text-right">Old</th><th class="text-right">New</th><th class="text-right">Change</th>
+          <th>Reason</th><th style="width:60px;">Action</th>
+        </tr></thead><tbody>${rows}</tbody></table></div>
+      ${this.renderPager('stageCorr', page, totalPages, total, 'refreshStageCorrections')}`;
+  },
+
+  refreshStageCorrections() {
+    const el = document.getElementById('stage-corr-body');
+    if (el) el.innerHTML = this.renderStageCorrections();
+  },
+
+  async deleteStageCorrection(id) {
+    const revert = confirm('Is correction log ko delete karein?\n\nOK = stock ko wapas correction se pehle wali value par le jayein (revert).\nCancel dabayein to sirf log delete hoga (stock nahi badlega).\n\nStock revert karna hai?');
+    try {
+      await this.api.delete(`/api/stage-corrections/${id}?revert=${revert ? '1' : '0'}`);
+      await this.showProducts();
+      this.toast('Correction log deleted', 'success');
+    } catch (err) { this.toast('Delete failed', 'error'); }
   },
 
   showProductEditor(id = null) {

@@ -322,6 +322,12 @@ body {
 .btn-danger:hover { background: #dc2626; }
 .btn-success { background: #10b981; color: white; }
 .btn-success:hover { background: #059669; }
+.btn-warning { background: #f59e0b; color: white; }
+.btn-warning:hover { background: #d97706; }
+.stage-cell { cursor: pointer; position: relative; }
+.stage-cell .stage-edit-ic { font-size: 10px; color: #cbd5e1; opacity: 0; transition: opacity .15s; margin-left: 2px; }
+.stage-cell:hover { background: #f8fafc; }
+.stage-cell:hover .stage-edit-ic { opacity: 1; color: #64748b; }
 .btn-outline { background: white; color: #374151; border: 1px solid #d1d5db; }
 .btn-outline:hover { background: #f9fafb; }
 .btn-sm { padding: 0.35rem 0.75rem; font-size: 0.8rem; }

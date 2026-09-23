@@ -6,6 +6,30 @@
 - **Goal**: Complete business CRM for Two Star Industries — manage clients, ledgers, inventory, raw materials, manufacturing recipes, employees, side expenses, and bills with auto Net Profit tracking.
 - **Stack**: Hono (TypeScript) + Cloudflare Pages + Cloudflare D1 (SQLite) + TailwindCSS + Vanilla JS frontend
 
+## What's New (latest update — 2026-09-23) — 3 Requested Features
+
+### 1. 🔍 Customer Ledger Search (Ledgers)
+Sidebar ke **Sections** ke neeche ek naya **search box** aur ek 🔍 icon add ho gaya hai. Ab **kisi bhi customer ka naam / phone / section type karke uska ledger direct khola** ja sakta hai — chahe woh kisi bhi section (folder) me ho.
+- Sidebar search box → live suggestions → click karo → ledger khul jata hai.
+- 🔍 icon → bara full modal search bhi milta hai.
+- Search sab folders ke saare clients par chalta hai (`GET /api/clients`). Naya client add/edit hone par cache auto-refresh ho jata hai.
+
+### 2. 🔁 Customer Return (multi-product) — Inventory
+Inventory page par naya **"Customer Return"** button. Ek hi entry me:
+- **Customer select** karo (sirf customer-type folders dikhते hain, suppliers nahi).
+- **Ek saath multiple products** ki return entry karo (Add Product se rows barhao).
+- Har product ka **rate customer ke saved special-rate se apne aap lag jata hai** (na ho to product ka default selling rate). Rate manually edit bhi ho sakta hai.
+- Save par: har product ka stock **barh** jata hai (`return` movement) **aur** poori return customer ke **ledger me ek CREDIT** (Amount Received) ke tor par sync ho jati hai — customer ka baqaya us hisab se kam ho jata hai.
+- API: `POST /api/inventory/customer-return` (body: `client_id`, `entry_date`, `notes`, `items:[{inventory_id, quantity, rate}]`).
+
+### 3. 🎚️ Stage Stock Correction + Recent Correction Log — Products Manufacturing
+Products Manufacturing me **Assembled (un-painted) / Painted / Packed (final)** stock ko ab **directly edit/correct** kiya ja sakta hai (kabhi stock upar-neeche ho jaye to).
+- Har stage number par **click** karo, ya row ke Action me naya **slider** button dabao → correction modal khulta hai.
+- Modal me current stock dikhta hai, aap **correct value** set karo — delta (change) live dikhta hai — reason likh sakte ho.
+- Neeche naya **"Recent Correction Log"** table: date, product, stage, old → new, change (delta), reason. Har log delete kar sakte ho (option: stock revert karna hai ya sirf log hataana hai).
+- API: `GET/POST /api/stage-corrections`, `DELETE /api/stage-corrections/:id?revert=1`.
+- DB migration: `0021_stage_stock_corrections.sql` (`stage_stock_corrections` table).
+
 ## What's New (latest update — 2026-09-04) — 🏦 Banking / Payments System (fully integrated)
 
 Ab CRM me ek **proper industrial-level Banking / Payments system** add ho gaya hai jahan **har paisa jo aata (IN) ya jata (OUT) hai woh kisi na kisi bank/cash account se linked hota hai**. Poora system ek jagah linked hai.

@@ -622,6 +622,68 @@ app.post('/api/inventory/movements', requireAuth, async (c) => {
   return c.json({ success: true })
 })
 
+// ============ Customer Return (multi-product) — Task 2 ============
+// Records the return of one or more products FROM a customer in a single entry.
+//   • Each item → a `return` inventory movement (stock INCREASES).
+//   • The whole return → ONE ledger transaction on the customer as a CREDIT
+//     (amount_received = total return value) so it reduces what they owe.
+//     This mirrors the ledger convention used elsewhere (running balance =
+//     opening + Σ amount_pending − Σ amount_received).
+// The movement rows are tagged with the ledger transaction id (customer_name)
+// so the recent-entries list shows who the return belongs to.
+app.post('/api/inventory/customer-return', requireAuth, async (c) => {
+  const body = await c.req.json()
+  const clientId = parseInt(body.client_id)
+  if (!clientId) return c.json({ error: 'Customer required' }, 400)
+  const items = Array.isArray(body.items) ? body.items : []
+  if (items.length === 0) return c.json({ error: 'At least one product required' }, 400)
+  const entry_date = body.entry_date || new Date().toISOString().slice(0, 10)
+
+  // Validate customer exists (and get name for movement rows)
+  const client = await c.env.DB.prepare('SELECT id, name FROM clients WHERE id = ?').bind(clientId).first() as any
+  if (!client) return c.json({ error: 'Customer not found' }, 404)
+
+  // Resolve & validate every line against real inventory rows first
+  const resolved: { inventory_id: number; name: string; quantity: number; rate: number; total: number }[] = []
+  for (const it of items) {
+    const invId = parseInt(it.inventory_id)
+    const qty = Math.abs(parseFloat(it.quantity) || 0)
+    if (!invId || qty <= 0) continue
+    const inv = await c.env.DB.prepare('SELECT id, name, rate FROM inventory WHERE id = ?').bind(invId).first() as any
+    if (!inv) continue
+    const rate = (it.rate != null && it.rate !== '') ? (parseFloat(it.rate) || 0) : (parseFloat(inv.rate) || 0)
+    resolved.push({ inventory_id: invId, name: inv.name, quantity: qty, rate, total: qty * rate })
+  }
+  if (resolved.length === 0) return c.json({ error: 'No valid products to return' }, 400)
+
+  const grandTotal = resolved.reduce((s, r) => s + r.total, 0)
+  const productSummary = resolved.map(r => `${r.name} × ${r.quantity}`).join(', ')
+  const desc = `Return: ${productSummary}${body.notes ? ' — ' + body.notes : ''}`
+
+  // 1) Ledger credit for the whole return (amount_received = total return value)
+  const ledgerRes = await c.env.DB.prepare(
+    `INSERT INTO transactions (client_id, entry_date, bill_no, amount_received, amount_pending, status, description, auto_generated)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1)`
+  ).bind(clientId, entry_date, '', grandTotal, 0, 'Received', desc).run()
+  const ledgerTxId = ledgerRes.meta.last_row_id
+
+  // 2) One `return` movement per product (stock increases) + stock bump — atomic batch
+  const stmts: any[] = []
+  const custLabel = `${client.name} (Return #${ledgerTxId})`
+  for (const r of resolved) {
+    stmts.push(c.env.DB.prepare(
+      `INSERT INTO inventory_movements (inventory_id, product_name, entry_date, type, quantity, rate, total, customer_name, notes, direction)
+       VALUES (?, ?, ?, 'return', ?, ?, ?, ?, ?, 1)`
+    ).bind(r.inventory_id, r.name, entry_date, r.quantity, r.rate, r.total, custLabel, body.notes || ''))
+    stmts.push(c.env.DB.prepare(
+      `UPDATE inventory SET quantity = quantity + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+    ).bind(r.quantity, r.inventory_id))
+  }
+  await c.env.DB.batch(stmts)
+
+  return c.json({ success: true, ledger_transaction_id: ledgerTxId, total: grandTotal, items: resolved.length })
+})
+
 // Edit a manual inventory movement (sale / return / adjust / restock).
 // Recomputes the stock delta: reverses the old effect, then applies the new one.
 // 'production' movements (auto-created by packing) are NOT editable here — edit
@@ -2141,6 +2203,68 @@ app.delete('/api/product-production/:id', requireAuth, async (c) => {
   }
   if (old.emp_tx_id) stmts.push(c.env.DB.prepare('DELETE FROM employee_transactions WHERE id = ?').bind(old.emp_tx_id))
   stmts.push(c.env.DB.prepare('DELETE FROM product_production_logs WHERE id = ?').bind(id))
+  await c.env.DB.batch(stmts)
+  return c.json({ success: true })
+})
+
+// =====================================================
+// ==== STAGE STOCK CORRECTIONS (Assembled / Painted / Packed) — Task 3 ====
+// =====================================================
+// Directly set a product's stage stock to the correct value (manual
+// correction) and log the change so it shows in a "Recent Correction Log".
+
+// List recent stage-stock corrections (most recent first).
+app.get('/api/stage-corrections', requireAuth, async (c) => {
+  const limit = parseInt(c.req.query('limit') || '200')
+  const rows = await c.env.DB.prepare(
+    `SELECT * FROM stage_stock_corrections ORDER BY datetime(created_at) DESC, id DESC LIMIT ?`
+  ).bind(limit).all()
+  return c.json({ corrections: rows.results })
+})
+
+// Apply a correction: set products.<stage>_qty to new_qty and record the log row.
+app.post('/api/stage-corrections', requireAuth, async (c) => {
+  const body = await c.req.json()
+  const productId = parseInt(body.product_id)
+  const stage = ['assembled', 'painted', 'packed'].includes(body.stage) ? body.stage : ''
+  if (!productId || !stage) return c.json({ error: 'product_id & valid stage required' }, 400)
+  const newQty = Math.max(0, parseFloat(body.new_qty) || 0)
+  const entry_date = body.entry_date || new Date().toISOString().slice(0, 10)
+
+  const product = await c.env.DB.prepare('SELECT id, name, assembled_qty, painted_qty, packed_qty FROM products WHERE id = ?')
+    .bind(productId).first() as any
+  if (!product) return c.json({ error: 'Product not found' }, 404)
+
+  const col = stage + '_qty'   // assembled_qty | painted_qty | packed_qty
+  const oldQty = parseFloat(product[col]) || 0
+  const delta = newQty - oldQty
+  if (delta === 0) return c.json({ error: 'New value same as current — no change' }, 400)
+
+  await c.env.DB.batch([
+    c.env.DB.prepare(`UPDATE products SET ${col} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(newQty, productId),
+    c.env.DB.prepare(
+      `INSERT INTO stage_stock_corrections (entry_date, product_id, product_name, stage, old_qty, new_qty, delta, reason)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(entry_date, productId, product.name, stage, oldQty, newQty, delta, body.reason || '')
+  ])
+  return c.json({ success: true, old_qty: oldQty, new_qty: newQty, delta })
+})
+
+// Delete a correction log row. If `revert` is true, also roll the stage stock
+// back by the correction's delta (undo the correction's stock effect).
+app.delete('/api/stage-corrections/:id', requireAuth, async (c) => {
+  const id = parseInt(c.req.param('id'))
+  const revert = c.req.query('revert') === '1'
+  const row = await c.env.DB.prepare('SELECT * FROM stage_stock_corrections WHERE id = ?').bind(id).first() as any
+  if (!row) return c.json({ error: 'Not found' }, 404)
+  const stmts: any[] = []
+  if (revert && row.product_id) {
+    const col = row.stage + '_qty'
+    const delta = parseFloat(row.delta) || 0
+    // undo: subtract the delta that was applied (clamp at 0)
+    stmts.push(c.env.DB.prepare(`UPDATE products SET ${col} = MAX(0, ${col} - ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(delta, row.product_id))
+  }
+  stmts.push(c.env.DB.prepare('DELETE FROM stage_stock_corrections WHERE id = ?').bind(id))
   await c.env.DB.batch(stmts)
   return c.json({ success: true })
 })
