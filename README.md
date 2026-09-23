@@ -13,11 +13,13 @@
 ### 1. 🔎 Ledger ke ANDAR entry search
 Har customer/supplier ke **ledger (Khata)** ke upar, "Add Row" ke saath ab ek **search box** hai. Yahan type karke us ledger ki **entries** filter hoti hain — **date, bill no, amount (pending/received), status, description aur custom columns** sab par search chalta hai. Search ke waqt saari matching rows ek page par dikhti hain (pager chhup jata hai) aur running balance sahi rehta hai. Doosra client kholte hi search reset ho jata hai.
 
-### 2. 🔁 Customer Return — ab sirf EK jagah (Record Stock Movement)
-Inventory ka alag **"Customer Return"** button **hata diya** gaya. Ab return sirf **"ReStock / Return" → Record Stock Movement** modal ke andar hai. Type = **Customer Return** karo → customer select karo → stock **barh** jata hai aur customer ke **ledger me CREDIT** ho jata hai (jitna dena tha usme se minus). Rate customer ke saved special-rate se auto-fill hota hai. (Endpoint wahi: `POST /api/inventory/customer-return`.)
+### 2. 🔁 Customer Return — MULTI-PRODUCT (dedicated modal)
+Inventory page par **"Customer Return"** button. Ek hi entry me **multiple products** add kar sakte hain (Add Product se rows barhao) — jaisa pehle tha. Customer select karo → har product ka rate customer ke **saved selling-rate** se auto-fill (edit bhi ho sakta hai). Save par: har product ka stock **barh** jata hai aur poori return customer ke **ledger me EK CREDIT** ke tor par sync ho jati hai (jitna dena tha usme se minus). API: `POST /api/inventory/customer-return` (`client_id`, `entry_date`, `notes`, `items:[{inventory_id, quantity, rate}]`).
 
-### 3. ↩️ Supplier Return (naya)
-Usi Record Stock Movement modal me naya type **Supplier Return**. Jab hum supplier se liya maal **wapas** karte hain → supplier select karo → stock **kam** ho jata hai aur supplier ke **ledger me credit-note** (negative bill amount) lag jata hai — yaani jitna hum ne unhe dena tha usme se minus. API: `POST /api/inventory/supplier-return` (`supplier_id`, `entry_date`, `notes`, `items:[{inventory_id, quantity, rate}]`). Delete karne par stock aur ledger dono auto-revert.
+### 3. ↩️ Supplier Return (naya) — MULTI-PRODUCT
+Inventory page par **"Supplier Return"** button (wahi multi-product modal, supplier mode). Ek hi entry me multiple products supplier ko **wapas** karo → har product ka rate us supplier ke **saved BUY-rate** se auto-fill. Save par stock **kam** ho jata hai aur supplier ke **ledger me EK credit-note** (negative bill amount) lag jata hai — jitna hum ne unhe dena tha usme se minus. API: `POST /api/inventory/supplier-return` (`supplier_id`, `entry_date`, `notes`, `items:[{...}]`). Delete karne par stock aur ledger dono auto-revert.
+
+> Note: **ReStock / Adjustment / Sale** ki single-entry ab bhi **Record Stock Movement** ("ReStock" button) me hai — return dono (customer/supplier) ab apne dedicated multi-product modals me.
 
 ### 4. 🏷️ Supplier profile me "Product Rates" (buy rate list)
 Jaise Customer profile me selling-rate list hai, waise ab **Supplier profile** me bhi **"Product Rates"** button. Yahan supplier se har item ka **buy rate** (jis rate par hum lete hain) set/edit/delete hota hai — **Inventory products** aur **Raw Materials** dono. API: `GET/POST /api/clients/:id/supplier-rates`, `DELETE .../supplier-rates/:rid`, `GET .../supplier-rate-map`.
