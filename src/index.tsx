@@ -1621,6 +1621,43 @@ app.put('/api/raw-materials/:id', requireAuth, async (c) => {
   return c.json({ success: true })
 })
 
+// Stock correction for a raw material. User puts the ACTUAL quantity they
+// physically have on hand (e.g. after a stock count). We add an "adjustment"
+// purchase batch (positive or negative) so the aggregate quantity matches and
+// the history clearly shows the correction with the user's note.
+// Does NOT touch any supplier ledger (no money changes hands for a correction).
+app.post('/api/raw-materials/:id/stock-correction', requireAuth, async (c) => {
+  const id = parseInt(c.req.param('id'))
+  const body = await c.req.json()
+  const newQty = parseFloat(body.new_quantity)
+  const reason = (body.reason || '').toString()
+  const dateStr = body.entry_date || new Date().toISOString().slice(0, 10)
+  if (!Number.isFinite(newQty) || newQty < 0) {
+    return c.json({ error: 'new_quantity must be a non-negative number' }, 400)
+  }
+  const rm = await c.env.DB.prepare('SELECT id, name, unit, quantity, rate FROM raw_materials WHERE id = ?').bind(id).first() as any
+  if (!rm) return c.json({ error: 'Raw material not found' }, 404)
+  const currentQty = parseFloat(rm.quantity) || 0
+  const delta = newQty - currentQty
+  if (Math.abs(delta) < 1e-9) {
+    return c.json({ success: true, no_change: true })
+  }
+  // Record the correction as a zero-cost purchase batch with the delta as
+  // quantity. Rate is 0 (correction, not a purchase) so weighted average rate
+  // is NOT distorted — recomputeRawMaterialFromPurchases will keep the same
+  // avg rate but adjust the aggregate quantity.
+  // Supplier is kept blank (manual stock correction, no supplier involved).
+  const descNote = `[Stock Correction] ${delta > 0 ? '+' : ''}${delta} ${rm.unit || ''} · was ${currentQty}, now ${newQty}${reason ? ' · ' + reason : ''}`
+  await c.env.DB.prepare(
+    `INSERT INTO raw_material_purchases
+       (raw_material_id, supplier_id, supplier_name, quantity, rate, total_amount, paid_amount, remaining_amount, entry_date, notes)
+     VALUES (?, NULL, '', ?, 0, 0, 0, 0, ?, ?)`
+  ).bind(id, delta, dateStr, descNote).run()
+  // Recompute aggregate quantity (avg rate is unchanged because new row has rate=0 and total=0).
+  await recomputeRawMaterialFromPurchases(c.env, id)
+  return c.json({ success: true, delta, new_quantity: newQty })
+})
+
 app.delete('/api/raw-materials/:id', requireAuth, async (c) => {
   const id = c.req.param('id')
   // Drop linked ledger rows first
@@ -2127,6 +2164,22 @@ app.post('/api/product-production', requireAuth, async (c) => {
       `INSERT INTO inventory_movements (inventory_id, product_name, entry_date, type, quantity, rate, total, customer_name, notes, product_log_id)
        VALUES (?, ?, ?, 'production', ?, ?, ?, ?, ?, ?)`
     ).bind(invId, product.name, dateStr, qty, packRate, qty * packRate, emp?.name || '', notes ? `${whoNote} · ${notes}` : whoNote, logId).run()
+
+    // ---- Auto-generate UNIQUE barcodes for each packed unit (if enabled) ----
+    // One barcode per piece — can be printed and stuck on each box so the
+    // product is verifiable + non-copyable by competitors.
+    try {
+      if (await barcodeAutoOnPack(c.env)) {
+        await generateBarcodesFor(c.env, {
+          product_id: product.id, product_name: product.name,
+          pack_log_id: logId, inventory_id: invId,
+          production_date: dateStr, qty: Math.floor(qty),
+          notes: emp?.name ? `Auto · packed by ${emp.name}` : 'Auto on pack'
+        })
+      }
+    } catch (e) {
+      console.error('Barcode auto-generation failed (pack continues):', e)
+    }
   }
 
   // Per-piece worker payout (shows in worker profile + weekly total)
@@ -2292,6 +2345,46 @@ app.put('/api/product-production/:id', requireAuth, async (c) => {
   }
   await c.env.DB.batch(stmts)
 
+  // After the main batch: adjust auto-generated barcodes for pack logs so the
+  // number of barcodes stays in sync with the final quantity.
+  //  • If quantity went UP   → generate the extra barcodes
+  //  • If quantity went DOWN → delete the surplus — but ONLY ones that are
+  //                            still in_stock (never remove sold barcodes)
+  if (old.stage === 'pack' && old.product_id) {
+    try {
+      const bcCount = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM product_barcodes WHERE pack_log_id = ?').bind(id).first() as any
+      const have = bcCount?.n || 0
+      const want = Math.floor(finalQty)
+      if (want > have) {
+        if (await barcodeAutoOnPack(c.env)) {
+          const inv = await c.env.DB.prepare('SELECT id FROM inventory WHERE name = ? COLLATE NOCASE').bind(old.product_name).first() as any
+          await generateBarcodesFor(c.env, {
+            product_id: old.product_id, product_name: old.product_name || '',
+            pack_log_id: id, inventory_id: inv?.id || null,
+            production_date: newDate, qty: want - have,
+            notes: 'Auto · pack log quantity increased'
+          })
+        }
+      } else if (want < have) {
+        const extra = have - want
+        // Delete up to `extra` barcodes, newest-first, but ONLY in_stock ones.
+        const victims = await c.env.DB.prepare(
+          `SELECT id FROM product_barcodes WHERE pack_log_id = ? AND status = 'in_stock'
+           ORDER BY id DESC LIMIT ?`
+        ).bind(id, extra).all()
+        const vids = (victims.results as any[]).map(r => r.id)
+        if (vids.length) {
+          const ph = vids.map(() => '?').join(',')
+          await c.env.DB.prepare(`DELETE FROM product_barcodes WHERE id IN (${ph})`).bind(...vids).run()
+        }
+      }
+      // Update production_date on all barcodes for this log so date-in-code stays sensible
+      await c.env.DB.prepare('UPDATE product_barcodes SET production_date = ? WHERE pack_log_id = ?').bind(newDate, id).run()
+    } catch (e) {
+      console.error('Barcode sync on edit failed:', e)
+    }
+  }
+
   // MANUAL TEST (pack-stage create → edit → delete round trip):
   //   1. Pack 10 pcs → inventory +10, painted -10, set-items consumed for 10.
   //   2. Edit log to 7 pcs → inventory must show +7 net, painted returns 3,
@@ -2342,6 +2435,10 @@ app.delete('/api/product-production/:id', requireAuth, async (c) => {
       if (inv) stmts.push(c.env.DB.prepare('UPDATE inventory SET quantity = MAX(0, quantity - ?), updated_at=CURRENT_TIMESTAMP WHERE id = ?').bind(qty, inv.id))
       // remove the linked "Recent Entries" movement (stock already reversed above)
       stmts.push(c.env.DB.prepare("DELETE FROM inventory_movements WHERE product_log_id = ? AND type = 'production'").bind(id))
+      // delete barcodes that were auto-generated for this pack log — but only
+      // the ones that are still in_stock (never sold). Sold barcodes are kept
+      // for history (they are already with customers / linked to bills).
+      stmts.push(c.env.DB.prepare("DELETE FROM product_barcodes WHERE pack_log_id = ? AND status = 'in_stock'").bind(id))
     }
   }
   if (old.emp_tx_id) stmts.push(c.env.DB.prepare('DELETE FROM employee_transactions WHERE id = ?').bind(old.emp_tx_id))
@@ -4021,6 +4118,266 @@ app.get('/api/calendar', requireAuth, async (c) => {
   return c.json({ month, daily: list, totals, type: 'global' })
 })
 
+// ============ PRODUCT BARCODES / UNIQUE SERIAL NUMBERS ============
+// Har pack-ed finished product unit ko ek UNIQUE barcode milta hai so the
+// product can be verified (asli Two Star hai ya nahi, kis din bana, kis
+// pack run se nikla). Format: TS-<PRODCODE>-<DDMMYY>-<RANDOM8>.
+// Random portion is from crypto.getRandomValues (NOT a sequence) so that
+// competitors cannot guess the next number.
+// =================================================================
+
+// Allowed chars for the random portion. We skip 0/O/1/I to make the sticker
+// humanly-readable (scanners handle them fine too).
+const BARCODE_RANDOM_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+
+// Short brand prefix (configurable in app_settings → barcode_brand_prefix).
+async function getBrandPrefix(env: any): Promise<string> {
+  try {
+    const r = await env.DB.prepare("SELECT value FROM app_settings WHERE key = 'barcode_brand_prefix'").first() as any
+    const v = (r?.value || 'TS').toString().toUpperCase().replace(/[^A-Z0-9]/g, '')
+    return v || 'TS'
+  } catch (e) { return 'TS' }
+}
+
+// Build a 2–4 letter product code from the product name.
+// e.g. "Sink Rack" → "SR", "Sink Rack Trolley" → "SRT",
+//      "Rack"       → "RAC"
+function makeProductCode(name: string): string {
+  const clean = (name || '').toString().trim()
+  if (!clean) return 'PRD'
+  const words = clean.split(/\s+/).filter(Boolean)
+  if (words.length >= 2) {
+    // Take first letter of each word, up to 4
+    const letters = words.map(w => w.replace(/[^A-Za-z0-9]/g, '').charAt(0).toUpperCase()).filter(Boolean).slice(0, 4).join('')
+    if (letters.length >= 2) return letters
+  }
+  // Single word → first 3 letters uppercase
+  return clean.replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase() || 'PRD'
+}
+
+// Format YYYY-MM-DD as DDMMYY (used inside the barcode).
+function ddmmyy(dateStr: string): string {
+  const s = (dateStr || new Date().toISOString().slice(0, 10)).toString()
+  // Expect YYYY-MM-DD
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!m) {
+    const d = new Date()
+    return `${('' + d.getDate()).padStart(2, '0')}${('' + (d.getMonth() + 1)).padStart(2, '0')}${('' + d.getFullYear()).slice(2)}`
+  }
+  const [, yyyy, mm, dd] = m
+  return `${dd}${mm}${yyyy.slice(2)}`
+}
+
+// Crypto-random base32 string of length N. Uses Web Crypto (works on Workers).
+function randomCode(n: number): string {
+  const buf = new Uint8Array(n)
+  // @ts-ignore crypto exists in Workers runtime
+  crypto.getRandomValues(buf)
+  let out = ''
+  for (let i = 0; i < n; i++) out += BARCODE_RANDOM_CHARS[buf[i] % BARCODE_RANDOM_CHARS.length]
+  return out
+}
+
+// Build one full barcode string: TS-PRODCODE-DDMMYY-RANDOM8
+function buildBarcode(brand: string, prodCode: string, dateStr: string): string {
+  return `${brand}-${prodCode}-${ddmmyy(dateStr)}-${randomCode(8)}`
+}
+
+// Generate N unique barcodes for a product. Insert into product_barcodes with
+// uniqueness guaranteed by the UNIQUE index + retry on conflict.
+async function generateBarcodesFor(env: any, opts: {
+  product_id: number | null, product_name: string, pack_log_id: number | null,
+  inventory_id: number | null, production_date: string, qty: number, notes?: string
+}): Promise<string[]> {
+  const brand = await getBrandPrefix(env)
+  const prodCode = makeProductCode(opts.product_name)
+  const made: string[] = []
+  const n = Math.max(0, Math.floor(opts.qty))
+  for (let i = 0; i < n; i++) {
+    // Retry up to 5 times on the astronomically-rare UNIQUE collision.
+    let saved = false
+    for (let attempt = 0; attempt < 5 && !saved; attempt++) {
+      const code = buildBarcode(brand, prodCode, opts.production_date)
+      try {
+        await env.DB.prepare(
+          `INSERT INTO product_barcodes
+             (code, product_id, product_name, product_code, pack_log_id, inventory_id, production_date, status, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'in_stock', ?)`
+        ).bind(code, opts.product_id || null, opts.product_name || '', prodCode,
+               opts.pack_log_id || null, opts.inventory_id || null,
+               opts.production_date, opts.notes || '').run()
+        made.push(code)
+        saved = true
+      } catch (e: any) {
+        // UNIQUE constraint — try a new random suffix.
+        if (!/UNIQUE/i.test(String(e?.message || e))) throw e
+      }
+    }
+  }
+  return made
+}
+
+// Get the auto-on-pack setting.
+async function barcodeAutoOnPack(env: any): Promise<boolean> {
+  try {
+    const r = await env.DB.prepare("SELECT value FROM app_settings WHERE key = 'barcode_auto_on_pack'").first() as any
+    return !r || r.value === '1' || r.value === 'true'
+  } catch (e) { return true }
+}
+
+// --- Settings endpoints ---
+app.get('/api/settings/barcode', requireAuth, async (c) => {
+  const rows = await c.env.DB.prepare("SELECT key, value FROM app_settings WHERE key IN ('barcode_auto_on_pack', 'barcode_brand_prefix')").all()
+  const map: any = {}
+  for (const r of (rows.results as any[])) map[r.key] = r.value
+  return c.json({
+    auto_on_pack: map.barcode_auto_on_pack !== '0' && map.barcode_auto_on_pack !== 'false',
+    brand_prefix: map.barcode_brand_prefix || 'TS'
+  })
+})
+
+app.put('/api/settings/barcode', requireAuth, async (c) => {
+  const body = await c.req.json()
+  const auto = body.auto_on_pack ? '1' : '0'
+  const prefix = (body.brand_prefix || 'TS').toString().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6) || 'TS'
+  await c.env.DB.prepare("INSERT INTO app_settings (key, value) VALUES ('barcode_auto_on_pack', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(auto).run()
+  await c.env.DB.prepare("INSERT INTO app_settings (key, value) VALUES ('barcode_brand_prefix', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(prefix).run()
+  return c.json({ success: true })
+})
+
+// --- List barcodes (with filters + pagination) ---
+app.get('/api/product-barcodes', requireAuth, async (c) => {
+  const url = new URL(c.req.url)
+  const status = url.searchParams.get('status') || ''
+  const productId = url.searchParams.get('product_id') || ''
+  const q = (url.searchParams.get('q') || '').trim()
+  const limit = Math.min(500, parseInt(url.searchParams.get('limit') || '200'))
+  const offset = Math.max(0, parseInt(url.searchParams.get('offset') || '0'))
+  const where: string[] = []
+  const binds: any[] = []
+  if (status) { where.push('status = ?'); binds.push(status) }
+  if (productId) { where.push('product_id = ?'); binds.push(productId) }
+  if (q) { where.push('(code LIKE ? OR product_name LIKE ? OR sold_customer_name LIKE ?)'); binds.push(`%${q}%`, `%${q}%`, `%${q}%`) }
+  const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : ''
+  const countRow = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM product_barcodes ${whereSql}`).bind(...binds).first() as any
+  const rows = await c.env.DB.prepare(
+    `SELECT * FROM product_barcodes ${whereSql} ORDER BY id DESC LIMIT ? OFFSET ?`
+  ).bind(...binds, limit, offset).all()
+  // Also aggregate stats
+  const stats = await c.env.DB.prepare(
+    `SELECT status, COUNT(*) AS n FROM product_barcodes GROUP BY status`
+  ).all()
+  const statMap: any = { in_stock: 0, sold: 0, returned: 0, lost: 0, voided: 0 }
+  for (const r of (stats.results as any[])) statMap[r.status] = r.n
+  return c.json({ items: rows.results || [], total: countRow?.n || 0, stats: statMap, limit, offset })
+})
+
+// --- Generate barcodes manually (user chooses product + quantity + date) ---
+app.post('/api/product-barcodes/generate', requireAuth, async (c) => {
+  const body = await c.req.json()
+  const productId = parseInt(body.product_id)
+  const qty = Math.max(0, Math.floor(parseFloat(body.quantity) || 0))
+  const date = body.production_date || new Date().toISOString().slice(0, 10)
+  const notes = (body.notes || '').toString()
+  if (!productId || qty <= 0) return c.json({ error: 'product_id and quantity required' }, 400)
+  const prod = await c.env.DB.prepare('SELECT id, name FROM products WHERE id = ?').bind(productId).first() as any
+  if (!prod) return c.json({ error: 'Product not found' }, 404)
+  const inv = await c.env.DB.prepare('SELECT id FROM inventory WHERE name = ? COLLATE NOCASE').bind(prod.name).first() as any
+  const codes = await generateBarcodesFor(c.env, {
+    product_id: prod.id, product_name: prod.name,
+    pack_log_id: null, inventory_id: inv?.id || null,
+    production_date: date, qty, notes
+  })
+  return c.json({ success: true, generated: codes.length, codes })
+})
+
+// --- Generate for a specific pack log (one-off: pack hua lekin barcode auto-generate off tha) ---
+app.post('/api/product-barcodes/generate-for-pack/:logId', requireAuth, async (c) => {
+  const logId = parseInt(c.req.param('logId'))
+  const log = await c.env.DB.prepare("SELECT * FROM product_production_logs WHERE id = ? AND stage = 'pack'").bind(logId).first() as any
+  if (!log) return c.json({ error: 'Pack log not found' }, 404)
+  // Skip if barcodes already generated for this log
+  const existing = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM product_barcodes WHERE pack_log_id = ?').bind(logId).first() as any
+  if (existing && existing.n > 0) {
+    return c.json({ error: `Already generated ${existing.n} barcode(s) for this pack log` }, 409)
+  }
+  const inv = log.product_name
+    ? await c.env.DB.prepare('SELECT id FROM inventory WHERE name = ? COLLATE NOCASE').bind(log.product_name).first() as any
+    : null
+  const codes = await generateBarcodesFor(c.env, {
+    product_id: log.product_id, product_name: log.product_name || '',
+    pack_log_id: log.id, inventory_id: inv?.id || null,
+    production_date: log.entry_date, qty: parseFloat(log.quantity) || 0,
+    notes: `Pack log #${log.id}`
+  })
+  return c.json({ success: true, generated: codes.length })
+})
+
+// --- Scan / lookup a barcode (returns verification info) ---
+// Used by both scanner page and the search-by-code box.
+app.get('/api/product-barcodes/scan/:code', requireAuth, async (c) => {
+  const code = c.req.param('code').toUpperCase().trim()
+  const row = await c.env.DB.prepare(
+    `SELECT pb.*, p.name as product_name_live, p.unit, p.sale_rate,
+            b.bill_no, b.customer_name as bill_customer, b.bill_date,
+            ppl.employee_name, ppl.quantity as pack_qty
+     FROM product_barcodes pb
+     LEFT JOIN products p ON p.id = pb.product_id
+     LEFT JOIN bills b ON b.id = pb.sold_bill_id
+     LEFT JOIN product_production_logs ppl ON ppl.id = pb.pack_log_id
+     WHERE pb.code = ?`
+  ).bind(code).first() as any
+  if (!row) {
+    return c.json({ verified: false, message: 'Ye barcode humary system me nahi hai. Ye product Two Star ka NAHI hai ya fake ho sakta hai.' })
+  }
+  return c.json({ verified: true, item: row })
+})
+
+// --- Change status (sold / returned / lost / voided / in_stock) ---
+app.put('/api/product-barcodes/:id/status', requireAuth, async (c) => {
+  const id = parseInt(c.req.param('id'))
+  const body = await c.req.json()
+  const status = ['in_stock', 'sold', 'returned', 'lost', 'voided'].includes(body.status) ? body.status : null
+  if (!status) return c.json({ error: 'Invalid status' }, 400)
+  const current = await c.env.DB.prepare('SELECT * FROM product_barcodes WHERE id = ?').bind(id).first() as any
+  if (!current) return c.json({ error: 'Barcode not found' }, 404)
+  const soldAt = status === 'sold' ? (body.sold_at || new Date().toISOString()) : null
+  await c.env.DB.prepare(
+    `UPDATE product_barcodes
+       SET status = ?, sold_customer_name = ?, sold_bill_id = ?, sold_at = ?,
+           notes = COALESCE(?, notes), updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`
+  ).bind(status,
+         status === 'sold' ? (body.sold_customer_name || '') : '',
+         status === 'sold' ? (body.sold_bill_id || null) : null,
+         soldAt, body.notes ?? null, id).run()
+  return c.json({ success: true })
+})
+
+// --- Mark printed ---
+app.put('/api/product-barcodes/:id/printed', requireAuth, async (c) => {
+  const id = parseInt(c.req.param('id'))
+  await c.env.DB.prepare('UPDATE product_barcodes SET printed = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(id).run()
+  return c.json({ success: true })
+})
+
+// Bulk mark printed (ids: number[])
+app.post('/api/product-barcodes/mark-printed', requireAuth, async (c) => {
+  const body = await c.req.json()
+  const ids: number[] = Array.isArray(body.ids) ? body.ids.map((x: any) => parseInt(x)).filter(Boolean) : []
+  if (!ids.length) return c.json({ success: true, updated: 0 })
+  const placeholders = ids.map(() => '?').join(',')
+  await c.env.DB.prepare(`UPDATE product_barcodes SET printed = 1, updated_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`).bind(...ids).run()
+  return c.json({ success: true, updated: ids.length })
+})
+
+// --- Delete a barcode (void it instead if possible) ---
+app.delete('/api/product-barcodes/:id', requireAuth, async (c) => {
+  const id = parseInt(c.req.param('id'))
+  await c.env.DB.prepare('DELETE FROM product_barcodes WHERE id = ?').bind(id).run()
+  return c.json({ success: true })
+})
+
 // ============ ROOT ============
 app.get('/', (c) => {
   return c.html(`<!DOCTYPE html>
@@ -4044,6 +4401,8 @@ app.get('/', (c) => {
 <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="bg-gray-100 antialiased">

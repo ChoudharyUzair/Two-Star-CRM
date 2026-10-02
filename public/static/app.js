@@ -274,6 +274,9 @@ const App = {
           <button class="nav-btn ${this.state.view === 'products' ? 'active' : ''}" id="nav-products" onclick="App.showProducts()">
             <i class="fas fa-industry"></i><span>Products Manufacturing</span>
           </button>
+          <button class="nav-btn ${this.state.view === 'barcodes' ? 'active' : ''}" id="nav-barcodes" onclick="App.showBarcodes()">
+            <i class="fas fa-barcode"></i><span>Barcodes / Serials</span>
+          </button>
           <button class="nav-btn ${this.state.view === 'employees' ? 'active' : ''}" id="nav-employees" onclick="App.showEmployees()">
             <i class="fas fa-users-gear"></i><i class="fas fa-user-tie" style="display:none;"></i><span>Employees</span>
           </button>
@@ -324,7 +327,7 @@ const App = {
     if (window.innerWidth <= 768) document.getElementById('sidebar')?.classList.remove('open');
   },
   setActiveNav(name) {
-    ['dashboard','bills','banking','inventory','raw','components','products','employees','side-expenses','branding'].forEach(n => {
+    ['dashboard','bills','banking','inventory','raw','components','products','barcodes','employees','side-expenses','branding'].forEach(n => {
       const el = document.getElementById('nav-' + n);
       if (el) el.classList.toggle('active', n === name);
     });
@@ -3322,10 +3325,7 @@ const App = {
                     <td class="amount-running text-right font-bold">PKR ${this.fmt(it.total_value)}</td>
                     <td>${this.escapeHtml(it.category || '')}</td>
                     <td>
-                      <button onclick="App.showRestock(${it.id})" class="btn btn-success btn-sm" title="Restock this product"><i class="fas fa-recycle"></i></button>
-                      <button onclick="App.showRawDetail(${it.id})" class="btn btn-secondary btn-sm ml-1" title="View / Manage Batches & Payments"><i class="fas fa-list"></i></button>
-                      <button onclick="App.showRawEditor(${it.id})" class="btn btn-secondary btn-sm ml-1" title="Edit"><i class="fas fa-edit"></i></button>
-                      <button onclick="App.deleteRaw(${it.id})" class="text-red-500 hover:text-red-700 ml-1"><i class="fas fa-trash text-sm"></i></button>
+                      <button onclick="App.showRawEditor(${it.id})" class="btn btn-primary btn-sm" title="Edit — name, unit, category, stock correction, batches, delete"><i class="fas fa-edit mr-1"></i>Edit</button>
                     </td>
                   </tr>`;
                 }).join('')}
@@ -3576,28 +3576,87 @@ const App = {
     if (id && !it) return;
     const supplierOpts = this.state.allClients.map(c => `<option value="${c.id}" ${it.supplier_id == c.id ? 'selected' : ''}>${this.escapeHtml(c.name)} (${this.escapeHtml(c.folder_name || '')})</option>`).join('');
 
-    // EDIT mode: only basic fields (name/unit/category/notes). Quantity/rate/supplier come from purchase batches.
+    // EDIT mode: ALL-IN-ONE editor. One Action column button → one modal that
+    // handles everything the user asked for:
+    //   1. Basic info (name / unit / category / notes)
+    //   2. Stock correction (physical count → system matches) with reason
+    //   3. Quick-open purchase/restock history (batches + supplier payments)
+    //   4. Delete
+    // ("Restock" to add a brand-new purchase batch still lives in the big
+    //  green Restock button at the top of the Raw Material page.)
     if (id) {
+      const today = new Date().toISOString().slice(0, 10);
       this.openModal(`
-        <h2 class="text-xl font-bold mb-4"><i class="fas fa-edit text-blue-500 mr-2"></i>Edit Raw Material</h2>
-        <p class="text-xs text-gray-500 mb-4"><i class="fas fa-info-circle mr-1"></i>Quantity, rate and supplier info are managed via the purchase / restock history. Click the <i class="fas fa-list"></i> button on the list to view batches and pay suppliers.</p>
-        <form id="raw-form" class="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Material Name *</label>
-            <input id="r-name" type="text" required class="input-field" value="${this.escapeAttr(it.name || '')}"></div>
-          <div><label class="block text-sm font-medium mb-1">Unit</label>
-            <select id="r-unit" class="input-field">
-              ${['pcs','kg','gram','ton','litre','ml','meter','cm','foot','inch','yard','box','dozen','pack','roll','bag','bottle','bundle','sheet','set','pair','carton'].map(u => `<option value="${u}" ${ (it.unit || 'pcs') === u ? 'selected' : ''}>${u}</option>`).join('')}
-            </select></div>
-          <div><label class="block text-sm font-medium mb-1">Category</label>
-            <input id="r-cat" type="text" class="input-field" value="${this.escapeAttr(it.category || '')}"></div>
-          <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Notes</label>
-            <textarea id="r-notes" class="input-field" rows="2">${this.escapeHtml(it.notes || '')}</textarea></div>
-          <div class="md:col-span-2 flex gap-2 justify-end pt-2 border-t">
-            <button type="button" class="btn btn-danger mr-auto" onclick="App.deleteRaw(${id})"><i class="fas fa-trash"></i> Delete</button>
-            <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
-            <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save</button>
+        <h2 class="text-xl font-bold mb-1"><i class="fas fa-edit text-blue-500 mr-2"></i>Edit Raw Material</h2>
+        <p class="text-xs text-gray-500 mb-4">${this.escapeHtml(it.name || '')} · Current Stock: <strong>${this.fmt(it.quantity)} ${this.escapeHtml(it.unit || '')}</strong> · Avg Rate: PKR ${this.fmt(it.rate)}</p>
+
+        <!-- Tab bar -->
+        <div class="flex gap-1 border-b mb-3 text-sm">
+          <button type="button" id="rawtab-info-btn" class="px-3 py-2 border-b-2 border-blue-500 text-blue-700 font-semibold" onclick="App._rawTab('info')"><i class="fas fa-circle-info mr-1"></i>Info</button>
+          <button type="button" id="rawtab-stock-btn" class="px-3 py-2 border-b-2 border-transparent text-gray-600 hover:text-gray-900" onclick="App._rawTab('stock')"><i class="fas fa-scale-balanced mr-1"></i>Stock Correction</button>
+          <button type="button" id="rawtab-hist-btn" class="px-3 py-2 border-b-2 border-transparent text-gray-600 hover:text-gray-900" onclick="App._rawTab('hist')"><i class="fas fa-history mr-1"></i>Batches / Payments</button>
+        </div>
+
+        <!-- Tab: Basic Info -->
+        <div id="rawtab-info" class="raw-edit-pane">
+          <form id="raw-form" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Material Name *</label>
+              <input id="r-name" type="text" required class="input-field" value="${this.escapeAttr(it.name || '')}"></div>
+            <div><label class="block text-sm font-medium mb-1">Unit</label>
+              <select id="r-unit" class="input-field">
+                ${['pcs','kg','gram','ton','litre','ml','meter','cm','foot','inch','yard','box','dozen','pack','roll','bag','bottle','bundle','sheet','set','pair','carton'].map(u => `<option value="${u}" ${ (it.unit || 'pcs') === u ? 'selected' : ''}>${u}</option>`).join('')}
+              </select></div>
+            <div><label class="block text-sm font-medium mb-1">Category</label>
+              <input id="r-cat" type="text" class="input-field" value="${this.escapeAttr(it.category || '')}"></div>
+            <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Notes</label>
+              <textarea id="r-notes" class="input-field" rows="2">${this.escapeHtml(it.notes || '')}</textarea></div>
+            <div class="md:col-span-2 flex gap-2 justify-end pt-2 border-t">
+              <button type="button" class="btn btn-danger mr-auto" onclick="App.deleteRaw(${id})"><i class="fas fa-trash"></i> Delete Material</button>
+              <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+              <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save</button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Tab: Stock Correction -->
+        <div id="rawtab-stock" class="raw-edit-pane hidden">
+          <div class="p-3 bg-amber-50 border border-amber-200 rounded-lg mb-3 text-sm text-amber-900">
+            <i class="fas fa-triangle-exclamation mr-1"></i>Agar physical stock aur system ka stock match nahi karte (bhoola hua use, galti, scrap, wastage, chori ya count galat tha) to yahan actual quantity set karein. Ek adjustment entry history me save ho jayegi.
           </div>
-        </form>`, 'modal-lg');
+          <form id="raw-stock-form" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div><label class="block text-sm font-medium mb-1">System Quantity (current)</label>
+              <input type="text" readonly class="input-field" value="${this.fmt(it.quantity)} ${this.escapeHtml(it.unit || '')}" style="background:#f3f4f6;"></div>
+            <div><label class="block text-sm font-medium mb-1">Actual Quantity (physical count) *</label>
+              <input id="rsc-newqty" type="number" step="any" min="0" required class="input-field" value="${parseFloat(it.quantity) || 0}" oninput="App._rawStockCorrPreview(${parseFloat(it.quantity) || 0})"></div>
+            <div><label class="block text-sm font-medium mb-1">Date</label>
+              <input id="rsc-date" type="date" class="input-field" value="${today}"></div>
+            <div><label class="block text-sm font-medium mb-1">Adjustment (auto)</label>
+              <div id="rsc-delta" class="input-field" style="background:#f8fafc; font-weight:bold;">0</div></div>
+            <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Reason / Notes</label>
+              <input id="rsc-reason" type="text" class="input-field" placeholder="e.g. physical count mismatch, scrap, wastage, data-entry error"></div>
+            <div class="md:col-span-2 flex gap-2 justify-end pt-2 border-t">
+              <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+              <button type="submit" class="btn btn-success"><i class="fas fa-check"></i> Apply Correction</button>
+            </div>
+          </form>
+          <p class="text-xs text-gray-500 mt-2"><i class="fas fa-info-circle mr-1"></i>Ye correction supplier ledger ko touch nahi karti — sirf stock quantity update hoti hai aur history me ek "Stock Correction" entry ban jati hai.</p>
+        </div>
+
+        <!-- Tab: Batches / Payments -->
+        <div id="rawtab-hist" class="raw-edit-pane hidden">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="font-semibold text-gray-800"><i class="fas fa-history mr-1"></i>Purchase / Restock History</h3>
+            <button type="button" class="btn btn-success btn-sm" onclick="App.closeModal(); App.showRestock(${id});"><i class="fas fa-plus mr-1"></i>Add Restock / Purchase</button>
+          </div>
+          <p class="text-sm text-gray-600 mb-2">Supplier batches, payments and remaining balance details ke liye niche "Full Batches View" open karein.</p>
+          <div class="flex gap-2 justify-end pt-2 border-t">
+            <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Close</button>
+            <button type="button" class="btn btn-primary" onclick="App.closeModal(); App.showRawDetail(${id});"><i class="fas fa-list mr-1"></i>Full Batches View</button>
+          </div>
+        </div>
+      `, 'modal-lg');
+
+      // Basic info save
       document.getElementById('raw-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const payload = {
@@ -3612,6 +3671,22 @@ const App = {
           await this.showRawMaterials();
           this.toast('Saved', 'success');
         } catch (err) { this.toast('Failed', 'error'); }
+      });
+
+      // Stock correction submit
+      document.getElementById('raw-stock-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const newQty = parseFloat(document.getElementById('rsc-newqty').value);
+        const reason = document.getElementById('rsc-reason').value;
+        const entry_date = document.getElementById('rsc-date').value || today;
+        if (!Number.isFinite(newQty) || newQty < 0) { this.toast('Enter a valid non-negative quantity', 'error'); return; }
+        try {
+          const res = await this.api.post(`/api/raw-materials/${id}/stock-correction`, { new_quantity: newQty, reason, entry_date });
+          if (res && res.no_change) { this.toast('No change — quantity already matches', 'success'); }
+          else { this.toast('Stock corrected', 'success'); }
+          this.closeModal();
+          await this.showRawMaterials();
+        } catch (err) { this.toast('Failed to apply correction', 'error'); }
       });
       return;
     }
@@ -3707,6 +3782,37 @@ const App = {
     const remaining = Math.max(0, total - paid);
     const el = document.getElementById('r-remaining');
     if (el) el.textContent = 'PKR ' + this.fmt(remaining);
+  },
+
+  // Switch between Info / Stock Correction / Batches tabs inside the Raw Material edit modal.
+  _rawTab(which) {
+    const tabs = ['info', 'stock', 'hist'];
+    tabs.forEach(t => {
+      const pane = document.getElementById('rawtab-' + t);
+      const btn  = document.getElementById('rawtab-' + t + '-btn');
+      if (!pane || !btn) return;
+      if (t === which) {
+        pane.classList.remove('hidden');
+        btn.classList.add('border-blue-500', 'text-blue-700', 'font-semibold');
+        btn.classList.remove('border-transparent', 'text-gray-600');
+      } else {
+        pane.classList.add('hidden');
+        btn.classList.remove('border-blue-500', 'text-blue-700', 'font-semibold');
+        btn.classList.add('border-transparent', 'text-gray-600');
+      }
+    });
+  },
+
+  // Live preview of the stock-correction delta (new − old).
+  _rawStockCorrPreview(oldQty) {
+    const el = document.getElementById('rsc-delta');
+    if (!el) return;
+    const n = parseFloat(document.getElementById('rsc-newqty')?.value);
+    if (!Number.isFinite(n)) { el.textContent = '0'; el.style.color = ''; return; }
+    const delta = n - oldQty;
+    const sign = delta > 0 ? '+' : '';
+    el.textContent = sign + this.fmt(delta);
+    el.style.color = delta > 0 ? '#059669' : (delta < 0 ? '#dc2626' : '#6b7280');
   },
 
   // Live duplicate check: warn user that a matching material exists and a new batch will be added to it.
@@ -8329,6 +8435,618 @@ const App = {
     pdf.save(fname);
     this.closeModal();
     this.toast('Statement PDF downloaded', 'success');
+  },
+
+  // ============================================================
+  // ========== BARCODES / UNIQUE SERIAL NUMBERS ================
+  // ------------------------------------------------------------
+  // Each PACKED finished product unit gets a unique barcode. The
+  // sticker goes on the box so later anyone can scan or type the
+  // code to verify this is genuine Two Star product + see the
+  // production date + which pack run it came from. Random codes
+  // (not sequential) so competitors cannot guess future numbers.
+  // ============================================================
+
+  _barcodeState: {
+    filterStatus: '',
+    filterProduct: '',
+    search: '',
+    selected: new Set(),
+    settings: { auto_on_pack: true, brand_prefix: 'TS' }
+  },
+
+  async showBarcodes() {
+    this.state.view = 'barcodes';
+    this.state.currentFolderId = null;
+    this.state.currentClientId = null;
+    this.setActiveNav('barcodes');
+    this.closeSidebarOnMobile();
+    this.renderFolders();
+    const area = document.getElementById('content-area');
+    area.innerHTML = `
+      <div class="page-header">
+        <div><h1 class="page-title"><i class="fas fa-barcode text-indigo-600"></i>Barcodes / Serial Numbers</h1>
+          <p class="page-subtitle">Har packed product ki unique identity · scan ya search karke verify karein</p></div>
+      </div>
+      <div class="p-4 md:p-6 space-y-5" id="barcode-page-body">
+        <div class="text-center py-10 text-gray-500"><i class="fas fa-spinner fa-spin text-2xl"></i></div>
+      </div>`;
+    await this._loadBarcodeData();
+    this._renderBarcodePage();
+  },
+
+  async _loadBarcodeData() {
+    try {
+      const [list, settings, prods] = await Promise.all([
+        this.api.get(`/api/product-barcodes?status=${this._barcodeState.filterStatus}&product_id=${this._barcodeState.filterProduct}&q=${encodeURIComponent(this._barcodeState.search)}&limit=500`),
+        this.api.get('/api/settings/barcode').catch(() => ({ auto_on_pack: true, brand_prefix: 'TS' })),
+        this.state.products && this.state.products.length ? Promise.resolve({ items: this.state.products }) : this.api.get('/api/products').catch(() => ({ items: [] }))
+      ]);
+      this._barcodeState.list = list.items || [];
+      this._barcodeState.total = list.total || 0;
+      this._barcodeState.stats = list.stats || {};
+      this._barcodeState.settings = settings;
+      this._barcodeState.products = prods.items || [];
+    } catch (e) {
+      console.error(e);
+      this.toast('Failed to load barcodes', 'error');
+    }
+  },
+
+  _renderBarcodePage() {
+    const body = document.getElementById('barcode-page-body');
+    if (!body) return;
+    const items = this._barcodeState.list || [];
+    const stats = this._barcodeState.stats || {};
+    const prods = this._barcodeState.products || [];
+    const settings = this._barcodeState.settings || {};
+    const selectedCount = this._barcodeState.selected.size;
+
+    const prodOpts = `<option value="">All Products</option>` + prods.map(p => `<option value="${p.id}" ${this._barcodeState.filterProduct == p.id ? 'selected' : ''}>${this.escapeHtml(p.name)}</option>`).join('');
+
+    body.innerHTML = `
+      <!-- Stats + settings -->
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div class="stat-card"><p class="text-xs text-gray-500">Total Generated</p><p class="text-xl font-bold text-indigo-600">${this.fmt(this._barcodeState.total || 0)}</p></div>
+        <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-warehouse mr-1 text-green-600"></i>In Stock</p><p class="text-xl font-bold text-green-600">${this.fmt(stats.in_stock || 0)}</p></div>
+        <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-check-circle mr-1 text-blue-600"></i>Sold</p><p class="text-xl font-bold text-blue-600">${this.fmt(stats.sold || 0)}</p></div>
+        <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-undo mr-1 text-amber-600"></i>Returned</p><p class="text-xl font-bold text-amber-600">${this.fmt(stats.returned || 0)}</p></div>
+        <div class="stat-card"><p class="text-xs text-gray-500"><i class="fas fa-ban mr-1 text-red-600"></i>Voided / Lost</p><p class="text-xl font-bold text-red-600">${this.fmt((stats.voided || 0) + (stats.lost || 0))}</p></div>
+      </div>
+
+      <!-- Top action bar -->
+      <div class="bg-white rounded-xl shadow-sm p-4 flex flex-wrap items-center gap-2">
+        <button onclick="App.showBarcodeScanner()" class="btn btn-primary"><i class="fas fa-camera"></i> Scan / Verify</button>
+        <button onclick="App.showBarcodeGenerate()" class="btn btn-success"><i class="fas fa-plus"></i> Generate Barcodes</button>
+        <button onclick="App.showBarcodeSettings()" class="btn btn-secondary"><i class="fas fa-gear"></i> Settings</button>
+        <div class="ml-auto flex items-center gap-2 text-xs">
+          <span class="px-2 py-1 rounded ${settings.auto_on_pack ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}">
+            <i class="fas ${settings.auto_on_pack ? 'fa-circle-check' : 'fa-circle-xmark'} mr-1"></i>
+            Auto-generate on Pack: <strong>${settings.auto_on_pack ? 'ON' : 'OFF'}</strong>
+          </span>
+          <span class="px-2 py-1 rounded bg-indigo-100 text-indigo-800">
+            <i class="fas fa-tag mr-1"></i>Brand prefix: <strong>${this.escapeHtml(settings.brand_prefix || 'TS')}</strong>
+          </span>
+        </div>
+      </div>
+
+      <!-- Filters -->
+      <div class="bg-white rounded-xl shadow-sm p-4 grid grid-cols-1 md:grid-cols-4 gap-3">
+        <div><label class="block text-xs font-medium text-gray-600 mb-1">Status</label>
+          <select id="bc-f-status" class="input-field" onchange="App._bcFilterChange()">
+            <option value="" ${!this._barcodeState.filterStatus ? 'selected' : ''}>All</option>
+            <option value="in_stock" ${this._barcodeState.filterStatus === 'in_stock' ? 'selected' : ''}>In Stock</option>
+            <option value="sold" ${this._barcodeState.filterStatus === 'sold' ? 'selected' : ''}>Sold</option>
+            <option value="returned" ${this._barcodeState.filterStatus === 'returned' ? 'selected' : ''}>Returned</option>
+            <option value="lost" ${this._barcodeState.filterStatus === 'lost' ? 'selected' : ''}>Lost</option>
+            <option value="voided" ${this._barcodeState.filterStatus === 'voided' ? 'selected' : ''}>Voided</option>
+          </select></div>
+        <div><label class="block text-xs font-medium text-gray-600 mb-1">Product</label>
+          <select id="bc-f-product" class="input-field" onchange="App._bcFilterChange()">${prodOpts}</select></div>
+        <div class="md:col-span-2"><label class="block text-xs font-medium text-gray-600 mb-1">Search (code / product / customer)</label>
+          <input id="bc-f-search" type="text" class="input-field" value="${this.escapeAttr(this._barcodeState.search)}" oninput="App._bcSearchDebounced()" placeholder="e.g. TS-SNK-121224-AB3K7XYZ"></div>
+      </div>
+
+      <!-- Bulk action bar -->
+      <div id="bc-bulk-bar" class="bg-indigo-50 border border-indigo-200 rounded-xl p-3 flex items-center gap-2 ${selectedCount === 0 ? 'hidden' : ''}">
+        <span class="text-sm font-semibold text-indigo-900"><i class="fas fa-check-square mr-1"></i><span id="bc-sel-count">${selectedCount}</span> selected</span>
+        <button onclick="App.printSelectedBarcodes()" class="btn btn-primary btn-sm"><i class="fas fa-print"></i> Print Stickers</button>
+        <button onclick="App._bcClearSelection()" class="btn btn-secondary btn-sm">Clear</button>
+      </div>
+
+      <!-- Barcodes table -->
+      <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+        <div class="overflow-x-auto"><table class="ledger-table">
+          <thead><tr>
+            <th style="width:40px;"><input type="checkbox" id="bc-sel-all" onchange="App._bcToggleAll(this.checked)"></th>
+            <th style="width:40px;">#</th>
+            <th>Code</th>
+            <th>Product</th>
+            <th style="width:110px;">Date</th>
+            <th style="width:110px;">Status</th>
+            <th>Customer / Note</th>
+            <th style="width:200px;">Actions</th>
+          </tr></thead><tbody>
+            ${items.length === 0 ? `<tr><td colspan="8" class="text-center py-10 text-gray-500">
+              <i class="fas fa-barcode text-3xl mb-2 block opacity-40"></i>No barcodes found.<br>
+              <span class="text-xs">Pack karte waqt automatic ban jate hain, ya "Generate Barcodes" button se bana lein.</span></td></tr>` :
+              items.map((b, i) => this._renderBarcodeRow(b, i)).join('')}
+          </tbody></table></div>
+      </div>
+
+      <p class="text-xs text-gray-500 text-center"><i class="fas fa-info-circle mr-1"></i>Latest 500 records dikha rahe hain. Zyada ke liye filter ya search use karein.</p>
+    `;
+  },
+
+  _renderBarcodeRow(b, i) {
+    const checked = this._barcodeState.selected.has(b.id) ? 'checked' : '';
+    const statusBadge = (() => {
+      const map = {
+        in_stock: ['bg-green-100 text-green-800', 'fa-warehouse', 'In Stock'],
+        sold:     ['bg-blue-100 text-blue-800', 'fa-check-circle', 'Sold'],
+        returned: ['bg-amber-100 text-amber-800', 'fa-undo', 'Returned'],
+        lost:     ['bg-red-100 text-red-700', 'fa-circle-question', 'Lost'],
+        voided:   ['bg-gray-200 text-gray-700', 'fa-ban', 'Voided']
+      };
+      const [cls, ic, lbl] = map[b.status] || map.in_stock;
+      return `<span class="px-2 py-0.5 rounded-full text-xs ${cls}"><i class="fas ${ic} mr-1"></i>${lbl}</span>`;
+    })();
+    const custInfo = b.status === 'sold'
+      ? `${b.sold_customer_name ? this.escapeHtml(b.sold_customer_name) : ''}${b.bill_no ? ` <span class="text-xs text-gray-500">(Bill #${this.escapeHtml(b.bill_no)})</span>` : ''}`
+      : (b.notes ? `<span class="text-xs text-gray-500">${this.escapeHtml(b.notes)}</span>` : '');
+    return `<tr>
+      <td><input type="checkbox" ${checked} onchange="App._bcToggle(${b.id}, this.checked)"></td>
+      <td class="text-gray-500">${i + 1}</td>
+      <td><code class="font-mono text-xs font-bold">${this.escapeHtml(b.code)}</code>${b.printed ? ' <i class="fas fa-print text-green-600 ml-1" title="Already printed"></i>' : ''}</td>
+      <td>${this.escapeHtml(b.product_name || '')}</td>
+      <td class="text-xs">${this.escapeHtml(b.production_date || '')}</td>
+      <td>${statusBadge}</td>
+      <td class="text-sm">${custInfo}</td>
+      <td>
+        <button onclick="App.showBarcodeDetail(${b.id})" class="btn btn-secondary btn-sm" title="View / Print single"><i class="fas fa-eye"></i></button>
+        <button onclick="App.showBarcodeStatus(${b.id})" class="btn btn-primary btn-sm ml-1" title="Change status"><i class="fas fa-arrow-right-arrow-left"></i></button>
+        <button onclick="App.deleteBarcode(${b.id})" class="text-red-500 hover:text-red-700 ml-1" title="Delete"><i class="fas fa-trash text-sm"></i></button>
+      </td>
+    </tr>`;
+  },
+
+  _bcFilterChange() {
+    this._barcodeState.filterStatus = document.getElementById('bc-f-status').value;
+    this._barcodeState.filterProduct = document.getElementById('bc-f-product').value;
+    this._barcodeState.selected.clear();
+    this._loadBarcodeData().then(() => this._renderBarcodePage());
+  },
+
+  _bcSearchDebounced() {
+    clearTimeout(this._bcSearchTO);
+    this._bcSearchTO = setTimeout(() => {
+      this._barcodeState.search = document.getElementById('bc-f-search').value.trim();
+      this._loadBarcodeData().then(() => this._renderBarcodePage());
+    }, 350);
+  },
+
+  _bcToggle(id, on) {
+    if (on) this._barcodeState.selected.add(id); else this._barcodeState.selected.delete(id);
+    document.getElementById('bc-sel-count').textContent = this._barcodeState.selected.size;
+    document.getElementById('bc-bulk-bar').classList.toggle('hidden', this._barcodeState.selected.size === 0);
+  },
+
+  _bcToggleAll(on) {
+    const items = this._barcodeState.list || [];
+    if (on) items.forEach(b => this._barcodeState.selected.add(b.id));
+    else this._barcodeState.selected.clear();
+    this._renderBarcodePage();
+  },
+
+  _bcClearSelection() {
+    this._barcodeState.selected.clear();
+    this._renderBarcodePage();
+  },
+
+  // -------- Settings modal --------
+  async showBarcodeSettings() {
+    const s = this._barcodeState.settings || {};
+    this.openModal(`
+      <h2 class="text-xl font-bold mb-3"><i class="fas fa-gear text-gray-700 mr-2"></i>Barcode Settings</h2>
+      <form id="bc-settings-form" class="space-y-3">
+        <div class="p-3 bg-indigo-50 border border-indigo-200 rounded-lg">
+          <label class="flex items-start gap-2">
+            <input id="bc-auto" type="checkbox" ${s.auto_on_pack ? 'checked' : ''} class="mt-1">
+            <span>
+              <span class="block font-semibold text-sm">Auto-generate on Pack</span>
+              <span class="block text-xs text-gray-600">Jab bhi koi worker pack stage pe entry kare, system khud har piece ke liye unique barcode bana lega.</span>
+            </span>
+          </label>
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Brand Prefix</label>
+          <input id="bc-prefix" type="text" class="input-field font-mono" maxlength="6" value="${this.escapeAttr(s.brand_prefix || 'TS')}">
+          <p class="text-xs text-gray-500 mt-1">Barcode format: <code class="bg-gray-100 px-1 rounded">${this.escapeHtml(s.brand_prefix || 'TS')}-&lt;PRODCODE&gt;-&lt;DDMMYY&gt;-&lt;RANDOM8&gt;</code></p>
+        </div>
+        <div class="flex gap-2 justify-end pt-2 border-t">
+          <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save</button>
+        </div>
+      </form>
+    `);
+    document.getElementById('bc-settings-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const payload = {
+        auto_on_pack: document.getElementById('bc-auto').checked,
+        brand_prefix: document.getElementById('bc-prefix').value || 'TS'
+      };
+      try {
+        await this.api.put('/api/settings/barcode', payload);
+        this.closeModal();
+        await this._loadBarcodeData();
+        this._renderBarcodePage();
+        this.toast('Settings saved', 'success');
+      } catch (err) { this.toast('Failed', 'error'); }
+    });
+  },
+
+  // -------- Manual generation modal --------
+  async showBarcodeGenerate() {
+    if (!this.state.products || this.state.products.length === 0) {
+      try { const r = await this.api.get('/api/products'); this.state.products = r.items || []; } catch (e) {}
+    }
+    const prods = this.state.products || [];
+    const today = new Date().toISOString().slice(0, 10);
+    this.openModal(`
+      <h2 class="text-xl font-bold mb-3"><i class="fas fa-plus-square text-green-600 mr-2"></i>Generate Barcodes</h2>
+      <p class="text-sm text-gray-600 mb-3">Agar pack stage pe barcodes nahi bane the (ya extra chahiye), yahan se bana lein.</p>
+      <form id="bc-gen-form" class="space-y-3">
+        <div><label class="block text-sm font-medium mb-1">Product *</label>
+          <select id="bg-prod" class="input-field" required>
+            <option value="">-- Select Product --</option>
+            ${prods.map(p => `<option value="${p.id}">${this.escapeHtml(p.name)}</option>`).join('')}
+          </select></div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="block text-sm font-medium mb-1">Quantity *</label>
+            <input id="bg-qty" type="number" min="1" step="1" required class="input-field" value="1"></div>
+          <div><label class="block text-sm font-medium mb-1">Production Date</label>
+            <input id="bg-date" type="date" class="input-field" value="${today}"></div>
+        </div>
+        <div><label class="block text-sm font-medium mb-1">Notes (optional)</label>
+          <input id="bg-notes" type="text" class="input-field" placeholder="e.g. extra batch, reprint, etc."></div>
+        <div class="flex gap-2 justify-end pt-2 border-t">
+          <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button type="submit" class="btn btn-success"><i class="fas fa-check"></i> Generate</button>
+        </div>
+      </form>
+    `);
+    document.getElementById('bc-gen-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const payload = {
+        product_id: parseInt(document.getElementById('bg-prod').value),
+        quantity: parseInt(document.getElementById('bg-qty').value),
+        production_date: document.getElementById('bg-date').value,
+        notes: document.getElementById('bg-notes').value
+      };
+      if (!payload.product_id || !payload.quantity) { this.toast('Select product + qty', 'error'); return; }
+      try {
+        const res = await this.api.post('/api/product-barcodes/generate', payload);
+        this.closeModal();
+        this.toast(`Generated ${res.generated || 0} barcode(s)`, 'success');
+        await this._loadBarcodeData();
+        this._renderBarcodePage();
+      } catch (err) { this.toast('Failed', 'error'); }
+    });
+  },
+
+  // -------- Single barcode detail / print --------
+  async showBarcodeDetail(id) {
+    const item = (this._barcodeState.list || []).find(x => x.id === id);
+    if (!item) return;
+    this.openModal(`
+      <h2 class="text-xl font-bold mb-3"><i class="fas fa-barcode text-indigo-600 mr-2"></i>Barcode Detail</h2>
+      <div class="space-y-3">
+        <div class="p-4 bg-gray-50 border rounded-lg text-center">
+          <div class="font-bold text-lg mb-1">${this.escapeHtml(item.product_name || '')}</div>
+          <div class="text-xs text-gray-600 mb-3">Production Date: ${this.escapeHtml(item.production_date)}</div>
+          <svg id="bc-detail-svg"></svg>
+          <div class="font-mono text-sm mt-2 font-bold">${this.escapeHtml(item.code)}</div>
+          <div class="text-xs text-gray-500 mt-1">Status: <strong>${this.escapeHtml(item.status)}</strong></div>
+        </div>
+        <div class="grid grid-cols-2 gap-2 text-sm">
+          <div><span class="text-gray-500">Product code:</span> <strong>${this.escapeHtml(item.product_code || '')}</strong></div>
+          <div><span class="text-gray-500">Printed:</span> <strong>${item.printed ? 'Yes' : 'No'}</strong></div>
+          ${item.pack_log_id ? `<div><span class="text-gray-500">Pack log:</span> #${item.pack_log_id}</div>` : ''}
+          ${item.sold_customer_name ? `<div><span class="text-gray-500">Customer:</span> ${this.escapeHtml(item.sold_customer_name)}</div>` : ''}
+          ${item.bill_no ? `<div><span class="text-gray-500">Bill #:</span> ${this.escapeHtml(item.bill_no)}</div>` : ''}
+          ${item.notes ? `<div class="col-span-2"><span class="text-gray-500">Notes:</span> ${this.escapeHtml(item.notes)}</div>` : ''}
+        </div>
+        <div class="flex gap-2 justify-end pt-2 border-t">
+          <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Close</button>
+          <button type="button" class="btn btn-primary" onclick="App.printSingleBarcode(${id})"><i class="fas fa-print"></i> Print Sticker</button>
+        </div>
+      </div>
+    `);
+    // Render barcode SVG
+    setTimeout(() => {
+      try {
+        if (window.JsBarcode) {
+          JsBarcode('#bc-detail-svg', item.code, { format: 'CODE128', width: 1.8, height: 60, displayValue: false, margin: 0 });
+        }
+      } catch (e) { console.error(e); }
+    }, 50);
+  },
+
+  // -------- Print a single sticker --------
+  printSingleBarcode(id) {
+    const item = (this._barcodeState.list || []).find(x => x.id === id);
+    if (!item) return;
+    this._openPrintWindow([item]);
+    this.api.put(`/api/product-barcodes/${id}/printed`, {}).catch(() => {});
+  },
+
+  // -------- Print selected stickers (bulk) --------
+  async printSelectedBarcodes() {
+    const ids = Array.from(this._barcodeState.selected);
+    if (ids.length === 0) { this.toast('Select at least one', 'error'); return; }
+    const items = (this._barcodeState.list || []).filter(x => ids.includes(x.id));
+    this._openPrintWindow(items);
+    try { await this.api.post('/api/product-barcodes/mark-printed', { ids }); } catch (e) {}
+  },
+
+  // -------- Open a print window with stickers --------
+  _openPrintWindow(items) {
+    const w = window.open('', '_blank', 'width=800,height=600');
+    if (!w) { this.toast('Pop-up blocker ne roka — allow karein', 'error'); return; }
+    const stickerCss = `
+      body { font-family: Arial, sans-serif; margin: 0; padding: 10mm; background: #fff; }
+      .sheet { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6mm; }
+      .sticker {
+        border: 1px dashed #999;
+        padding: 8px 10px;
+        border-radius: 6px;
+        text-align: center;
+        page-break-inside: avoid;
+        break-inside: avoid;
+        background: #fff;
+      }
+      .sticker .brand { font-size: 10px; font-weight: 700; letter-spacing: 2px; color: #4f46e5; margin-bottom: 2px; }
+      .sticker .name  { font-size: 14px; font-weight: 700; margin: 2px 0; color: #111; }
+      .sticker .date  { font-size: 10px; color: #666; margin-bottom: 4px; }
+      .sticker svg    { max-width: 100%; height: 44px; }
+      .sticker .code  { font-family: 'Courier New', monospace; font-size: 10px; font-weight: 700; margin-top: 2px; letter-spacing: 1px; }
+      .sticker .foot  { font-size: 8px; color: #777; margin-top: 2px; }
+      @media print {
+        body { padding: 5mm; }
+        .no-print { display: none !important; }
+      }
+    `;
+    const stickersHtml = items.map((it, idx) => `
+      <div class="sticker">
+        <div class="brand">TWO STAR · GENUINE</div>
+        <div class="name">${this._escHtml(it.product_name || '')}</div>
+        <div class="date">Mfg: ${this._escHtml(it.production_date)}</div>
+        <svg id="bc-${idx}"></svg>
+        <div class="code">${this._escHtml(it.code)}</div>
+        <div class="foot">Verify at TwoStar CRM · Status: ${this._escHtml(it.status)}</div>
+      </div>`).join('');
+    w.document.write(`<!DOCTYPE html>
+      <html><head><title>Barcode Stickers (${items.length})</title>
+        <style>${stickerCss}</style>
+        <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></` + `script>
+      </head><body>
+        <div class="no-print" style="margin-bottom:10px; text-align:center;">
+          <button onclick="window.print()" style="padding:8px 16px; background:#4f46e5; color:#fff; border:none; border-radius:4px; cursor:pointer; font-weight:bold;">Print</button>
+          <button onclick="window.close()" style="padding:8px 16px; background:#6b7280; color:#fff; border:none; border-radius:4px; cursor:pointer; margin-left:8px;">Close</button>
+          <span style="margin-left:12px; color:#666; font-size:12px;">${items.length} sticker(s) ready to print</span>
+        </div>
+        <div class="sheet">${stickersHtml}</div>
+        <script>
+          window.addEventListener('load', function () {
+            const codes = ${JSON.stringify(items.map(x => x.code))};
+            codes.forEach(function (code, i) {
+              try { JsBarcode('#bc-' + i, code, { format: 'CODE128', width: 1.6, height: 38, displayValue: false, margin: 0 }); }
+              catch (e) { console.error(e); }
+            });
+          });
+        </` + `script>
+      </body></html>`);
+    w.document.close();
+  },
+
+  _escHtml(s) {
+    return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  },
+
+  // -------- Change status modal --------
+  async showBarcodeStatus(id) {
+    const item = (this._barcodeState.list || []).find(x => x.id === id);
+    if (!item) return;
+    this.openModal(`
+      <h2 class="text-xl font-bold mb-3"><i class="fas fa-arrow-right-arrow-left mr-2 text-indigo-600"></i>Change Status</h2>
+      <p class="text-sm text-gray-600 mb-3"><code class="font-mono text-xs">${this.escapeHtml(item.code)}</code> · ${this.escapeHtml(item.product_name)}</p>
+      <form id="bc-status-form" class="space-y-3">
+        <div><label class="block text-sm font-medium mb-1">New Status</label>
+          <select id="bs-status" class="input-field" onchange="App._bcStatusToggleCustomer()">
+            ${['in_stock', 'sold', 'returned', 'lost', 'voided'].map(s => `<option value="${s}" ${item.status === s ? 'selected' : ''}>${s.replace('_', ' ')}</option>`).join('')}
+          </select></div>
+        <div id="bs-cust-wrap" class="${item.status === 'sold' ? '' : 'hidden'}">
+          <label class="block text-sm font-medium mb-1">Customer Name</label>
+          <input id="bs-cust" type="text" class="input-field" value="${this.escapeAttr(item.sold_customer_name || '')}">
+        </div>
+        <div><label class="block text-sm font-medium mb-1">Notes</label>
+          <input id="bs-notes" type="text" class="input-field" value="${this.escapeAttr(item.notes || '')}"></div>
+        <div class="flex gap-2 justify-end pt-2 border-t">
+          <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save</button>
+        </div>
+      </form>
+    `);
+    document.getElementById('bc-status-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const payload = {
+        status: document.getElementById('bs-status').value,
+        sold_customer_name: document.getElementById('bs-cust')?.value || '',
+        notes: document.getElementById('bs-notes').value
+      };
+      try {
+        await this.api.put(`/api/product-barcodes/${id}/status`, payload);
+        this.closeModal();
+        await this._loadBarcodeData();
+        this._renderBarcodePage();
+        this.toast('Updated', 'success');
+      } catch (err) { this.toast('Failed', 'error'); }
+    });
+  },
+
+  _bcStatusToggleCustomer() {
+    const v = document.getElementById('bs-status').value;
+    document.getElementById('bs-cust-wrap').classList.toggle('hidden', v !== 'sold');
+  },
+
+  async deleteBarcode(id) {
+    if (!confirm('Delete this barcode? Agar product nikal gaya hai aur ab wapas nahi aa raha to delete thik hai — warna "void" status better hai.')) return;
+    try {
+      await this.api.delete(`/api/product-barcodes/${id}`);
+      await this._loadBarcodeData();
+      this._renderBarcodePage();
+      this.toast('Deleted', 'success');
+    } catch (e) { this.toast('Failed', 'error'); }
+  },
+
+  // -------- Scanner / verification modal --------
+  async showBarcodeScanner() {
+    this.openModal(`
+      <h2 class="text-xl font-bold mb-3"><i class="fas fa-qrcode text-indigo-600 mr-2"></i>Scan / Verify Barcode</h2>
+      <p class="text-sm text-gray-600 mb-3">Code manually likhein ya camera se scan karein. System verify karega ke ye genuine Two Star product hai ya nahi.</p>
+
+      <!-- Manual input -->
+      <div class="p-3 bg-indigo-50 border border-indigo-200 rounded-lg mb-3">
+        <label class="block text-sm font-semibold text-indigo-900 mb-1"><i class="fas fa-keyboard mr-1"></i>Enter Code Manually</label>
+        <div class="flex gap-2">
+          <input id="bc-scan-input" type="text" class="input-field font-mono" placeholder="e.g. TS-SNK-121224-AB3K7XYZ" autofocus>
+          <button type="button" onclick="App._bcVerifyManual()" class="btn btn-primary"><i class="fas fa-search"></i> Verify</button>
+        </div>
+      </div>
+
+      <!-- Camera scanner -->
+      <div class="p-3 bg-gray-50 border rounded-lg mb-3">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-sm font-semibold"><i class="fas fa-camera mr-1"></i>Camera Scanner</span>
+          <button type="button" id="bc-cam-btn" onclick="App._bcStartCamera()" class="btn btn-success btn-sm"><i class="fas fa-play"></i> Start Camera</button>
+        </div>
+        <div id="bc-reader" style="width:100%; min-height:0;"></div>
+        <p class="text-xs text-gray-500 mt-1"><i class="fas fa-info-circle mr-1"></i>Mobile pe camera use karein — barcode ko box ke andar lein.</p>
+      </div>
+
+      <!-- Result area -->
+      <div id="bc-scan-result"></div>
+
+      <div class="flex gap-2 justify-end pt-2 border-t mt-3">
+        <button type="button" class="btn btn-secondary" onclick="App._bcStopCamera(); App.closeModal();">Close</button>
+      </div>
+    `, 'modal-lg');
+    document.getElementById('bc-scan-input').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); this._bcVerifyManual(); }
+    });
+  },
+
+  async _bcVerifyManual() {
+    const input = document.getElementById('bc-scan-input');
+    if (!input) return;
+    const code = input.value.trim().toUpperCase();
+    if (!code) { this.toast('Enter a code', 'error'); return; }
+    await this._bcDoVerify(code);
+  },
+
+  async _bcDoVerify(code) {
+    const resultBox = document.getElementById('bc-scan-result');
+    if (!resultBox) return;
+    resultBox.innerHTML = `<div class="p-3 bg-gray-50 border rounded text-center text-gray-600"><i class="fas fa-spinner fa-spin mr-1"></i>Verifying...</div>`;
+    try {
+      const res = await this.api.get(`/api/product-barcodes/scan/${encodeURIComponent(code)}`);
+      if (!res.verified) {
+        resultBox.innerHTML = `
+          <div class="p-4 bg-red-50 border-2 border-red-400 rounded-lg">
+            <div class="flex items-center gap-2 text-red-700 font-bold text-lg mb-2">
+              <i class="fas fa-circle-xmark text-2xl"></i> NOT VERIFIED
+            </div>
+            <p class="text-sm text-red-800">${this._escHtml(res.message || 'Ye barcode humary system me nahi hai.')}</p>
+            <p class="text-xs text-red-700 mt-2"><i class="fas fa-triangle-exclamation mr-1"></i>Ye product Two Star ka NAHI hai ya fake / copy ho sakta hai.</p>
+          </div>`;
+        return;
+      }
+      const it = res.item;
+      const statusMap = {
+        in_stock: ['bg-green-100 text-green-800 border-green-300', 'fa-warehouse', 'In Stock'],
+        sold:     ['bg-blue-100 text-blue-800 border-blue-300', 'fa-check-circle', 'Sold'],
+        returned: ['bg-amber-100 text-amber-800 border-amber-300', 'fa-undo', 'Returned'],
+        lost:     ['bg-red-100 text-red-700 border-red-300', 'fa-circle-question', 'Lost'],
+        voided:   ['bg-gray-200 text-gray-700 border-gray-400', 'fa-ban', 'Voided']
+      };
+      const [cls, ic, lbl] = statusMap[it.status] || statusMap.in_stock;
+      resultBox.innerHTML = `
+        <div class="p-4 bg-green-50 border-2 border-green-500 rounded-lg">
+          <div class="flex items-center gap-2 text-green-700 font-bold text-lg mb-2">
+            <i class="fas fa-circle-check text-2xl"></i> VERIFIED · GENUINE
+          </div>
+          <div class="grid grid-cols-2 gap-2 text-sm">
+            <div><span class="text-gray-500">Product:</span> <strong>${this._escHtml(it.product_name)}</strong></div>
+            <div><span class="text-gray-500">Code:</span> <code class="font-mono">${this._escHtml(it.code)}</code></div>
+            <div><span class="text-gray-500">Production Date:</span> <strong>${this._escHtml(it.production_date)}</strong></div>
+            <div><span class="text-gray-500">Status:</span> <span class="px-2 py-0.5 rounded-full text-xs border ${cls}"><i class="fas ${ic} mr-1"></i>${lbl}</span></div>
+            ${it.employee_name ? `<div><span class="text-gray-500">Packed by:</span> ${this._escHtml(it.employee_name)}</div>` : ''}
+            ${it.pack_log_id ? `<div><span class="text-gray-500">Pack run #:</span> ${it.pack_log_id}</div>` : ''}
+            ${it.bill_no ? `<div class="col-span-2"><span class="text-gray-500">Sold on Bill:</span> #${this._escHtml(it.bill_no)}${it.bill_customer ? ' → ' + this._escHtml(it.bill_customer) : ''}${it.bill_date ? ' (' + this._escHtml(it.bill_date) + ')' : ''}</div>` : ''}
+            ${it.notes ? `<div class="col-span-2"><span class="text-gray-500">Notes:</span> ${this._escHtml(it.notes)}</div>` : ''}
+          </div>
+          <div class="mt-3 pt-3 border-t border-green-300 flex gap-2">
+            <button onclick="App.showBarcodeStatus(${it.id})" class="btn btn-primary btn-sm"><i class="fas fa-arrow-right-arrow-left"></i> Change Status</button>
+            <button onclick="App.printSingleBarcode(${it.id})" class="btn btn-secondary btn-sm"><i class="fas fa-print"></i> Reprint Sticker</button>
+          </div>
+        </div>`;
+      // Also push this item into local list so action buttons find it
+      const list = this._barcodeState.list || [];
+      if (!list.find(x => x.id === it.id)) { list.unshift(it); this._barcodeState.list = list; }
+    } catch (e) {
+      resultBox.innerHTML = `<div class="p-3 bg-red-50 border border-red-200 rounded text-red-700">Verification failed. Try again.</div>`;
+    }
+  },
+
+  _bcCameraInstance: null,
+  async _bcStartCamera() {
+    if (!window.Html5Qrcode) { this.toast('Scanner library not loaded', 'error'); return; }
+    const btn = document.getElementById('bc-cam-btn');
+    if (this._bcCameraInstance) { this._bcStopCamera(); return; }
+    try {
+      const scanner = new Html5Qrcode('bc-reader');
+      this._bcCameraInstance = scanner;
+      if (btn) btn.innerHTML = '<i class="fas fa-stop"></i> Stop Camera';
+      await scanner.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 250, height: 100 } },
+        async (decoded) => {
+          const code = (decoded || '').toUpperCase().trim();
+          if (!code) return;
+          // Fill the input and verify, then stop
+          const inp = document.getElementById('bc-scan-input');
+          if (inp) inp.value = code;
+          await this._bcDoVerify(code);
+          this._bcStopCamera();
+        },
+        () => { /* ignore scan errors */ }
+      );
+    } catch (e) {
+      console.error(e);
+      this.toast('Camera access denied or unavailable', 'error');
+      if (btn) btn.innerHTML = '<i class="fas fa-play"></i> Start Camera';
+      this._bcCameraInstance = null;
+    }
+  },
+
+  _bcStopCamera() {
+    const btn = document.getElementById('bc-cam-btn');
+    if (this._bcCameraInstance) {
+      try { this._bcCameraInstance.stop().catch(() => {}); } catch (e) {}
+      try { this._bcCameraInstance.clear(); } catch (e) {}
+      this._bcCameraInstance = null;
+    }
+    if (btn) btn.innerHTML = '<i class="fas fa-play"></i> Start Camera';
   }
 };
 

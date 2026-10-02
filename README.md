@@ -6,7 +6,62 @@
 - **Goal**: Complete business CRM for Two Star Industries — manage clients, ledgers, inventory, raw materials, manufacturing recipes, employees, side expenses, and bills with auto Net Profit tracking.
 - **Stack**: Hono (TypeScript) + Cloudflare Pages + Cloudflare D1 (SQLite) + TailwindCSS + Vanilla JS frontend
 
-## What's New (latest update — 2026-10-02) — Simple Restock System
+## What's New (latest update — 2026-10-02) — Barcode / Serial System + Raw Material UI Cleanup
+
+> Owner (Muhammad Uzair) ki 2 new requests. Dono complete, test ho chuke, aur fully synced with the rest of the system.
+
+### 🏷️ 1. Unique Barcode / Serial Number System (anti-copy)
+
+Har **packed finished product** ko ek **unique barcode** milta hai. Yeh ek sticker ke tor par box ke upar lag sakta hai. Scan ya search karne par system verify karta hai ke yeh **asli Two Star product hai**, kis din bana, kis pack run se nikla, aur kis stage pe hai (in stock / sold / returned / lost / voided). Yeh feature isliye hai ke jo log Two Star ka name use karke copy market mein sell karte hain unko identify kiya ja sake.
+
+**Code format:** `TS-<PRODCODE>-<DDMMYY>-<RANDOM8>`
+Example: `TS-SNK-021026-X7F3K2M9` → Two Star · Sink Rack · 02 Oct 2026 · random 8 chars (crypto-random, NOT sequential)
+
+**Random portion** aa CODE128 scanner-friendly characters se bana hai (0 / O / 1 / I nahi — human readable). **8 base-32 chars = ~1 trillion combinations per day per product** — competitors next number guess hi NAHI kar sakte.
+
+**Flow:**
+- **Pack stage pe auto-generate** (settings se ON/OFF). Hoga ya nahi: `Settings` button se switch.
+- **Manual generate:** "Generate Barcodes" button se product + quantity + date deke bana lo (reprint ya extra batch ke liye).
+- **Print stickers:** Table me se multi-select karo (checkbox) ya detail me "Print Sticker" → new window me CODE128 barcode + product name + date + code print ho jata hai.
+- **Scan / Verify:** Ya camera (html5-qrcode) ya manually code type karo → GREEN "VERIFIED · GENUINE" (product info ke saath) ya RED "NOT VERIFIED · fake / copy" ka result.
+- **Status workflow:** `in_stock` → `sold` (customer name record) → `returned`/`lost`/`voided` ke sath history maintain.
+- **Edit/delete pack-log → barcodes auto-sync:** quantity badhao → extra barcodes auto-generate; ghatao → surplus `in_stock` barcodes delete (`sold` barcodes safely preserve kiye jate hain).
+
+**New navigation:** Sidebar me **Barcodes / Serials** button.
+
+**New DB table:** `product_barcodes` (unique index on `code`) + `app_settings` for toggles.
+
+**New API routes:**
+- `GET  /api/product-barcodes` — list with filters (status, product, search) + stats
+- `POST /api/product-barcodes/generate` — manually generate N for product
+- `POST /api/product-barcodes/generate-for-pack/:logId` — one-off for existing pack
+- `GET  /api/product-barcodes/scan/:code` — verify a scanned code
+- `PUT  /api/product-barcodes/:id/status` — mark sold / returned / lost / voided
+- `PUT  /api/product-barcodes/:id/printed` + `POST /api/product-barcodes/mark-printed` (bulk)
+- `DELETE /api/product-barcodes/:id`
+- `GET /api/settings/barcode` + `PUT /api/settings/barcode` (auto-on-pack toggle + brand prefix)
+
+**Libraries added (CDN):**
+- `jsbarcode@3.11.6` — CODE128 barcode SVG rendering (print)
+- `html5-qrcode@2.3.8` — camera-based scanning (mobile + desktop)
+
+---
+
+### 🧹 2. Raw Material UI Cleanup — 1 Action Button
+
+Pehle Raw Material table ke **Actions column** me 3 duplicate buttons the (Restock + Batches + Edit + Delete). Ab **sirf ek EDIT button** hai — jo sab kuch handle karta hai:
+
+- **Info tab**: Name / Unit / Category / Notes + Delete
+- **Stock Correction tab**: Physical count mismatch? Yahan actual quantity set karo + reason likho → system khud adjustment entry banata hai (supplier ledger touch nahi hoti — purely stock)
+- **Batches / Payments tab**: Full purchase/restock history + supplier payments ka shortcut (opens detail view)
+
+**Global Restock** button (upar header me) jaisa hai waisa he hai — woh naya purchase batch add karne ke liye hi hai.
+
+**New API:** `POST /api/raw-materials/:id/stock-correction` — body: `{new_quantity, reason, entry_date}` → creates a zero-cost adjustment batch and keeps avg rate consistent.
+
+---
+
+## What's New (previous update — 2026-10-02) — Simple Restock System
 
 > Owner (Muhammad Uzair) ki request: Raw Material ka **restock system dobara banaya** aur **UI simple** ki. Purana restock system **pura khatm** kar diya.
 
