@@ -6,7 +6,30 @@
 - **Goal**: Complete business CRM for Two Star Industries — manage clients, ledgers, inventory, raw materials, manufacturing recipes, employees, side expenses, and bills with auto Net Profit tracking.
 - **Stack**: Hono (TypeScript) + Cloudflare Pages + Cloudflare D1 (SQLite) + TailwindCSS + Vanilla JS frontend
 
-## What's New (latest update — 2026-09-23b) — 5 Requested Fixes
+## What's New (latest update — 2026-10-02) — Simple Restock System
+
+> Owner (Muhammad Uzair) ki request: Raw Material ka **restock system dobara banaya** aur **UI simple** ki. Purana restock system **pura khatm** kar diya.
+
+### 🔁 Naya Simple Restock Flow
+Raw Material page par ek **"Restock"** button (upar header me aur har row ke action me). Click karne par ek saaf-suthra modal:
+1. **Product select** karo (raw material).
+2. **Supplier select** karo.
+3. Us supplier ke **profile wala buy-rate khud-ba-khud laga jata hai** us product par (`/api/clients/:id/supplier-rate-map` se). Zaroorat ho to edit bhi kar sakte hain.
+4. **Quantity** likho → Total (bill) khud calculate.
+5. **Amount Paid Now** + kis **bank/cash account** se pay kiya, woh select karo.
+6. Baqaya (Remaining) **khud supplier ke ledger** me "humara dena" ke tor par add ho jata hai. Jitna pay kiya woh chune hue bank account se minus ho jata hai.
+
+Agli dafa usi supplier+product ke liye rate khud yaad rakha jata hai (buy-rate auto-save).
+
+### 🧹 Hataya gaya
+- **Purana restock system** (`showRestockRaw`, Add form ke andar ka "Restock an existing material?" picker, `_pickExistingRaw`) **pura hata diya**.
+- Raw Material table se **"Suppliers" column hata diya** — ab woh column yahan show nahi hota. Supplier/batch ki tafseel ab **detail (📋)** view aur **Recent Entries** me hi hai.
+
+API (pehle se mojood, inhi ko use kiya gaya): `POST /api/raw-materials/:id/restock`, `GET /api/clients/:id/supplier-rate-map`, `POST /api/clients/:id/supplier-rates`.
+
+---
+
+## What's New (2026-09-23b) — 5 Requested Fixes
 
 > Owner (Muhammad Uzair) ki 5 requests. Khaas dhyan: **kahin bhi cheez duplicate nahi ki** — return ka pura system ab **ek hi jagah (Record Stock Movement)** me hai, aur supplier ke rate ek hi shared list se chalte hain.
 

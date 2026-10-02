@@ -3288,7 +3288,10 @@ const App = {
       <div class="page-header">
         <div><h1 class="page-title"><i class="fas fa-cubes text-orange-500"></i>Raw Material</h1>
           <p class="page-subtitle">${items.length} item(s) · Total Value: PKR ${this.fmt(totalValue)}</p></div>
-        <button onclick="App.showRawEditor()" class="btn btn-primary"><i class="fas fa-plus"></i> Add Raw Material</button>
+        <div class="flex gap-2">
+          <button onclick="App.showRestock()" class="btn btn-success" title="Product restock karein — supplier select karein, rate khud lag jayega"><i class="fas fa-recycle"></i> Restock</button>
+          <button onclick="App.showRawEditor()" class="btn btn-primary"><i class="fas fa-plus"></i> Add Raw Material</button>
+        </div>
       </div>
       <div class="p-4 md:p-6 space-y-5">
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -3303,30 +3306,13 @@ const App = {
               <th style="width:40px;">#</th><th>Material Name</th>
               <th style="width:90px;">Unit</th><th style="width:110px;">Quantity</th>
               <th style="width:110px;">Avg Rate</th><th style="width:130px;">Total Value</th>
-              <th>Suppliers</th><th style="width:120px;">Category</th>
-              <th style="width:130px;">Action</th>
+              <th style="width:120px;">Category</th>
+              <th style="width:150px;">Action</th>
             </tr></thead><tbody>
-              ${items.length === 0 ? `<tr><td colspan="9" class="text-center py-8 text-gray-500">
+              ${items.length === 0 ? `<tr><td colspan="8" class="text-center py-8 text-gray-500">
                 <i class="fas fa-cubes text-3xl mb-2 block"></i>No raw materials yet.</td></tr>` :
                 items.map((it, i) => {
                   const lowStock = (parseFloat(it.quantity) || 0) <= 5;
-                  const sups = it.suppliers || [];
-                  let supHtml = '';
-                  if (sups.length === 0) {
-                    supHtml = '<span class="text-gray-400">—</span>';
-                  } else {
-                    supHtml = sups.map(sp => {
-                      const nm = sp.supplier_name_resolved || sp.supplier_name || '(unnamed)';
-                      const rem = parseFloat(sp.remaining_amount) || 0;
-                      const remHtml = rem > 0
-                        ? ` <span class="text-red-600 text-xs" title="Remaining to pay">(owe PKR ${this.fmt(rem)})</span>`
-                        : ' <span class="text-green-600 text-xs">(paid)</span>';
-                      const link = sp.supplier_id
-                        ? `<a href="#" onclick="App.openClient(${sp.supplier_id}); return false;" class="text-blue-500 hover:underline">${this.escapeHtml(nm)}</a>`
-                        : this.escapeHtml(nm);
-                      return `<div class="text-xs">${link}${remHtml}</div>`;
-                    }).join('');
-                  }
                   return `<tr>
                     <td class="text-gray-500">${i + 1}</td>
                     <td>${this.escapeHtml(it.name)}</td>
@@ -3334,10 +3320,10 @@ const App = {
                     <td class="${lowStock ? 'low-stock' : 'in-stock'}">${this.fmt(it.quantity)}</td>
                     <td>${this.fmt(it.rate)}</td>
                     <td class="amount-running text-right font-bold">PKR ${this.fmt(it.total_value)}</td>
-                    <td>${supHtml}</td>
                     <td>${this.escapeHtml(it.category || '')}</td>
                     <td>
-                      <button onclick="App.showRawDetail(${it.id})" class="btn btn-secondary btn-sm" title="View / Manage Batches & Payments"><i class="fas fa-list"></i></button>
+                      <button onclick="App.showRestock(${it.id})" class="btn btn-success btn-sm" title="Restock this product"><i class="fas fa-recycle"></i></button>
+                      <button onclick="App.showRawDetail(${it.id})" class="btn btn-secondary btn-sm ml-1" title="View / Manage Batches & Payments"><i class="fas fa-list"></i></button>
                       <button onclick="App.showRawEditor(${it.id})" class="btn btn-secondary btn-sm ml-1" title="Edit"><i class="fas fa-edit"></i></button>
                       <button onclick="App.deleteRaw(${it.id})" class="text-red-500 hover:text-red-700 ml-1"><i class="fas fa-trash text-sm"></i></button>
                     </td>
@@ -3499,7 +3485,7 @@ const App = {
 
         <div class="mb-3 flex items-center justify-between">
           <h3 class="font-semibold text-gray-800"><i class="fas fa-history mr-2"></i>Purchase / Restock History</h3>
-          <button onclick="App.showRestockRaw(${id})" class="btn btn-success btn-sm"><i class="fas fa-plus"></i> Add Restock / Purchase</button>
+          <button onclick="App.closeModal(); App.showRestock(${id});" class="btn btn-success btn-sm"><i class="fas fa-plus"></i> Add Restock / Purchase</button>
         </div>
 
         <div class="overflow-x-auto"><table class="ledger-table text-xs">
@@ -3631,21 +3617,14 @@ const App = {
     }
 
     // ADD mode: full form with supplier + payment fields. This creates an initial purchase batch.
-    const existingPickerHtml = `
-      <div class="md:col-span-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-        <label class="block text-sm font-semibold mb-1 text-amber-800"><i class="fas fa-recycle mr-1"></i>Restock an existing material? (recommended)</label>
-        <select id="r-existing" class="input-field" onchange="App._pickExistingRaw()">
-          <option value="">-- This is a brand new material --</option>
-          ${this.state.rawMaterials.map(r => `<option value="${r.id}">${this.escapeHtml(r.name)} (${this.escapeHtml(r.unit||'pcs')}) — Stock: ${this.fmt(r.quantity)} @ PKR ${this.fmt(r.rate)}</option>`).join('')}
-        </select>
-        <p class="text-xs text-amber-700 mt-1">Pick an existing material to record a new <strong>purchase batch</strong> for it. Same material can have many batches from different suppliers.</p>
-      </div>`;
-
+    // NOTE: Restocking an EXISTING material is now done via the dedicated
+    // "Restock" button/flow (App.showRestock). This form is only for adding a
+    // brand-new material (with an optional opening purchase batch).
     const today = new Date().toISOString().slice(0, 10);
     this.openModal(`
-      <h2 class="text-xl font-bold mb-4"><i class="fas fa-cubes text-orange-500 mr-2"></i>Add Raw Material</h2>
+      <h2 class="text-xl font-bold mb-1"><i class="fas fa-cubes text-orange-500 mr-2"></i>Add Raw Material</h2>
+      <p class="text-sm text-gray-500 mb-4"><i class="fas fa-info-circle mr-1"></i>Naya material add karein. Pehle se mojood product me stock barhana ho to upar <strong>Restock</strong> button use karein.</p>
       <form id="raw-form" class="grid grid-cols-1 md:grid-cols-2 gap-3">
-        ${existingPickerHtml}
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Material Name *</label>
           <input id="r-name" type="text" required class="input-field" value="" oninput="App._checkRawDuplicate()"></div>
         <div><label class="block text-sm font-medium mb-1">Unit</label>
@@ -3698,7 +3677,6 @@ const App = {
     this._checkRawDuplicate();
     document.getElementById('raw-form').addEventListener('submit', async (e) => {
       e.preventDefault();
-      const targetId = document.getElementById('r-existing')?.value ? parseInt(document.getElementById('r-existing').value) : null;
       const payload = {
         name: document.getElementById('r-name').value,
         unit: document.getElementById('r-unit').value || 'pcs',
@@ -3710,7 +3688,6 @@ const App = {
         entry_date: document.getElementById('r-date').value,
         category: document.getElementById('r-cat').value,
         notes: document.getElementById('r-notes').value,
-        target_id: targetId,
         bank_account_id: (document.getElementById('r-bank')?.value || null)
       };
       try {
@@ -3732,41 +3709,10 @@ const App = {
     if (el) el.textContent = 'PKR ' + this.fmt(remaining);
   },
 
-  // When user picks an existing material from the "Restock" dropdown,
-  // auto-fill name/unit so the new batch attaches to the right material.
-  // Supplier is left blank so the user can pick a different supplier for this batch.
-  _pickExistingRaw() {
-    const sel = document.getElementById('r-existing');
-    if (!sel || !sel.value) { this._checkRawDuplicate(); return; }
-    const rm = this.state.rawMaterials.find(x => x.id == sel.value);
-    if (!rm) return;
-    document.getElementById('r-name').value = rm.name || '';
-    const unitSel = document.getElementById('r-unit');
-    if (unitSel) {
-      const opt = Array.from(unitSel.options).find(o => o.value === (rm.unit || 'pcs'));
-      if (opt) unitSel.value = opt.value;
-    }
-    document.getElementById('r-cat').value = rm.category || '';
-    document.getElementById('r-rate').value = rm.rate || 0;
-    document.getElementById('r-qty').value = 0; // user enters quantity to ADD
-    this._calcRawTotal();
-    this._calcRawPayPreview();
-    this._checkRawDuplicate();
-  },
-
   // Live duplicate check: warn user that a matching material exists and a new batch will be added to it.
   _checkRawDuplicate() {
     const hint = document.getElementById('r-dup-hint');
-    const picker = document.getElementById('r-existing');
     if (!hint) return;
-    if (picker && picker.value) {
-      const rm = this.state.rawMaterials.find(x => x.id == picker.value);
-      if (rm) {
-        hint.classList.remove('hidden');
-        hint.innerHTML = `<i class="fas fa-info-circle mr-1"></i>A new <strong>purchase batch</strong> will be added to <strong>${this.escapeHtml(rm.name)}</strong> (current stock: ${this.fmt(rm.quantity)} ${this.escapeHtml(rm.unit||'')}). The supplier you choose below applies only to this batch.`;
-        return;
-      }
-    }
     const name = (document.getElementById('r-name')?.value || '').trim().toLowerCase();
     const unit = (document.getElementById('r-unit')?.value || '').trim().toLowerCase();
     if (!name) { hint.classList.add('hidden'); return; }
@@ -3778,91 +3724,126 @@ const App = {
     });
     if (match) {
       hint.classList.remove('hidden');
-      hint.innerHTML = `<i class="fas fa-recycle mr-1"></i>A matching raw material already exists: <strong>${this.escapeHtml(match.name)}</strong> (Stock: ${this.fmt(match.quantity)} ${this.escapeHtml(match.unit||'')} @ PKR ${this.fmt(match.rate)}). Saving will <strong>add a new purchase batch</strong> to it.`;
+      hint.innerHTML = `<i class="fas fa-recycle mr-1"></i>Ye material pehle se mojood hai: <strong>${this.escapeHtml(match.name)}</strong> (Stock: ${this.fmt(match.quantity)} ${this.escapeHtml(match.unit||'')} @ PKR ${this.fmt(match.rate)}). Stock barhana ho to <strong>Restock</strong> button use karein — ya save karne par naya batch isi me add ho jayega.`;
     } else {
       hint.classList.add('hidden');
     }
   },
 
-  // Restock modal — adds a new purchase batch with optional supplier + payment.
-  async showRestockRaw(id) {
+  // ============================================================
+  // SIMPLE RESTOCK SYSTEM (rebuilt)
+  // ------------------------------------------------------------
+  // Flow (exactly as requested):
+  //   1. Click Restock → pick the PRODUCT (raw material)
+  //   2. Pick the SUPPLIER
+  //   3. The rate we set for THIS supplier (buy-rate in supplier profile)
+  //      auto-applies — editable if needed
+  //   4. Enter quantity → total auto-calculates
+  //   5. Enter how much paid now + from which bank/cash account
+  //   6. Any unpaid remaining auto-posts to the supplier's ledger (we owe)
+  //
+  // `presetId` (optional): when restocking from a specific row, the product
+  // is pre-selected. From the header button it is left blank so the user
+  // picks the product first.
+  // ============================================================
+  async showRestock(presetId = null) {
     await this.loadBankAccounts();
-    const rm = this.state.rawMaterials.find(x => x.id === id);
-    if (!rm) return;
-    const supplierOpts = this.state.allClients.map(c => `<option value="${c.id}">${this.escapeHtml(c.name)} (${this.escapeHtml(c.folder_name || '')})</option>`).join('');
+    const materials = this.state.rawMaterials || [];
+    const suppliers = this.state.allClients || [];
+    if (materials.length === 0) { this.toast('Pehle koi raw material add karein', 'error'); return; }
     const today = new Date().toISOString().slice(0, 10);
+
+    const productOpts = materials.map(m =>
+      `<option value="${m.id}" ${String(presetId) === String(m.id) ? 'selected' : ''}>${this.escapeHtml(m.name)} (${this.escapeHtml(m.unit || 'pcs')}) — Stock: ${this.fmt(m.quantity)}</option>`
+    ).join('');
+    const supplierOpts = suppliers.map(s =>
+      `<option value="${s.id}">${this.escapeHtml(s.name)}${s.folder_name ? ' (' + this.escapeHtml(s.folder_name) + ')' : ''}</option>`
+    ).join('');
+
     this.openModal(`
-      <h2 class="text-xl font-bold mb-4"><i class="fas fa-recycle text-green-600 mr-2"></i>Restock: ${this.escapeHtml(rm.name)}</h2>
-      <div class="mb-3 p-3 bg-gray-50 rounded text-sm">
-        <div class="flex justify-between"><span class="text-gray-500">Current Stock:</span><strong>${this.fmt(rm.quantity)} ${this.escapeHtml(rm.unit||'')}</strong></div>
-        <div class="flex justify-between"><span class="text-gray-500">Current Avg Rate:</span><strong>PKR ${this.fmt(rm.rate)}</strong></div>
-        <div class="flex justify-between"><span class="text-gray-500">Current Value:</span><strong class="amount-running">PKR ${this.fmt(rm.total_value)}</strong></div>
-      </div>
+      <h2 class="text-xl font-bold mb-1"><i class="fas fa-recycle text-green-600 mr-2"></i>Restock Product</h2>
+      <p class="text-sm text-gray-500 mb-4">Product aur supplier select karein — supplier ke profile wala rate khud lag jayega. Jitna pay kiya likhein; baqaya supplier ke ledger me chala jayega.</p>
       <form id="restock-form" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+
+        <div class="md:col-span-2"><label class="block text-sm font-semibold mb-1"><i class="fas fa-box mr-1 text-orange-500"></i>Product *</label>
+          <select id="rs-product" class="input-field" required onchange="App._rsOnProductChange()">
+            <option value="">-- Select product --</option>
+            ${productOpts}
+          </select></div>
+
+        <div class="md:col-span-2"><label class="block text-sm font-semibold mb-1"><i class="fas fa-truck mr-1 text-amber-600"></i>Supplier *</label>
+          <select id="rs-supplier" class="input-field" required onchange="App._rsOnSupplierChange()">
+            <option value="">-- Select supplier --</option>
+            ${supplierOpts}
+          </select>
+          <p id="rs-rate-hint" class="text-xs mt-1" style="display:none;"></p></div>
+
         <div><label class="block text-sm font-medium mb-1">Date</label>
           <input id="rs-date" type="date" class="input-field" value="${today}"></div>
-        <div><label class="block text-sm font-medium mb-1">Quantity to Add *</label>
-          <input id="rs-qty" type="number" step="any" min="0" required class="input-field" value="0" oninput="App._calcRestockPreview(${id})"></div>
-        <div><label class="block text-sm font-medium mb-1">Rate per Unit for this batch (PKR)</label>
-          <input id="rs-rate" type="number" step="any" min="0" class="input-field" value="${rm.rate || 0}" oninput="App._calcRestockPreview(${id})"></div>
-        <div><label class="block text-sm font-medium mb-1">Total (Bill Amount)</label>
+        <div><label class="block text-sm font-medium mb-1">Quantity *</label>
+          <input id="rs-qty" type="number" step="any" min="0" required class="input-field" value="0" oninput="App._rsCalc()"></div>
+
+        <div><label class="block text-sm font-medium mb-1">Rate / Unit (PKR)</label>
+          <input id="rs-rate" type="number" step="any" min="0" class="input-field" value="0" oninput="App._rsCalc()">
+          <p class="text-xs text-gray-400 mt-1">Supplier select karte hi auto aa jayega. Edit bhi kar sakte hain.</p></div>
+        <div><label class="block text-sm font-medium mb-1">Total (Bill)</label>
           <div id="rs-total" class="input-field" style="background:#f8fafc; font-weight:bold;">PKR 0.00</div></div>
 
         <div class="md:col-span-2 p-3 bg-green-50 border border-green-200 rounded-lg">
-          <h3 class="text-sm font-semibold text-green-900 mb-2"><i class="fas fa-money-bill-wave mr-1"></i>Supplier &amp; Payment</h3>
+          <h3 class="text-sm font-semibold text-green-900 mb-2"><i class="fas fa-money-bill-wave mr-1"></i>Payment</h3>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Supplier (link to client)</label>
-              <select id="rs-supplier" class="input-field" onchange="App._rsSupplierChange(${id})">
-                <option value="">-- None / Manual --</option>
-                ${supplierOpts}
-              </select>
-              <p id="rs-rate-hint" class="text-xs text-green-700 mt-1" style="display:none;"><i class="fas fa-tags mr-1"></i><span></span></p></div>
-            <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Supplier Name (manual, if not linked)</label>
-              <input id="rs-supname" type="text" class="input-field" value=""></div>
             <div><label class="block text-sm font-medium mb-1">Amount Paid Now (PKR)</label>
-              <input id="rs-paid" type="number" step="any" min="0" class="input-field" value="0" oninput="App._calcRestockPreview(${id})"></div>
+              <input id="rs-paid" type="number" step="any" min="0" class="input-field" value="0" oninput="App._rsCalc()"></div>
             <div><label class="block text-sm font-medium mb-1">Remaining (Owed)</label>
               <div id="rs-remaining" class="input-field" style="background:#fef2f2; font-weight:bold; color:#b91c1c;">PKR 0.00</div></div>
-            <div class="md:col-span-2">${this.bankSelectHtml('rs-bank', '', true, 'Pay from Bank/Cash')}
-              <p class="text-xs text-red-600 mt-1"><i class="fas fa-money-bill-transfer mr-1"></i>Only the <strong>Amount Paid Now</strong> is subtracted from the selected account.</p></div>
+            <div class="md:col-span-2">${this.bankSelectHtml('rs-bank', '', true, 'Paid From — Bank / Cash')}
+              <p class="text-xs text-red-600 mt-1"><i class="fas fa-money-bill-transfer mr-1"></i>Sirf <strong>Amount Paid Now</strong> account se minus hoga.</p></div>
           </div>
-          <p class="text-xs text-gray-600 mt-2"><i class="fas fa-info-circle mr-1"></i>Remaining balance will auto-appear on the supplier's ledger as money you owe them.</p>
+          <p class="text-xs text-gray-600 mt-2"><i class="fas fa-info-circle mr-1"></i>Baqaya (Remaining) supplier ke ledger me "humara dena" ke tor par khud add ho jayega.</p>
         </div>
 
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Notes</label>
           <textarea id="rs-notes" class="input-field" rows="2"></textarea></div>
 
         <div class="md:col-span-2 p-3 bg-blue-50 border border-blue-200 rounded text-sm" id="rs-preview">
-          New stock will be calculated after you enter quantity.
+          Quantity enter karne par naya stock yahan dikhega.
         </div>
         <div class="md:col-span-2 flex gap-2 justify-end pt-2 border-t">
           <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
           <button type="submit" class="btn btn-success"><i class="fas fa-plus"></i> Add Stock</button>
         </div>
       </form>`, 'modal-lg');
-    this._calcRestockPreview(id);
+
+    // If a product was preset, run the product-change hook so stock preview shows.
+    if (presetId) this._rsOnProductChange();
+    this._rsCalc();
+
     document.getElementById('restock-form').addEventListener('submit', async (e) => {
       e.preventDefault();
+      const productEl = document.getElementById('rs-product');
+      const supEl = document.getElementById('rs-supplier');
+      const rawId = productEl.value ? parseInt(productEl.value) : null;
+      const supId = supEl.value ? parseInt(supEl.value) : null;
       const qty = parseFloat(document.getElementById('rs-qty').value) || 0;
       const rate = parseFloat(document.getElementById('rs-rate').value) || 0;
       const paid = parseFloat(document.getElementById('rs-paid').value) || 0;
+      if (!rawId) { this.toast('Product select karein', 'error'); return; }
+      if (!supId) { this.toast('Supplier select karein', 'error'); return; }
       if (qty <= 0) { this.toast('Quantity must be > 0', 'error'); return; }
       const payload = {
         quantity: qty,
         rate,
         paid_amount: paid,
-        supplier_id: document.getElementById('rs-supplier').value ? parseInt(document.getElementById('rs-supplier').value) : null,
-        supplier_name: document.getElementById('rs-supname').value || '',
+        supplier_id: supId,
+        supplier_name: supEl.options[supEl.selectedIndex].text || '',
         entry_date: document.getElementById('rs-date').value,
         notes: document.getElementById('rs-notes').value || '',
         bank_account_id: (document.getElementById('rs-bank')?.value || null)
       };
       try {
-        await this.api.post(`/api/raw-materials/${id}/restock`, payload);
-        // Remember this supplier's buy-rate for this raw material so it auto-fills next time.
-        if (payload.supplier_id) {
-          try { await this.api.post(`/api/clients/${payload.supplier_id}/supplier-rates`, { item_type: 'raw', item_id: id, rate }); } catch (e) {}
-        }
+        await this.api.post(`/api/raw-materials/${rawId}/restock`, payload);
+        // Remember this supplier's buy-rate for this product so it auto-fills next time.
+        try { await this.api.post(`/api/clients/${supId}/supplier-rates`, { item_type: 'raw', item_id: rawId, rate }); } catch (e) {}
         this.closeModal();
         await this.showRawMaterials();
         this.toast('Stock added', 'success');
@@ -3870,38 +3851,47 @@ const App = {
     });
   },
 
-  // When a supplier is linked in the raw-material restock, auto-fill the batch
-  // rate from that supplier's saved buy-rate for this material (request #5).
-  async _rsSupplierChange(rawId) {
-    const sel = document.getElementById('rs-supplier');
+  // Product changed → refresh the stock preview. If a supplier is already
+  // picked, re-apply its buy-rate for the new product.
+  _rsOnProductChange() {
+    this._rsCalc();
+    const supEl = document.getElementById('rs-supplier');
+    if (supEl && supEl.value) this._rsOnSupplierChange();
+  },
+
+  // Supplier changed → auto-fill the rate from THIS supplier's saved buy-rate
+  // for the selected product (request: supplier profile rate auto-applies).
+  async _rsOnSupplierChange() {
+    const prodEl = document.getElementById('rs-product');
+    const supEl = document.getElementById('rs-supplier');
     const hint = document.getElementById('rs-rate-hint');
-    const supId = sel ? parseInt(sel.value) : 0;
-    if (!supId) { if (hint) hint.style.display = 'none'; return; }
+    const rawId = prodEl && prodEl.value ? parseInt(prodEl.value) : 0;
+    const supId = supEl && supEl.value ? parseInt(supEl.value) : 0;
+    if (hint) hint.style.display = 'none';
+    if (!supId || !rawId) return;
     try {
       const data = await this.api.get(`/api/clients/${supId}/supplier-rate-map`);
       const map = data.rateMap || {};
       const key = 'raw:' + rawId;
+      const rateEl = document.getElementById('rs-rate');
       if (map[key] != null) {
-        const rateEl = document.getElementById('rs-rate');
-        if (rateEl) { rateEl.value = map[key]; this._calcRestockPreview(rawId); }
-        if (hint) { hint.style.display = 'block'; const s = hint.querySelector('span'); if (s) s.textContent = `Is supplier ka saved buy-rate laga diya (PKR ${this.fmt(map[key])}). Zaroorat ho to edit karein.`; }
-      } else if (hint) {
-        hint.style.display = 'block'; const s = hint.querySelector('span'); if (s) s.textContent = 'Is supplier ka koi saved buy-rate nahi — rate manually likhein (save ho jayega).';
+        if (rateEl) rateEl.value = map[key];
+        if (hint) { hint.style.display = 'block'; hint.className = 'text-xs mt-1 text-green-700'; hint.innerHTML = `<i class="fas fa-tags mr-1"></i>Supplier ka saved rate laga diya: <strong>PKR ${this.fmt(map[key])}</strong>. Zaroorat ho to edit karein.`; }
+      } else {
+        if (hint) { hint.style.display = 'block'; hint.className = 'text-xs mt-1 text-amber-700'; hint.innerHTML = `<i class="fas fa-info-circle mr-1"></i>Is supplier ka is product ka koi saved rate nahi — rate likhein (save ho jayega, agli dafa auto aayega).`; }
       }
+      this._rsCalc();
     } catch (e) { if (hint) hint.style.display = 'none'; }
   },
 
-  _calcRestockPreview(id) {
-    const rm = this.state.rawMaterials.find(x => x.id === id);
-    if (!rm) return;
+  // Recalculate totals + new-stock preview for the restock modal.
+  _rsCalc() {
+    const prodEl = document.getElementById('rs-product');
+    const rawId = prodEl && prodEl.value ? parseInt(prodEl.value) : 0;
+    const rm = (this.state.rawMaterials || []).find(x => x.id === rawId);
     const addQty = parseFloat(document.getElementById('rs-qty')?.value) || 0;
     const addRate = parseFloat(document.getElementById('rs-rate')?.value) || 0;
     const paid = parseFloat(document.getElementById('rs-paid')?.value) || 0;
-    const oldQty = parseFloat(rm.quantity) || 0;
-    const oldRate = parseFloat(rm.rate) || 0;
-    const newQty = oldQty + addQty;
-    const newRate = newQty > 0 ? ((oldQty * oldRate) + (addQty * addRate)) / newQty : addRate;
-    const newTotal = newQty * newRate;
     const batchTotal = addQty * addRate;
     const remaining = Math.max(0, batchTotal - paid);
     const tot = document.getElementById('rs-total');
@@ -3909,14 +3899,19 @@ const App = {
     const rem = document.getElementById('rs-remaining');
     if (rem) rem.textContent = 'PKR ' + this.fmt(remaining);
     const el = document.getElementById('rs-preview');
-    if (el) {
-      el.innerHTML = `<div class="font-semibold mb-1 text-blue-800"><i class="fas fa-calculator mr-1"></i>After restock:</div>
-        <div class="grid grid-cols-3 gap-2 text-blue-900">
-          <div><span class="text-xs text-blue-600">New Stock</span><div class="font-bold">${this.fmt(newQty)} ${this.escapeHtml(rm.unit||'')}</div></div>
-          <div><span class="text-xs text-blue-600">Avg Rate</span><div class="font-bold">PKR ${this.fmt(newRate)}</div></div>
-          <div><span class="text-xs text-blue-600">Total Value</span><div class="font-bold">PKR ${this.fmt(newTotal)}</div></div>
-        </div>`;
-    }
+    if (!el) return;
+    if (!rm) { el.innerHTML = 'Pehle product select karein.'; return; }
+    const oldQty = parseFloat(rm.quantity) || 0;
+    const oldRate = parseFloat(rm.rate) || 0;
+    const newQty = oldQty + addQty;
+    const newRate = newQty > 0 ? ((oldQty * oldRate) + (addQty * addRate)) / newQty : addRate;
+    const newTotal = newQty * newRate;
+    el.innerHTML = `<div class="font-semibold mb-1 text-blue-800"><i class="fas fa-calculator mr-1"></i>After restock:</div>
+      <div class="grid grid-cols-3 gap-2 text-blue-900">
+        <div><span class="text-xs text-blue-600">New Stock</span><div class="font-bold">${this.fmt(newQty)} ${this.escapeHtml(rm.unit||'')}</div></div>
+        <div><span class="text-xs text-blue-600">Avg Rate</span><div class="font-bold">PKR ${this.fmt(newRate)}</div></div>
+        <div><span class="text-xs text-blue-600">Total Value</span><div class="font-bold">PKR ${this.fmt(newTotal)}</div></div>
+      </div>`;
   },
 
   _calcRawTotal() {
