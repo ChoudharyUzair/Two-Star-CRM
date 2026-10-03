@@ -6,7 +6,22 @@
 - **Goal**: Complete business CRM for Two Star Industries — manage clients, ledgers, inventory, raw materials, manufacturing recipes, employees, side expenses, and bills with auto Net Profit tracking.
 - **Stack**: Hono (TypeScript) + Cloudflare Pages + Cloudflare D1 (SQLite) + TailwindCSS + Vanilla JS frontend
 
-## What's New (latest update — 2026-10-02) — Barcode / Serial System + Raw Material UI Cleanup
+## What's New (latest update — 2026-10-03) — Pack Barcode Checkbox + Bulk Barcode Delete
+
+### ☑️ 1. Products Manufacturing → Pack entry: "Generate Barcode" checkbox
+- Pack stage ki entry (Log Product Production) me ab **Generate Barcode** checkbox hai (sirf Pack stage pe dikhta hai).
+- **Tick** → is entry ke har packed piece ka unique barcode banega.
+- **Untick** → is entry ke liye barcode generator koi barcode **NAHI** banayega.
+- Choice har pack log pe save hoti hai (`product_production_logs.generate_barcodes`, migration `0024`).
+- Edit me quantity badhao/ghatao → barcodes usi choice ke mutabiq sync hote hain. Edit me untick karo → us entry ke **In-Stock** barcodes hat jate hain (Sold wale safe rehte hain). Edit me tick karo → missing barcodes ban jate hain.
+- Naye entry ka default: Barcode Settings ki "auto on pack" setting.
+
+### 🗑️ 2. Barcodes / Serial Numbers → Bulk Delete
+- Checkboxes se barcodes select karo (ya header checkbox se sab) → bulk bar me **Delete Selected** button.
+- Confirm dialog me Sold barcodes ki warning bhi aati hai.
+- API: `POST /api/product-barcodes/bulk-delete` body `{ "ids": [1,2,3] }` → `{ success, deleted }`.
+
+## What's New (previous update — 2026-10-02) — Barcode / Serial System + Raw Material UI Cleanup
 
 > Owner (Muhammad Uzair) ki 2 new requests. Dono complete, test ho chuke, aur fully synced with the rest of the system.
 

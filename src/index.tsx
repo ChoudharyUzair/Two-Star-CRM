@@ -2015,6 +2015,13 @@ app.post('/api/product-production', requireAuth, async (c) => {
   const body = await c.req.json()
   const { entry_date, stage, product_id, employee_id, quantity, rate, deduct, notes } = body
   const qty = parseFloat(quantity) || 0
+  // Pack entry ka "Generate Barcode" checkbox. Agar frontend ne bheja hai to
+  // wohi follow hoga; purane clients ke liye global setting fallback hai.
+  let wantBarcodes = false
+  if (stage === 'pack') {
+    if (body.generate_barcodes === undefined || body.generate_barcodes === null) wantBarcodes = await barcodeAutoOnPack(c.env)
+    else wantBarcodes = body.generate_barcodes === true || body.generate_barcodes === 1 || body.generate_barcodes === '1' || body.generate_barcodes === 'true'
+  }
   const validStages = ['assemble', 'paint', 'pack']
   if (!product_id) return c.json({ error: 'Product required' }, 400)
   if (!validStages.includes(stage)) return c.json({ error: 'Invalid stage' }, 400)
@@ -2099,9 +2106,9 @@ app.post('/api/product-production', requireAuth, async (c) => {
 
   // Insert the log (we get id; pack stage records set-usage detail after)
   const insLog = await c.env.DB.prepare(
-    `INSERT INTO product_production_logs (entry_date, stage, product_id, product_name, employee_id, employee_name, quantity, rate, payout, deducted, notes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(dateStr, stage, product_id, product.name, employee_id || null, emp?.name || '', qty, r, payout, doDeduct, notes || '').run()
+    `INSERT INTO product_production_logs (entry_date, stage, product_id, product_name, employee_id, employee_name, quantity, rate, payout, deducted, notes, generate_barcodes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(dateStr, stage, product_id, product.name, employee_id || null, emp?.name || '', qty, r, payout, doDeduct, notes || '', wantBarcodes ? 1 : 0).run()
   const logId = insLog.meta.last_row_id as number
 
   if (stage === 'pack') {
@@ -2165,11 +2172,12 @@ app.post('/api/product-production', requireAuth, async (c) => {
        VALUES (?, ?, ?, 'production', ?, ?, ?, ?, ?, ?)`
     ).bind(invId, product.name, dateStr, qty, packRate, qty * packRate, emp?.name || '', notes ? `${whoNote} · ${notes}` : whoNote, logId).run()
 
-    // ---- Auto-generate UNIQUE barcodes for each packed unit (if enabled) ----
+    // ---- Generate UNIQUE barcodes for each packed unit ONLY if the
+    // "Generate Barcode" checkbox was ticked on this pack entry ----
     // One barcode per piece — can be printed and stuck on each box so the
     // product is verifiable + non-copyable by competitors.
     try {
-      if (await barcodeAutoOnPack(c.env)) {
+      if (wantBarcodes) {
         await generateBarcodesFor(c.env, {
           product_id: product.id, product_name: product.name,
           pack_log_id: logId, inventory_id: invId,
@@ -2223,6 +2231,11 @@ app.put('/api/product-production/:id', requireAuth, async (c) => {
   const payout = finalQty * newRate
   const qtyDelta = finalQty - oldQty
   const deducted = !!old.deducted
+  // Pack log barcode checkbox (edit me bhi change ho sakta hai)
+  let wantBarcodes = !!old.generate_barcodes
+  if (old.stage === 'pack' && body.generate_barcodes !== undefined && body.generate_barcodes !== null) {
+    wantBarcodes = body.generate_barcodes === true || body.generate_barcodes === 1 || body.generate_barcodes === '1' || body.generate_barcodes === 'true'
+  }
 
   const stmts: any[] = []
 
@@ -2337,8 +2350,8 @@ app.put('/api/product-production/:id', requireAuth, async (c) => {
     ).bind(newDate, id))
   }
 
-  stmts.push(c.env.DB.prepare('UPDATE product_production_logs SET entry_date=?, quantity=?, rate=?, payout=?, notes=? WHERE id=?')
-    .bind(newDate, finalQty, newRate, payout, newNotes, id))
+  stmts.push(c.env.DB.prepare('UPDATE product_production_logs SET entry_date=?, quantity=?, rate=?, payout=?, notes=?, generate_barcodes=? WHERE id=?')
+    .bind(newDate, finalQty, newRate, payout, newNotes, wantBarcodes ? 1 : 0, id))
   if (old.emp_tx_id) {
     stmts.push(c.env.DB.prepare('UPDATE employee_transactions SET entry_date=?, amount=?, quantity=?, rate=? WHERE id=?')
       .bind(newDate, payout, finalQty, newRate, old.emp_tx_id))
@@ -2354,17 +2367,17 @@ app.put('/api/product-production/:id', requireAuth, async (c) => {
     try {
       const bcCount = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM product_barcodes WHERE pack_log_id = ?').bind(id).first() as any
       const have = bcCount?.n || 0
-      const want = Math.floor(finalQty)
+      // Checkbox untick → is entry ke liye barcode nahi chahiye: in_stock wale hata do
+      // (sold / returned history wale barcodes kabhi delete nahi hote).
+      const want = wantBarcodes ? Math.floor(finalQty) : 0
       if (want > have) {
-        if (await barcodeAutoOnPack(c.env)) {
-          const inv = await c.env.DB.prepare('SELECT id FROM inventory WHERE name = ? COLLATE NOCASE').bind(old.product_name).first() as any
-          await generateBarcodesFor(c.env, {
-            product_id: old.product_id, product_name: old.product_name || '',
-            pack_log_id: id, inventory_id: inv?.id || null,
-            production_date: newDate, qty: want - have,
-            notes: 'Auto · pack log quantity increased'
-          })
-        }
+        const inv = await c.env.DB.prepare('SELECT id FROM inventory WHERE name = ? COLLATE NOCASE').bind(old.product_name).first() as any
+        await generateBarcodesFor(c.env, {
+          product_id: old.product_id, product_name: old.product_name || '',
+          pack_log_id: id, inventory_id: inv?.id || null,
+          production_date: newDate, qty: want - have,
+          notes: have === 0 ? 'Generated from pack entry (checkbox)' : 'Auto · pack log quantity increased'
+        })
       } else if (want < have) {
         const extra = have - want
         // Delete up to `extra` barcodes, newest-first, but ONLY in_stock ones.
@@ -4369,6 +4382,25 @@ app.post('/api/product-barcodes/mark-printed', requireAuth, async (c) => {
   const placeholders = ids.map(() => '?').join(',')
   await c.env.DB.prepare(`UPDATE product_barcodes SET printed = 1, updated_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`).bind(...ids).run()
   return c.json({ success: true, updated: ids.length })
+})
+
+// --- BULK delete barcodes (ids: number[]) ---
+// Chunked so we stay under D1's bound-parameter limit.
+app.post('/api/product-barcodes/bulk-delete', requireAuth, async (c) => {
+  const body = await c.req.json().catch(() => ({})) as any
+  const ids: number[] = Array.isArray(body.ids)
+    ? Array.from(new Set(body.ids.map((x: any) => parseInt(x)).filter((n: number) => Number.isFinite(n) && n > 0)))
+    : []
+  if (!ids.length) return c.json({ error: 'No barcodes selected' }, 400)
+  let deleted = 0
+  const CHUNK = 90
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const part = ids.slice(i, i + CHUNK)
+    const ph = part.map(() => '?').join(',')
+    const r = await c.env.DB.prepare(`DELETE FROM product_barcodes WHERE id IN (${ph})`).bind(...part).run()
+    deleted += (r.meta?.changes as number) || 0
+  }
+  return c.json({ success: true, deleted })
 })
 
 // --- Delete a barcode (void it instead if possible) ---

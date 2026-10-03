@@ -5018,6 +5018,13 @@ const App = {
         <div><label class="block text-sm font-medium mb-1">Per-Piece Rate (PKR) <span id="ppl-rate-src" class="text-xs font-normal text-purple-600"></span></label>
           <input id="ppl-rate" type="number" step="any" class="input-field" value="${log ? log.rate : 0}" oninput="App._onPProdRecalc()"></div>
         ${logId ? '' : `<div class="md:col-span-2 flex items-center"><label class="flex items-center gap-2 text-sm"><input id="ppl-deduct" type="checkbox" checked> Auto-deduct previous-stage stock / set items</label></div>`}
+        <div class="md:col-span-2 ${selStage === 'pack' ? '' : 'hidden'}" id="ppl-barcode-wrap">
+          <label class="flex items-start gap-2 text-sm bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2 cursor-pointer">
+            <input id="ppl-barcode" type="checkbox" class="mt-1" ${log ? (log.generate_barcodes ? 'checked' : '') : (this._barcodeState?.settings?.auto_on_pack === false ? '' : 'checked')}>
+            <span><i class="fas fa-barcode text-indigo-600 mr-1"></i><strong>Generate Barcode</strong> — har packed piece ka unique barcode banao
+              <span class="block text-xs text-gray-600">Tick = barcode chahiye (har piece ka alag serial banega). Untick = is entry ka barcode NAHI banega.${log ? ' Edit me untick karne se is entry ke In-Stock barcodes hat jayenge (sold wale safe rahenge).' : ''}</span></span>
+          </label>
+        </div>
         <div class="md:col-span-2" id="ppl-payout-box"></div>
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Notes</label>
           <input id="ppl-notes" type="text" class="input-field" value="${log ? this.escapeAttr(log.notes||'') : ''}"></div>
@@ -5043,13 +5050,15 @@ const App = {
       const notes = document.getElementById('ppl-notes').value;
       const deduct = logId ? undefined : document.getElementById('ppl-deduct').checked;
       const date = document.getElementById('ppl-date').value || today;
+      const bcEl = document.getElementById('ppl-barcode');
+      const generate_barcodes = stage === 'pack' ? !!(bcEl && bcEl.checked) : false;
       if (!prodId) { this.toast('Select a product', 'error'); return; }
       if (qty <= 0) { this.toast('Pieces must be greater than 0', 'error'); return; }
       try {
         if (logId) {
-          await this.api.put(`/api/product-production/${logId}`, { entry_date: date, quantity: qty, rate, notes });
+          await this.api.put(`/api/product-production/${logId}`, stage === 'pack' ? { entry_date: date, quantity: qty, rate, notes, generate_barcodes } : { entry_date: date, quantity: qty, rate, notes });
         } else {
-          const res = await this.api.post('/api/product-production', { entry_date: date, stage, employee_id: empId, product_id: prodId, quantity: qty, rate, deduct, notes });
+          const res = await this.api.post('/api/product-production', { entry_date: date, stage, employee_id: empId, product_id: prodId, quantity: qty, rate, deduct, notes, generate_barcodes });
           if (res.error) {
             let msg = res.error;
             if (res.shortages) msg += '\n' + res.shortages.join('\n');
@@ -5141,6 +5150,8 @@ const App = {
     if (!box) return;
     const prodId = parseInt(document.getElementById('ppl-prod')?.value) || null;
     const stage = document.getElementById('ppl-stage')?.value;
+    const bcWrap = document.getElementById('ppl-barcode-wrap');
+    if (bcWrap && !document.getElementById('ppl-stage-hidden')) bcWrap.classList.toggle('hidden', stage !== 'pack');
     const p = (this.state.products || []).find(x => x.id === prodId);
     if (!p || !stage) { box.innerHTML = ''; return; }
     let html = '';
@@ -8551,6 +8562,7 @@ const App = {
       <div id="bc-bulk-bar" class="bg-indigo-50 border border-indigo-200 rounded-xl p-3 flex items-center gap-2 ${selectedCount === 0 ? 'hidden' : ''}">
         <span class="text-sm font-semibold text-indigo-900"><i class="fas fa-check-square mr-1"></i><span id="bc-sel-count">${selectedCount}</span> selected</span>
         <button onclick="App.printSelectedBarcodes()" class="btn btn-primary btn-sm"><i class="fas fa-print"></i> Print Stickers</button>
+        <button onclick="App.bulkDeleteBarcodes()" class="btn btn-danger btn-sm"><i class="fas fa-trash"></i> Delete Selected</button>
         <button onclick="App._bcClearSelection()" class="btn btn-secondary btn-sm">Clear</button>
       </div>
 
@@ -8897,6 +8909,26 @@ const App = {
   _bcStatusToggleCustomer() {
     const v = document.getElementById('bs-status').value;
     document.getElementById('bs-cust-wrap').classList.toggle('hidden', v !== 'sold');
+  },
+
+  // Bulk delete — selected barcodes ek saath delete
+  async bulkDeleteBarcodes() {
+    const ids = Array.from(this._barcodeState.selected);
+    if (!ids.length) { this.toast('Pehle barcodes select karein', 'error'); return; }
+    const items = (this._barcodeState.list || []).filter(x => ids.includes(x.id));
+    const soldCount = items.filter(x => x.status === 'sold').length;
+    let msg = `${ids.length} barcode(s) permanently delete karne hain?`;
+    if (soldCount) msg += `\n\nWarning: ${soldCount} barcode(s) SOLD hain — delete karne ke baad customer ka product verify nahi hoga.`;
+    msg += '\n\nYe action wapas nahi ho sakta.';
+    if (!confirm(msg)) return;
+    try {
+      const res = await this.api.post('/api/product-barcodes/bulk-delete', { ids });
+      if (res && res.error) { this.toast(res.error, 'error'); return; }
+      this._barcodeState.selected.clear();
+      await this._loadBarcodeData();
+      this._renderBarcodePage();
+      this.toast(`${(res && res.deleted) || 0} barcode(s) deleted`, 'success');
+    } catch (e) { this.toast('Bulk delete failed', 'error'); }
   },
 
   async deleteBarcode(id) {
