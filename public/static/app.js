@@ -2885,6 +2885,30 @@ const App = {
     });
   },
 
+  // Supplier dropdowns ke liye SIRF asal suppliers (supplier folder walay
+  // clients) — customers kabhi na ayen. Backend /api/suppliers bhi ab yahi
+  // filter karta hai; ye helper un jagahon ki hifazat hai jahan allClients
+  // me saare clients bhare hon (masalan bill editor ke baad).
+  // keepId: jo supplier pehle se select hai (edit ke waqt) wo list me na ho
+  // tab bhi shamil rakho taake purani entry ki value ghayab na ho.
+  _supplierClients(keepId = null) {
+    const all = this.state.allClients || [];
+    const folders = this.state.folders || [];
+    const isSupFolder = (f) => f && (f.ledger_type === 'supplier' || f.section_type === 'suppliers' || /supplier/i.test(f.name || ''));
+    let list;
+    if (folders.length) {
+      const supIds = new Set(folders.filter(isSupFolder).map(f => f.id));
+      list = all.filter(c => (c.folder_id != null ? supIds.has(c.folder_id) : /supplier/i.test(c.folder_name || '')));
+    } else {
+      list = all.slice();
+    }
+    if (keepId != null && !list.some(c => String(c.id) === String(keepId))) {
+      const cur = all.find(c => String(c.id) === String(keepId));
+      if (cur) list = [...list, cur];
+    }
+    return list;
+  },
+
   async _movLoadSuppliers() {
     const sel = document.getElementById('m-supplier');
     if (!sel) return;
@@ -3452,7 +3476,7 @@ const App = {
     await this.loadBankAccounts();
     const p = (this.state.rawPurchases || []).find(x => x.id === pid);
     if (!p) return;
-    const suppliers = this.state.allClients || [];
+    const suppliers = this._supplierClients(p.supplier_id);
     const today = new Date().toISOString().slice(0, 10);
     this.openModal(`
       <h2 class="text-xl font-bold mb-3"><i class="fas fa-edit text-blue-500 mr-2"></i>Edit Purchase / Restock</h2>
@@ -3634,7 +3658,7 @@ const App = {
     await this.loadBankAccounts();
     const it = id ? this.state.rawMaterials.find(x => x.id === id) : { name:'', unit:'pcs', quantity:0, rate:0, supplier_id:null, supplier_name:'', category:'', notes:'' };
     if (id && !it) return;
-    const supplierOpts = this.state.allClients.map(c => `<option value="${c.id}" ${it.supplier_id == c.id ? 'selected' : ''}>${this.escapeHtml(c.name)} (${this.escapeHtml(c.folder_name || '')})</option>`).join('');
+    const supplierOpts = this._supplierClients(it.supplier_id).map(c => `<option value="${c.id}" ${it.supplier_id == c.id ? 'selected' : ''}>${this.escapeHtml(c.name)} (${this.escapeHtml(c.folder_name || '')})</option>`).join('');
 
     // EDIT mode: ALL-IN-ONE editor. One Action column button → one modal that
     // handles everything the user asked for:
@@ -3955,7 +3979,7 @@ const App = {
   async showRestock(presetId = null) {
     await this.loadBankAccounts();
     const materials = this.state.rawMaterials || [];
-    const suppliers = this.state.allClients || [];
+    const suppliers = this._supplierClients();
     if (materials.length === 0) { this.toast('Pehle koi raw material add karein', 'error'); return; }
     const today = new Date().toISOString().slice(0, 10);
 

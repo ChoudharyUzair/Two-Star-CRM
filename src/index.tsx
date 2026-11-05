@@ -311,10 +311,15 @@ app.get('/api/clients', requireAuth, async (c) => {
 
 // Suppliers list — clients in folders where section_type='clients' AND folder name suggests supplier or any folder
 app.get('/api/suppliers', requireAuth, async (c) => {
-  // Returns all clients (so user can pick any) but with folder info
+  // SIRF asal suppliers — yani un folders ke clients jin ka ledger_type
+  // 'supplier' hai (ya section/name se supplier pehchane jayen). Pehle ye
+  // endpoint SAARE clients bhej deta tha, is liye Restock ke Supplier
+  // dropdown me customers bhi nazar aate thay.
   const result = await c.env.DB.prepare(
-    `SELECT cl.id, cl.name, cl.phone, f.name as folder_name
-     FROM clients cl LEFT JOIN folders f ON f.id = cl.folder_id ORDER BY cl.name`
+    `SELECT cl.id, cl.name, cl.phone, cl.folder_id, f.name as folder_name
+     FROM clients cl JOIN folders f ON f.id = cl.folder_id
+     WHERE f.ledger_type = 'supplier' OR f.section_type = 'suppliers' OR LOWER(f.name) LIKE '%supplier%'
+     ORDER BY cl.name`
   ).all()
   return c.json({ suppliers: result.results })
 })
