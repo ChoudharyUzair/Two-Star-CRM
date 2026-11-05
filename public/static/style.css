@@ -198,6 +198,8 @@ body {
   position: sticky; top: 0;
   z-index: 5;
 }
+.ledger-table th.text-right { text-align: right; }
+.ledger-table th.text-center { text-align: center; }
 .ledger-table th .col-rename {
   margin-left: 4px;
   cursor: pointer;

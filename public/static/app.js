@@ -7778,24 +7778,15 @@ const App = {
       </div>
       <div class="p-4 md:p-6 space-y-5">
         <div class="bg-white rounded-xl shadow-sm p-4 space-y-3">
-          <div class="flex flex-wrap items-center gap-3">
-            <div class="relative" id="rep-filter-wrap">
-              <button type="button" class="btn btn-secondary" onclick="App.toggleReportFilter(event)"><i class="fas fa-filter"></i> Filter: <strong id="rep-filter-label">All Time</strong> <i class="fas fa-chevron-down text-xs"></i></button>
-              <div id="rep-filter-panel" class="hidden absolute left-0 mt-2 bg-white rounded-xl shadow-lg border p-4 z-30" style="width:330px;max-width:92vw;">
-                <p class="text-xs font-semibold text-gray-500 mb-2">QUICK RANGE</p>
-                <div class="grid grid-cols-2 gap-2 mb-3">
-                  ${[['all','All Time'],['today','Today'],['yesterday','Yesterday'],['week','Last 7 Days'],['last30','Last 30 Days'],['month','This Month'],['lastmonth','Last Month'],['year','This Year']].map(([v, l]) => `<button type="button" data-preset="${v}" onclick="App._applyReportPreset('${v}')" class="btn btn-sm btn-secondary w-full">${l}</button>`).join('')}
-                </div>
-                <p class="text-xs font-semibold text-gray-500 mb-2 border-t pt-3">CUSTOM RANGE</p>
-                <div class="grid grid-cols-2 gap-2 mb-3">
-                  <div><label class="block text-xs text-gray-500 mb-1">From Date</label><input id="rep-from" type="date" class="input-field"></div>
-                  <div><label class="block text-xs text-gray-500 mb-1">To Date</label><input id="rep-to" type="date" class="input-field"></div>
-                </div>
-                <div class="flex gap-2 justify-end">
-                  <button type="button" class="btn btn-secondary btn-sm" onclick="App.toggleReportFilter(event)">Cancel</button>
-                  <button type="button" class="btn btn-primary btn-sm" onclick="App._applyReportCustom()"><i class="fas fa-check"></i> Apply</button>
-                </div>
-              </div>
+          <div class="flex flex-wrap items-end gap-2">
+            <div><label class="block text-xs text-gray-500 mb-1"><i class="fas fa-filter mr-1"></i>Filter — Time Period</label>
+              <select id="rep-page-preset" class="input-field" style="width:auto" onchange="App._onPagePreset(this.value)">
+                ${[['all','All Time'],['today','Today'],['yesterday','Yesterday'],['week','Last 7 Days'],['last30','Last 30 Days'],['month','This Month'],['lastmonth','Last Month'],['year','This Year'],['custom','Custom Range']].map(([v, l]) => `<option value="${v}" ${(this._reportFilter && this._reportFilter.preset === v) ? 'selected' : ''}>${l}</option>`).join('')}
+              </select></div>
+            <div id="rep-page-custom" style="display:${(this._reportFilter && this._reportFilter.preset === 'custom') ? 'flex' : 'none'};gap:.5rem;flex-wrap:wrap;align-items:flex-end;">
+              <div><label class="block text-xs text-gray-500 mb-1">From Date</label><input id="rep-from" type="date" class="input-field" value="${(this._reportFilter && this._reportFilter.from) || ''}"></div>
+              <div><label class="block text-xs text-gray-500 mb-1">To Date</label><input id="rep-to" type="date" class="input-field" value="${(this._reportFilter && this._reportFilter.to) || ''}"></div>
+              <button type="button" class="btn btn-primary btn-sm" onclick="App._applyPageCustom()"><i class="fas fa-check"></i> Apply</button>
             </div>
           </div>
           <div class="flex gap-2 flex-wrap border-t pt-3">
@@ -7826,64 +7817,30 @@ const App = {
     }
   },
 
-  _reportPresetNames: { all: 'All Time', today: 'Today', yesterday: 'Yesterday', week: 'Last 7 Days', last30: 'Last 30 Days', month: 'This Month', lastmonth: 'Last Month', year: 'This Year', custom: 'Custom' },
-
-  _reportFilterLabel() {
-    const f = this._reportFilter || { preset: 'all', from: '', to: '' };
-    if (f.preset === 'custom') return `${f.from || '...'} → ${f.to || '...'}`;
-    return this._reportPresetNames[f.preset] || 'All Time';
-  },
-
-  _paintReportFilter() {
-    const lbl = document.getElementById('rep-filter-label');
-    if (lbl) lbl.textContent = this._reportFilterLabel();
-    const f = document.getElementById('rep-from'); const t = document.getElementById('rep-to');
-    if (f) f.value = this._reportFilter.from || '';
-    if (t) t.value = this._reportFilter.to || '';
-    document.querySelectorAll('#rep-filter-panel [data-preset]').forEach(b => {
-      const active = b.getAttribute('data-preset') === this._reportFilter.preset;
-      b.classList.toggle('btn-primary', active);
-      b.classList.toggle('btn-secondary', !active);
-    });
-  },
-
-  toggleReportFilter(ev) {
-    if (ev) ev.stopPropagation();
-    const panel = document.getElementById('rep-filter-panel');
-    if (!panel) return;
-    const willOpen = panel.classList.contains('hidden');
-    panel.classList.toggle('hidden');
-    if (willOpen) {
-      this._paintReportFilter();
-      if (!this._repFilterDocBound) {
-        this._repFilterDocBound = true;
-        document.addEventListener('click', (e) => {
-          const wrap = document.getElementById('rep-filter-wrap');
-          const pn = document.getElementById('rep-filter-panel');
-          if (wrap && pn && !wrap.contains(e.target)) pn.classList.add('hidden');
-        });
-      }
+  _onPagePreset(v) {
+    if (v === 'custom') {
+      const row = document.getElementById('rep-page-custom');
+      if (row) row.style.display = 'flex';
+      return;
     }
-  },
-
-  _closeReportFilter() { const pn = document.getElementById('rep-filter-panel'); if (pn) pn.classList.add('hidden'); },
-
-  _applyReportPreset(preset) {
-    const r = this._reportRangeFor(preset);
-    this._reportFilter = { preset, from: r.from, to: r.to };
-    this._paintReportFilter();
-    this._closeReportFilter();
+    const r = this._reportRangeFor(v);
+    this._reportFilter = { preset: v, from: r.from, to: r.to };
     this.loadReport();
   },
 
-  _applyReportCustom() {
+  _applyPageCustom() {
     const from = document.getElementById('rep-from')?.value || '';
     const to = document.getElementById('rep-to')?.value || '';
     this._reportFilter = { preset: 'custom', from, to };
-    this._paintReportFilter();
-    this._closeReportFilter();
     this.loadReport();
   },
+
+  _reportPresetNames: { all: 'All Time', today: 'Today', yesterday: 'Yesterday', week: 'Last 7 Days', last30: 'Last 30 Days', month: 'This Month', lastmonth: 'Last Month', year: 'This Year', custom: 'Custom' },
+
+
+
+
+
 
   _reportRangeLabel(from, to) {
     if (!from && !to) return 'All Time (shuru se aaj tak)';
@@ -7926,7 +7883,7 @@ const App = {
         <span class="text-xs text-gray-500">${note || ''}</span>
       </div>
       <div class="overflow-x-auto"><table class="ledger-table">
-        <thead><tr>${headers.map(h => `<th class="${h.r ? 'text-right' : ''}">${h.t}</th>`).join('')}</tr></thead>
+        <thead><tr>${headers.map(h => `<th class="${h.r ? 'text-right' : h.c ? 'text-center' : ''}">${h.t}</th>`).join('')}</tr></thead>
         <tbody>${rowsHtml || `<tr><td colspan="${headers.length}" class="text-center py-8 text-gray-500">${emptyMsg}</td></tr>`}</tbody>
       </table></div></div>`;
   },
@@ -7959,7 +7916,7 @@ const App = {
       ${this._reportStat('Outstanding (Baqaya)', 'PKR ' + this.fmt(tDue), 'amount-pending')}
     </div>`;
     html += this._reportCard('Customers — Khareed Record', 'fa-users', `Period: ${this._reportRangeLabel(from, to)}`,
-      [{t:'#'},{t:'Customer'},{t:'Bills',r:1},{t:'Items Qty',r:1},{t:'Total Amount',r:1},{t:'Paid',r:1},{t:'Due',r:1},{t:'Detail'}], rows, 'Is period me koi bill nahi bana.');
+      [{t:'#'},{t:'Customer'},{t:'Bills',r:1},{t:'Items Qty',r:1},{t:'Total Amount',r:1},{t:'Paid',r:1},{t:'Due',r:1},{t:'Detail',c:1}], rows, 'Is period me koi bill nahi bana.');
     this._reportPdf = { title: 'Customer Purchase Report', subtitle: this._reportRangeLabel(from, to), headers: ['#', 'Customer', 'Bills', 'Items Qty', 'Total Amount', 'Paid', 'Due'],
       rows: cs.map((x, i) => [i + 1, x.customer_name, x.bills, this.fmt(x.total_qty), this.fmt(x.total_amount), this.fmt(x.total_paid), this.fmt(x.due)]),
       totals: ['', 'TOTAL', cs.reduce((s, x) => s + x.bills, 0), this.fmt(tQty), this.fmt(tAmt), this.fmt(tPaid), this.fmt(tDue)] };
@@ -7990,7 +7947,7 @@ const App = {
       ${this._reportStat('Total Payout', 'PKR ' + this.fmt(tPay), 'amount-received')}
     </div>`;
     html += this._reportCard('Employees — Production Record', 'fa-user-tie', `Period: ${this._reportRangeLabel(from, to)}`,
-      [{t:'#'},{t:'Employee'},{t:'Entries',r:1},{t:'Good Pieces',r:1},{t:'Total Pieces',r:1},{t:'Scrap',r:1},{t:'Payout',r:1},{t:'Detail'}], rows, 'Is period me koi production entry nahi.');
+      [{t:'#'},{t:'Employee'},{t:'Entries',r:1},{t:'Good Pieces',r:1},{t:'Total Pieces',r:1},{t:'Scrap',r:1},{t:'Payout',r:1},{t:'Detail',c:1}], rows, 'Is period me koi production entry nahi.');
     this._reportPdf = { title: 'Employee Production Report', subtitle: this._reportRangeLabel(from, to), headers: ['#', 'Employee', 'Entries', 'Good Pieces', 'Total Pieces', 'Scrap', 'Payout (PKR)'],
       rows: es.map((x, i) => [i + 1, x.employee_name, x.entries, this.fmt(x.good_pieces), this.fmt(x.total_pieces), this.fmt(x.scrap), this.fmt(x.payout)]),
       totals: ['', 'TOTAL', es.reduce((s, x) => s + x.entries, 0), this.fmt(tPieces), this.fmt(tTotal), this.fmt(tScrap), this.fmt(tPay)] };
@@ -8020,7 +7977,7 @@ const App = {
       ${this._reportStat('Dena Baqi', 'PKR ' + this.fmt(tRem), 'amount-pending')}
     </div>`;
     html += this._reportCard('Suppliers — Khareed Record', 'fa-truck', `Period: ${this._reportRangeLabel(from, to)}`,
-      [{t:'#'},{t:'Supplier'},{t:'Purchases',r:1},{t:'Qty',r:1},{t:'Total Amount',r:1},{t:'Paid',r:1},{t:'Remaining',r:1},{t:'Detail'}], rows, 'Is period me koi purchase nahi.');
+      [{t:'#'},{t:'Supplier'},{t:'Purchases',r:1},{t:'Qty',r:1},{t:'Total Amount',r:1},{t:'Paid',r:1},{t:'Remaining',r:1},{t:'Detail',c:1}], rows, 'Is period me koi purchase nahi.');
     this._reportPdf = { title: 'Supplier Purchase Report', subtitle: this._reportRangeLabel(from, to), headers: ['#', 'Supplier', 'Purchases', 'Qty', 'Total Amount', 'Paid', 'Remaining'],
       rows: ss.map((x, i) => [i + 1, x.supplier_name, x.purchases, this.fmt(x.total_qty), this.fmt(x.total_amount), this.fmt(x.total_paid), this.fmt(x.remaining)]),
       totals: ['', 'TOTAL', ss.reduce((s, x) => s + x.purchases, 0), '', this.fmt(tAmt), this.fmt(tPaid), this.fmt(tRem)] };
@@ -8170,7 +8127,7 @@ const App = {
       </div>
       <div class="bg-white rounded-xl border overflow-hidden mb-4">
         <div class="overflow-x-auto"><table class="ledger-table">
-          <thead><tr>${headers.map(h => `<th class="${h.r ? 'text-right' : ''}">${h.t}</th>`).join('')}</tr></thead>
+          <thead><tr>${headers.map(h => `<th class="${h.r ? 'text-right' : h.c ? 'text-center' : ''}">${h.t}</th>`).join('')}</tr></thead>
           <tbody>${rowsHtml || `<tr><td colspan="${headers.length}" class="text-center py-6 text-gray-500">Is period me koi detail nahi.</td></tr>`}</tbody>
         </table></div>
       </div>

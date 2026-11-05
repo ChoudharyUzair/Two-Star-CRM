@@ -76,6 +76,10 @@ Har kisi ke proper records, table ki surat me, **date filter** (All Time / Today
 - Period badalte hi **usi shakhs ka record usi naye period ke liye dobara load** ho jata hai — popup band karke page wala filter badalne ki zaroorat nahi. Peeche wali summary table apni jagah rehti hai (page ka filter alag hai).
 - Popup ki PDF bhi hamesha wohi period deti hai jo popup me screen par dikh raha ho. Jis period me us shakhs ka koi record na ho, wahan popup khali (zero) record ke saath khula rehta hai taake aap doosra period chun saken.
 
+### 📐 15. Table alignment fix + Filter button ki jagah dropdown
+- **Alignment ka asal bug:** reports tables me numeric columns ke **headers left** reh jate thay aur values right — dono alag jagah dikhte thay. Wajah: `style.css` ki `.ledger-table th { text-align: left }` rule Tailwind ki `text-right` class se zyada strong thi (aur baad me load hoti thi), is liye header par right-align lagta hi nahi tha. Ab `.ledger-table th.text-right` / `th.text-center` ki explicit rules add hain — **poore CRM ki har ledger-table** (Reports, Bills, Ledger waghera) ke headers ab apne column ki values ke bilkul seedh me aate hain. Reports ke "Detail" headers bhi ab center hain, eye buttons ke seedh me.
+- **Filter button khatam:** Reports page par "Filter: All Time" wala button + us ka dropdown panel remove kar diya gaya hai. Us ki jagah ab **popup wala hi saaf dropdown select** hai ("Filter — Time Period"): All Time / Today / Yesterday / Last 7 Days / Last 30 Days / This Month / Last Month / This Year / Custom Range (From-To + Apply). Select karte hi report usi period ki load ho jati hai.
+
 ### ⚡ 7. Speed fix
 - **Tailwind Play CDN hata diya** — wo browser me har load par poori CSS runtime par generate karta tha (slowness ki sab se bari wajah). Ab pehle se compiled static `public/static/tailwind.css` (24 KB) aati hai. Build: `npm run build` me `build:css` shamil hai; nayi Tailwind class use karo to build dobara chalana hoga.
 - **Heavy libraries lazy-load:** jsPDF, html2canvas, JsBarcode, html5-qrcode (~1 MB JS) ab pehle page load par NAHI aatein — sirf PDF / barcode / scanner kholne par pehli dafa load hoti hain.
