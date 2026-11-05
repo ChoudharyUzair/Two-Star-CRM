@@ -7778,18 +7778,7 @@ const App = {
       </div>
       <div class="p-4 md:p-6 space-y-5">
         <div class="bg-white rounded-xl shadow-sm p-4 space-y-3">
-          <div class="flex flex-wrap items-end gap-2">
-            <div><label class="block text-xs text-gray-500 mb-1"><i class="fas fa-filter mr-1"></i>Filter — Time Period</label>
-              <select id="rep-page-preset" class="input-field" style="width:auto" onchange="App._onPagePreset(this.value)">
-                ${[['all','All Time'],['today','Today'],['yesterday','Yesterday'],['week','Last 7 Days'],['last30','Last 30 Days'],['month','This Month'],['lastmonth','Last Month'],['year','This Year'],['custom','Custom Range']].map(([v, l]) => `<option value="${v}" ${(this._reportFilter && this._reportFilter.preset === v) ? 'selected' : ''}>${l}</option>`).join('')}
-              </select></div>
-            <div id="rep-page-custom" style="display:${(this._reportFilter && this._reportFilter.preset === 'custom') ? 'flex' : 'none'};gap:.5rem;flex-wrap:wrap;align-items:flex-end;">
-              <div><label class="block text-xs text-gray-500 mb-1">From Date</label><input id="rep-from" type="date" class="input-field" value="${(this._reportFilter && this._reportFilter.from) || ''}"></div>
-              <div><label class="block text-xs text-gray-500 mb-1">To Date</label><input id="rep-to" type="date" class="input-field" value="${(this._reportFilter && this._reportFilter.to) || ''}"></div>
-              <button type="button" class="btn btn-primary btn-sm" onclick="App._applyPageCustom()"><i class="fas fa-check"></i> Apply</button>
-            </div>
-          </div>
-          <div class="flex gap-2 flex-wrap border-t pt-3">
+          <div class="flex gap-2 flex-wrap">
             ${[['customers','fa-users','Customers — Khareed'],['employees','fa-user-tie','Employees — Production'],['suppliers','fa-truck','Suppliers — Khareed'],['stock','fa-boxes','Stock Report']].map(([t,ic,lbl]) => `
               <button onclick="App.showReports('${t}')" class="btn btn-sm ${this._reportTab === t ? 'btn-primary' : 'btn-secondary'}"><i class="fas ${ic}"></i> ${lbl}</button>`).join('')}
           </div>
@@ -7817,23 +7806,7 @@ const App = {
     }
   },
 
-  _onPagePreset(v) {
-    if (v === 'custom') {
-      const row = document.getElementById('rep-page-custom');
-      if (row) row.style.display = 'flex';
-      return;
-    }
-    const r = this._reportRangeFor(v);
-    this._reportFilter = { preset: v, from: r.from, to: r.to };
-    this.loadReport();
-  },
 
-  _applyPageCustom() {
-    const from = document.getElementById('rep-from')?.value || '';
-    const to = document.getElementById('rep-to')?.value || '';
-    this._reportFilter = { preset: 'custom', from, to };
-    this.loadReport();
-  },
 
   _reportPresetNames: { all: 'All Time', today: 'Today', yesterday: 'Yesterday', week: 'Last 7 Days', last30: 'Last 30 Days', month: 'This Month', lastmonth: 'Last Month', year: 'This Year', custom: 'Custom' },
 
