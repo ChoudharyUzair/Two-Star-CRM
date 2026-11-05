@@ -138,6 +138,88 @@ const App = {
     setTimeout(() => el.remove(), 2700);
   },
 
+  // ===== SPEED FIX: heavy libraries LAZY load hoti hain =====
+  // Pehle jsPDF + html2canvas + JsBarcode + html5-qrcode (kul ~1 MB JS) HAR page
+  // load par download + parse hoti theen — halanke ye sirf PDF / barcode /
+  // scanner kholne par chahiye. Wahi app ki slowness ki sab se bari wajah thi.
+  // Ab ye pehli dafa ZAROORAT parne par load hoti hain, phir cached rehti hain.
+  _scriptPromises: {},
+  _loadScript(src) {
+    if (this._scriptPromises[src]) return this._scriptPromises[src];
+    this._scriptPromises[src] = new Promise((resolve) => {
+      const el = document.createElement('script');
+      el.src = src; el.async = true;
+      el.onload = () => resolve(true);
+      el.onerror = () => resolve(false);
+      document.head.appendChild(el);
+    });
+    return this._scriptPromises[src];
+  },
+  async _ensurePdfLibs() {
+    if ((window.jspdf || window.jsPDF) && window.html2canvas) return true;
+    await this._loadScript('https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js');
+    await this._loadScript('https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js');
+    return !!((window.jspdf || window.jsPDF) && window.html2canvas);
+  },
+  async _ensureJsBarcode() {
+    if (window.JsBarcode) return true;
+    await this._loadScript('https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js');
+    return !!window.JsBarcode;
+  },
+  async _ensureScannerLib() {
+    if (window.Html5Qrcode) return true;
+    await this._loadScript('https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js');
+    return !!window.Html5Qrcode;
+  },
+
+  // ===== WhatsApp Payment Reminder =====
+  // Customer ko us ke number par ready-made reminder message kholta hai.
+  // due = NET baqaya (opening + pending - received). Supplier ke liye ye use nahi hota.
+  sendPaymentReminder(phone, customerName, due, extraLine) {
+    const d = parseFloat(due) || 0;
+    if (d <= 0) { this.toast('Is customer ka koi baqaya nahi hai', 'info'); return; }
+    const num = this._waNumber(phone);
+    if (!num) { this.toast('Is customer ka WhatsApp number save nahi hai — pehle Edit karke phone add karein', 'error'); return; }
+    const b = this.state.branding || {};
+    const company = b.company_name || 'Two Star Industries';
+    const lines = [
+      `Assalam-o-Alaikum ${customerName || ''}!`,
+      ``,
+      `Ye *${company}* ki taraf se payment reminder hai.`,
+      `Aap ka total baqaya: *PKR ${this.fmt(d)}* hai.`,
+      extraLine || '',
+      `Meherbani karke apni payment jald az jald clear kar dein. JazakAllah!`,
+      b.bill_phone ? `Rabta: ${b.bill_phone}` : ''
+    ].filter(x => x !== '');
+    window.open(`https://wa.me/${num}?text=${encodeURIComponent(lines.join('\n'))}`, '_blank');
+  },
+
+  // Ledger page ke liye: current client ka due khud calculate karke reminder.
+  remindCurrentClient() {
+    const c = this.state.currentClient;
+    if (!c) return;
+    const opening = parseFloat(c.opening_balance) || 0;
+    let rec = 0, pen = 0;
+    (this.state.transactions || []).forEach(t => { rec += parseFloat(t.amount_received) || 0; pen += parseFloat(t.amount_pending) || 0; });
+    const due = opening + pen - rec;
+    this.sendPaymentReminder(c.phone, c.name, due);
+  },
+
+  // Dashboard / lists ke liye: data fetch karke due nikaal kar reminder.
+  async remindClientById(clientId) {
+    try {
+      const [cdata, tdata] = await Promise.all([
+        this.api.get(`/api/clients/${clientId}`),
+        this.api.get(`/api/clients/${clientId}/transactions`)
+      ]);
+      const c = cdata.client || {};
+      const opening = parseFloat(c.opening_balance) || 0;
+      let rec = 0, pen = 0;
+      (tdata.transactions || []).forEach(t => { rec += parseFloat(t.amount_received) || 0; pen += parseFloat(t.amount_pending) || 0; });
+      this.sendPaymentReminder(c.phone, c.name, opening + pen - rec);
+    } catch (e) { this.toast('Reminder nahi khul saka', 'error'); }
+  },
+
   async init() {
     try {
       const bData = await this.api.get('/api/branding');
@@ -670,6 +752,7 @@ const App = {
                     <h3 class="font-bold text-gray-800 text-lg truncate">${this.escapeHtml(c.name)}</h3>
                     ${c.phone ? `<p class="text-sm text-gray-500 mt-1"><i class="fas fa-phone mr-1"></i>${this.escapeHtml(c.phone)}</p>` : ''}
                     <p class="text-xs text-gray-500 mt-2">Due: <span class="amount-running font-bold">PKR ${this.fmt(due)}</span></p>
+                    ${due > 0 && c.phone && folder.ledger_type !== 'supplier' ? `<button class="btn btn-sm mt-2" style="background:#25d366; color:#fff;" onclick="event.stopPropagation(); App.remindClientById(${c.id})" title="WhatsApp payment reminder bhejein"><i class="fab fa-whatsapp"></i> Reminder</button>` : ''}
                   </div>
                   <i class="fas fa-arrow-right text-blue-500 ml-2"></i>
                 </div>
@@ -808,6 +891,7 @@ const App = {
           ${isSupplier
             ? `<button onclick="App.showSupplierRates()" class="btn btn-primary btn-sm" title="Is supplier se items kis rate par lete hain — buy rate set karein"><i class="fas fa-tags"></i> Product Rates</button>`
             : `<button onclick="App.showCustomerRates()" class="btn btn-primary btn-sm" title="Is customer ke liye products ke special selling rate set karein"><i class="fas fa-tags"></i> Product Rates</button>`}
+          ${!isSupplier && netBalance > 0 ? `<button onclick="App.remindCurrentClient()" class="btn btn-sm" style="background:#25d366; color:#fff;" title="Customer ko WhatsApp par payment reminder bhejein (baqaya: PKR ${this.fmt(netBalance)})"><i class="fab fa-whatsapp"></i> Payment Reminder</button>` : ''}
           <button onclick="App.showLedgerPdfModal()" class="btn btn-success btn-sm" title="Customer ko ledger PDF form mein bhejein"><i class="fas fa-file-pdf"></i> Send PDF</button>
           <button onclick="App.showEditClient()" class="btn btn-secondary btn-sm"><i class="fas fa-edit"></i> Edit</button>
           <button onclick="App.showCustomColumns()" class="btn btn-secondary btn-sm"><i class="fas fa-columns"></i> Columns</button>
@@ -1175,6 +1259,7 @@ const App = {
   async _buildLedgerPDF(limitCount) {
     const c = this.state.currentClient;
     if (!c) return null;
+    if (!(await this._ensurePdfLibs())) { this.toast('PDF library load nahi hui — net check karke dobara try karein', 'error'); return null; }
     const jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
     if (!jsPDFCtor || !window.html2canvas) { this.toast('PDF library load nahi hui — page refresh karein', 'error'); return null; }
     const b = this.state.branding || {};
@@ -1960,6 +2045,24 @@ const App = {
             </div>
           </div>
         </section>
+
+        ${(topPending && topPending.length > 0) ? `
+        <!-- ============ PAYMENT REMINDERS (WhatsApp) ============ -->
+        <section id="dash-reminders" class="bg-white rounded-xl shadow-sm p-5">
+          <h2 class="dash-card-title"><span><i class="fab fa-whatsapp text-green-500 mr-2"></i>Payment Reminders — Sab Se Zyada Baqaya</span></h2>
+          <p class="text-xs text-gray-500 mb-3">Ye customers ka NET baqaya sab se zyada hai. <strong>Reminder</strong> dabate hi WhatsApp par ready-made message khul jayega — bas Send karna hai.</p>
+          <div class="space-y-2">
+            ${(topPending || []).map(cl => `
+              <div class="flex items-center justify-between gap-2 border rounded-lg px-3 py-2">
+                <div class="min-w-0">
+                  <a href="#" onclick="App.openClient(${cl.id}); return false;" class="font-semibold text-blue-700 hover:underline">${this.escapeHtml(cl.name || '')}</a>
+                  <span class="text-xs text-gray-400 ml-2">${this.escapeHtml(cl.folder_name || '')}</span>
+                  <div class="text-xs text-gray-500">Baqaya: <strong class="text-red-600">PKR ${this.fmt(cl.net_due)}</strong>${cl.phone ? '' : ' · <span class="text-amber-600">phone save nahi hai</span>'}</div>
+                </div>
+                ${cl.phone ? `<button class="btn btn-sm" style="background:#25d366; color:#fff; white-space:nowrap;" onclick="App.remindClientById(${cl.id})"><i class="fab fa-whatsapp"></i> Reminder</button>` : `<button class="btn btn-secondary btn-sm" onclick="App.openClient(${cl.id})">Phone Add Karein</button>`}
+              </div>`).join('')}
+          </div>
+        </section>` : ''}
 
         <!-- ============ SECTION 2: PROFIT OVERVIEW (Gross → costs → Net) ============ -->
         <section id="dash-profit" class="bg-white rounded-xl shadow-sm p-5">
@@ -3318,7 +3421,7 @@ const App = {
                   const lowStock = (parseFloat(it.quantity) || 0) <= 5;
                   return `<tr>
                     <td class="text-gray-500">${i + 1}</td>
-                    <td>${this.escapeHtml(it.name)}</td>
+                    <td>${this.escapeHtml(it.name)}${this._rawConv(it) ? `<div class="text-xs text-orange-600 font-semibold mt-1"><i class="fas fa-scale-balanced mr-1"></i>1 ${this.escapeHtml(it.purchase_unit)} = ${this.fmt(it.pieces_per_purchase_unit)} pcs (khareed ${this.escapeHtml(it.purchase_unit)} me, use pcs me)</div>` : ''}</td>
                     <td>${this.escapeHtml(it.unit || 'pcs')}</td>
                     <td class="${lowStock ? 'low-stock' : 'in-stock'}">${this.fmt(it.quantity)}</td>
                     <td>${this.fmt(it.rate)}</td>
@@ -3360,8 +3463,8 @@ const App = {
         <td class="text-gray-600">${this.escapeHtml(p.entry_date || '')}</td>
         <td class="font-medium">${this.escapeHtml(p.raw_name || '(deleted)')}</td>
         <td>${supLink}</td>
-        <td class="text-right text-green-600 font-semibold">+${this.fmt(p.quantity)} ${this.escapeHtml(p.raw_unit || '')}</td>
-        <td class="text-right">${this.fmt(p.rate)}</td>
+        <td class="text-right text-green-600 font-semibold">${p.input_quantity ? `+${this.fmt(p.input_quantity)} ${this.escapeHtml(p.input_unit || '')}<div class="text-xs text-gray-500 font-normal">= ${this.fmt(p.quantity)} ${this.escapeHtml(p.raw_unit || '')}</div>` : `+${this.fmt(p.quantity)} ${this.escapeHtml(p.raw_unit || '')}`}</td>
+        <td class="text-right">${p.input_rate ? `${this.fmt(p.input_rate)}/${this.escapeHtml(p.input_unit || '')}<div class="text-xs text-gray-500">${this.fmt(p.rate)}/pc</div>` : this.fmt(p.rate)}</td>
         <td class="text-right">PKR ${this.fmt(p.total_amount)}</td>
         <td class="text-right ${rem > 0 ? 'text-red-700 font-bold' : 'text-gray-400'}">PKR ${this.fmt(rem)}</td>
         <td class="text-center whitespace-nowrap">
@@ -3610,6 +3713,20 @@ const App = {
               <input id="r-cat" type="text" class="input-field" value="${this.escapeAttr(it.category || '')}"></div>
             <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Notes</label>
               <textarea id="r-notes" class="input-field" rows="2">${this.escapeHtml(it.notes || '')}</textarea></div>
+            <div class="md:col-span-2 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+              <h3 class="text-sm font-semibold text-orange-900 mb-1"><i class="fas fa-scale-balanced mr-1"></i>KG → Pieces Conversion</h3>
+              <p class="text-xs text-orange-800 mb-2">Agar ye cheez <strong>KG me aati hai lekin Pieces me use</strong> hoti hai, to yahan set kar dein. Phir Restock me sirf KG likhna hoga — pieces khud calculate ho jayenge. Khaali chhorne par conversion OFF rahega.</p>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div><label class="block text-sm font-medium mb-1">Purchase Unit (jis me aati hai)</label>
+                  <select id="r-punit" class="input-field">
+                    <option value="">— Conversion OFF —</option>
+                    ${['kg','gram','ton','litre','ml','meter','foot','inch','bag','roll','box'].map(u => `<option value="${u}" ${ (it.purchase_unit || '') === u ? 'selected' : ''}>${u}</option>`).join('')}
+                  </select></div>
+                <div><label class="block text-sm font-medium mb-1">1 Purchase Unit = Kitne Pieces?</label>
+                  <input id="r-ppu" type="number" step="any" min="0" class="input-field" value="${parseFloat(it.pieces_per_purchase_unit) || ''}" placeholder="e.g. 250"></div>
+              </div>
+              <p class="text-xs text-gray-500 mt-2">Note: Stock hamesha <strong>${this.escapeHtml(it.unit || 'pcs')}</strong> me rahega — Unit upar se 'pcs' hi rakhein.</p>
+            </div>
             <div class="md:col-span-2 flex gap-2 justify-end pt-2 border-t">
               <button type="button" class="btn btn-danger mr-auto" onclick="App.deleteRaw(${id})"><i class="fas fa-trash"></i> Delete Material</button>
               <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
@@ -3663,7 +3780,9 @@ const App = {
           name: document.getElementById('r-name').value,
           unit: document.getElementById('r-unit').value || 'pcs',
           category: document.getElementById('r-cat').value,
-          notes: document.getElementById('r-notes').value
+          notes: document.getElementById('r-notes').value,
+          purchase_unit: document.getElementById('r-punit')?.value || '',
+          pieces_per_purchase_unit: parseFloat(document.getElementById('r-ppu')?.value) || 0
         };
         try {
           await this.api.put(`/api/raw-materials/${id}`, payload);
@@ -3711,10 +3830,24 @@ const App = {
 
         <div><label class="block text-sm font-medium mb-1">Date</label>
           <input id="r-date" type="date" class="input-field" value="${today}"></div>
-        <div><label class="block text-sm font-medium mb-1">Quantity to Add *</label>
+        <div><label class="block text-sm font-medium mb-1" id="r-qty-label">Quantity to Add *</label>
           <input id="r-qty" type="number" step="any" min="0" required class="input-field" value="0" oninput="App._calcRawTotal()"></div>
-        <div><label class="block text-sm font-medium mb-1">Rate per Unit (PKR) *</label>
+        <div><label class="block text-sm font-medium mb-1" id="r-rate-label">Rate per Unit (PKR) *</label>
           <input id="r-rate" type="number" step="any" min="0" required class="input-field" value="0" oninput="App._calcRawTotal()"></div>
+        <div class="md:col-span-2 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+          <h3 class="text-sm font-semibold text-orange-900 mb-1"><i class="fas fa-scale-balanced mr-1"></i>KG → Pieces Conversion (optional)</h3>
+          <p class="text-xs text-orange-800 mb-2">Ye cheez <strong>KG me aati hai lekin Pieces me use</strong> hoti hai? To yahan bata dein ke 1 KG me kitne pieces hote hain. Phir Quantity KG me aur Rate per KG likhein — stock Pieces me khud add ho jayega.</p>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div><label class="block text-sm font-medium mb-1">Purchase Unit</label>
+              <select id="r-punit" class="input-field" onchange="App._calcRawTotal()">
+                <option value="">— Conversion OFF —</option>
+                ${['kg','gram','ton','litre','ml','meter','foot','inch','bag','roll','box'].map(u => `<option value="${u}">${u}</option>`).join('')}
+              </select></div>
+            <div><label class="block text-sm font-medium mb-1">1 <span id="r-punit-label">unit</span> = Kitne Pieces?</label>
+              <input id="r-ppu" type="number" step="any" min="0" class="input-field" value="" placeholder="e.g. 250" oninput="App._calcRawTotal()"></div>
+          </div>
+          <div id="r-conv-preview" class="text-xs mt-2 text-orange-900" style="display:none;"></div>
+        </div>
         <div><label class="block text-sm font-medium mb-1">Total (Bill Amount)</label>
           <div id="r-total" class="input-field" style="background:#f8fafc; font-weight:bold;">PKR 0.00</div></div>
 
@@ -3752,11 +3885,21 @@ const App = {
     this._checkRawDuplicate();
     document.getElementById('raw-form').addEventListener('submit', async (e) => {
       e.preventDefault();
+      // KG -> Pieces: conversion ON ho to quantity KG se pieces me, rate per-kg
+      // se per-piece me badal kar bhejo; asal input audit ke liye saath bhejo.
+      const _conv = App._addFormConv();
+      const _inQty = parseFloat(document.getElementById('r-qty').value) || 0;
+      const _inRate = parseFloat(document.getElementById('r-rate').value) || 0;
       const payload = {
         name: document.getElementById('r-name').value,
-        unit: document.getElementById('r-unit').value || 'pcs',
-        quantity: parseFloat(document.getElementById('r-qty').value) || 0,
-        rate: parseFloat(document.getElementById('r-rate').value) || 0,
+        unit: _conv ? 'pcs' : (document.getElementById('r-unit').value || 'pcs'),
+        quantity: _conv ? _inQty * _conv.per : _inQty,
+        rate: _conv ? (_conv.per > 0 ? _inRate / _conv.per : 0) : _inRate,
+        purchase_unit: _conv ? _conv.unit : '',
+        pieces_per_purchase_unit: _conv ? _conv.per : 0,
+        input_quantity: _conv ? _inQty : null,
+        input_unit: _conv ? _conv.unit : '',
+        input_rate: _conv ? _inRate : null,
         supplier_id: document.getElementById('r-supplier').value ? parseInt(document.getElementById('r-supplier').value) : null,
         supplier_name: document.getElementById('r-supname').value,
         paid_amount: parseFloat(document.getElementById('r-paid').value) || 0,
@@ -3883,13 +4026,14 @@ const App = {
             ${supplierOpts}
           </select>
           <p id="rs-rate-hint" class="text-xs mt-1" style="display:none;"></p></div>
+        <div class="md:col-span-2 p-3 bg-orange-50 border border-orange-200 rounded-lg" id="rs-conv-info" style="display:none;"></div>
 
         <div><label class="block text-sm font-medium mb-1">Date</label>
           <input id="rs-date" type="date" class="input-field" value="${today}"></div>
-        <div><label class="block text-sm font-medium mb-1">Quantity *</label>
+        <div><label class="block text-sm font-medium mb-1" id="rs-qty-label">Quantity *</label>
           <input id="rs-qty" type="number" step="any" min="0" required class="input-field" value="0" oninput="App._rsCalc()"></div>
 
-        <div><label class="block text-sm font-medium mb-1">Rate / Unit (PKR)</label>
+        <div><label class="block text-sm font-medium mb-1" id="rs-rate-label">Rate / Unit (PKR)</label>
           <input id="rs-rate" type="number" step="any" min="0" class="input-field" value="0" oninput="App._rsCalc()">
           <p class="text-xs text-gray-400 mt-1">Supplier select karte hi auto aa jayega. Edit bhi kar sakte hain.</p></div>
         <div><label class="block text-sm font-medium mb-1">Total (Bill)</label>
@@ -3930,12 +4074,18 @@ const App = {
       const supEl = document.getElementById('rs-supplier');
       const rawId = productEl.value ? parseInt(productEl.value) : null;
       const supId = supEl.value ? parseInt(supEl.value) : null;
-      const qty = parseFloat(document.getElementById('rs-qty').value) || 0;
-      const rate = parseFloat(document.getElementById('rs-rate').value) || 0;
+      const inQty = parseFloat(document.getElementById('rs-qty').value) || 0;
+      const inRate = parseFloat(document.getElementById('rs-rate').value) || 0;
       const paid = parseFloat(document.getElementById('rs-paid').value) || 0;
       if (!rawId) { this.toast('Product select karein', 'error'); return; }
       if (!supId) { this.toast('Supplier select karein', 'error'); return; }
-      if (qty <= 0) { this.toast('Quantity must be > 0', 'error'); return; }
+      if (inQty <= 0) { this.toast('Quantity must be > 0', 'error'); return; }
+      // KG -> Pieces: stock pieces me jata hai; supplier rate PURCHASE unit
+      // (per kg) me hi save hota hai taake agli dafa auto-fetch sahi lage.
+      const _rm = (this.state.rawMaterials || []).find(x => x.id === rawId);
+      const _conv = App._rawConv(_rm);
+      const qty = _conv ? inQty * _conv.per : inQty;
+      const rate = _conv ? (_conv.per > 0 ? inRate / _conv.per : 0) : inRate;
       const payload = {
         quantity: qty,
         rate,
@@ -3944,12 +4094,16 @@ const App = {
         supplier_name: supEl.options[supEl.selectedIndex].text || '',
         entry_date: document.getElementById('rs-date').value,
         notes: document.getElementById('rs-notes').value || '',
-        bank_account_id: (document.getElementById('rs-bank')?.value || null)
+        bank_account_id: (document.getElementById('rs-bank')?.value || null),
+        input_quantity: _conv ? inQty : null,
+        input_unit: _conv ? _conv.unit : '',
+        input_rate: _conv ? inRate : null
       };
       try {
         await this.api.post(`/api/raw-materials/${rawId}/restock`, payload);
         // Remember this supplier's buy-rate for this product so it auto-fills next time.
-        try { await this.api.post(`/api/clients/${supId}/supplier-rates`, { item_type: 'raw', item_id: rawId, rate }); } catch (e) {}
+        // Converted items ke liye rate PER PURCHASE UNIT (per kg) save hota hai.
+        try { await this.api.post(`/api/clients/${supId}/supplier-rates`, { item_type: 'raw', item_id: rawId, rate: inRate }); } catch (e) {}
         this.closeModal();
         await this.showRawMaterials();
         this.toast('Stock added', 'success');
@@ -3960,6 +4114,22 @@ const App = {
   // Product changed → refresh the stock preview. If a supplier is already
   // picked, re-apply its buy-rate for the new product.
   _rsOnProductChange() {
+    // KG -> Pieces: jis product par conversion set hai, us ke labels KG wale ho jate hain
+    const prodEl = document.getElementById('rs-product');
+    const rawId = prodEl && prodEl.value ? parseInt(prodEl.value) : 0;
+    const rm = (this.state.rawMaterials || []).find(x => x.id === rawId);
+    const conv = this._rawConv(rm);
+    const ql = document.getElementById('rs-qty-label');
+    const rl = document.getElementById('rs-rate-label');
+    const info = document.getElementById('rs-conv-info');
+    if (ql) ql.innerHTML = conv ? `Quantity (${conv.unit}) *` : 'Quantity *';
+    if (rl) rl.innerHTML = conv ? `Rate per ${conv.unit} (PKR)` : 'Rate / Unit (PKR)';
+    if (info) {
+      if (conv) {
+        info.style.display = 'block';
+        info.innerHTML = `<i class="fas fa-scale-balanced mr-1"></i><strong>KG → Pieces ON:</strong> Ye cheez ${conv.unit} me aati hai — 1 ${conv.unit} = <strong>${this.fmt(conv.per)} pcs</strong>. Quantity ${conv.unit} me aur Rate per ${conv.unit} likhein, stock pieces me khud add ho jayega. Supplier ka saved rate bhi per ${conv.unit} hi lagta hai.`;
+      } else info.style.display = 'none';
+    }
     this._rsCalc();
     const supEl = document.getElementById('rs-supplier');
     if (supEl && supEl.value) this._rsOnSupplierChange();
@@ -3982,7 +4152,7 @@ const App = {
       const rateEl = document.getElementById('rs-rate');
       if (map[key] != null) {
         if (rateEl) rateEl.value = map[key];
-        if (hint) { hint.style.display = 'block'; hint.className = 'text-xs mt-1 text-green-700'; hint.innerHTML = `<i class="fas fa-tags mr-1"></i>Supplier ka saved rate laga diya: <strong>PKR ${this.fmt(map[key])}</strong>. Zaroorat ho to edit karein.`; }
+        if (hint) { hint.style.display = 'block'; hint.className = 'text-xs mt-1 text-green-700'; const _rmC = (this.state.rawMaterials || []).find(x => x.id === rawId); const _cv = this._rawConv(_rmC); hint.innerHTML = `<i class="fas fa-tags mr-1"></i>Supplier ka saved rate laga diya: <strong>PKR ${this.fmt(map[key])}${_cv ? ' per ' + _cv.unit : ''}</strong>. Zaroorat ho to edit karein.`; }
       } else {
         if (hint) { hint.style.display = 'block'; hint.className = 'text-xs mt-1 text-amber-700'; hint.innerHTML = `<i class="fas fa-info-circle mr-1"></i>Is supplier ka is product ka koi saved rate nahi — rate likhein (save ho jayega, agli dafa auto aayega).`; }
       }
@@ -3995,10 +4165,15 @@ const App = {
     const prodEl = document.getElementById('rs-product');
     const rawId = prodEl && prodEl.value ? parseInt(prodEl.value) : 0;
     const rm = (this.state.rawMaterials || []).find(x => x.id === rawId);
-    const addQty = parseFloat(document.getElementById('rs-qty')?.value) || 0;
-    const addRate = parseFloat(document.getElementById('rs-rate')?.value) || 0;
+    const inQty = parseFloat(document.getElementById('rs-qty')?.value) || 0;
+    const inRate = parseFloat(document.getElementById('rs-rate')?.value) || 0;
+    // KG -> Pieces: form values PURCHASE unit (kg) me hain; stock ke liye pieces
+    // aur per-piece rate me badlo. Total (bill) dono tareeqon se same rehta hai.
+    const conv = this._rawConv(rm);
+    const addQty = conv ? inQty * conv.per : inQty;         // pieces jo stock me add honge
+    const addRate = conv ? (conv.per > 0 ? inRate / conv.per : 0) : inRate; // rate per piece
     const paid = parseFloat(document.getElementById('rs-paid')?.value) || 0;
-    const batchTotal = addQty * addRate;
+    const batchTotal = inQty * inRate;
     const remaining = Math.max(0, batchTotal - paid);
     const tot = document.getElementById('rs-total');
     if (tot) tot.textContent = 'PKR ' + this.fmt(batchTotal);
@@ -4013,6 +4188,7 @@ const App = {
     const newRate = newQty > 0 ? ((oldQty * oldRate) + (addQty * addRate)) / newQty : addRate;
     const newTotal = newQty * newRate;
     el.innerHTML = `<div class="font-semibold mb-1 text-blue-800"><i class="fas fa-calculator mr-1"></i>After restock:</div>
+      ${conv && inQty > 0 ? `<div class="mb-2 p-2 bg-orange-50 border border-orange-200 rounded text-orange-900 text-xs"><i class="fas fa-scale-balanced mr-1"></i>${this.fmt(inQty)} ${conv.unit} × ${this.fmt(conv.per)} = <strong>${this.fmt(addQty)} pieces</strong> add honge · Rate per piece: <strong>PKR ${this.fmt(addRate)}</strong></div>` : ''}
       <div class="grid grid-cols-3 gap-2 text-blue-900">
         <div><span class="text-xs text-blue-600">New Stock</span><div class="font-bold">${this.fmt(newQty)} ${this.escapeHtml(rm.unit||'')}</div></div>
         <div><span class="text-xs text-blue-600">Avg Rate</span><div class="font-bold">PKR ${this.fmt(newRate)}</div></div>
@@ -4020,11 +4196,45 @@ const App = {
       </div>`;
   },
 
+  // ===== KG -> Pieces conversion helper =====
+  // Ek material agar KG (ya kisi aur unit) me aata hai lekin pieces me use
+  // hota hai, to us par purchase_unit + pieces_per_purchase_unit save hota hai
+  // (masalan 1 kg = 250 pcs). Stock hamesha pieces (unit) me rehta hai.
+  _rawConv(rm) {
+    if (!rm) return null;
+    const per = parseFloat(rm.pieces_per_purchase_unit) || 0;
+    const unit = String(rm.purchase_unit || '').trim();
+    return (per > 0 && unit) ? { per, unit } : null;
+  },
+  _addFormConv() {
+    const punit = (document.getElementById('r-punit')?.value || '').trim();
+    const per = parseFloat(document.getElementById('r-ppu')?.value) || 0;
+    return (punit && per > 0) ? { per, unit: punit } : null;
+  },
+
   _calcRawTotal() {
     const qty = parseFloat(document.getElementById('r-qty')?.value) || 0;
     const rate = parseFloat(document.getElementById('r-rate')?.value) || 0;
     const total = document.getElementById('r-total');
     if (total) total.textContent = 'PKR ' + this.fmt(qty * rate);
+    // Add-form conversion preview: qty yahan PURCHASE unit (kg) me hai
+    const conv = document.getElementById('r-punit') ? this._addFormConv() : null;
+    const ql = document.getElementById('r-qty-label');
+    const rl = document.getElementById('r-rate-label');
+    const pv = document.getElementById('r-conv-preview');
+    if (ql) ql.innerHTML = conv ? `Quantity to Add (${conv.unit}) *` : 'Quantity to Add *';
+    if (rl) rl.innerHTML = conv ? `Rate per ${conv.unit} (PKR) *` : 'Rate per Unit (PKR) *';
+    const pl = document.getElementById('r-punit-label');
+    if (pl) pl.textContent = (document.getElementById('r-punit')?.value || 'unit');
+    if (pv) {
+      if (conv && qty > 0) {
+        pv.style.display = 'block';
+        pv.innerHTML = `<i class="fas fa-calculator mr-1"></i>${this.fmt(qty)} ${conv.unit} = <strong>${this.fmt(qty * conv.per)} pieces</strong> stock me add honge · Rate per piece: <strong>PKR ${this.fmt(rate / conv.per)}</strong>`;
+      } else if (conv) {
+        pv.style.display = 'block';
+        pv.innerHTML = `<i class="fas fa-info-circle mr-1"></i>Quantity ${conv.unit} me likhein — system khud pieces me badal dega (1 ${conv.unit} = ${this.fmt(conv.per)} pcs).`;
+      } else pv.style.display = 'none';
+    }
     this._calcRawPayPreview();
   },
 
@@ -5056,7 +5266,8 @@ const App = {
       if (qty <= 0) { this.toast('Pieces must be greater than 0', 'error'); return; }
       try {
         if (logId) {
-          await this.api.put(`/api/product-production/${logId}`, stage === 'pack' ? { entry_date: date, quantity: qty, rate, notes, generate_barcodes } : { entry_date: date, quantity: qty, rate, notes });
+          const res = await this.api.put(`/api/product-production/${logId}`, stage === 'pack' ? { entry_date: date, quantity: qty, rate, notes, generate_barcodes } : { entry_date: date, quantity: qty, rate, notes });
+          if (res && res.error) { let m = res.error; if (res.shortages) m += '\n' + res.shortages.join('\n'); this.toast(m, 'error'); return; }
         } else {
           const res = await this.api.post('/api/product-production', { entry_date: date, stage, employee_id: empId, product_id: prodId, quantity: qty, rate, deduct, notes, generate_barcodes });
           if (res.error) {
@@ -5516,7 +5727,7 @@ const App = {
           <input id="pl-qty" type="number" step="any" min="0.01" required class="input-field" value="${log ? log.quantity : ''}" oninput="App._onProdRecalc()"></div>
         <div><label class="block text-sm font-medium mb-1">Per-Piece Rate (PKR) <span id="pl-rate-src" class="text-xs font-normal text-teal-600"></span></label>
           <input id="pl-rate" type="number" step="any" class="input-field" value="${log ? log.rate : (initComp ? (initComp.default_rate||0) : 0)}" oninput="App._onProdRecalc()"></div>
-        <div><label class="block text-sm font-medium mb-1">Scrap / Waste (raw units)</label>
+        <div><label class="block text-sm font-medium mb-1">Scrap / Waste (pieces)</label>
           <input id="pl-scrap" type="number" step="any" class="input-field" value="${log ? (log.scrap_qty||0) : 0}" placeholder="0" oninput="App._onProdRecalc()"></div>
         <div class="flex items-end">
           <label class="flex items-center gap-2 text-sm pb-2">
@@ -5553,7 +5764,8 @@ const App = {
       if (qty <= 0) { this.toast('Pieces must be greater than 0', 'error'); return; }
       try {
         if (logId) {
-          await this.api.put(`/api/production/${logId}`, { entry_date: date, quantity: qty, rate, scrap_qty: scrap, notes });
+          const res = await this.api.put(`/api/production/${logId}`, { entry_date: date, quantity: qty, rate, scrap_qty: scrap, notes });
+          if (res && res.error) { let m = res.error; if (res.shortages) m += '\n' + res.shortages.join('\n'); this.toast(m, 'error'); return; }
         } else {
           const res = await this.api.post('/api/production', { entry_date: date, employee_id: empId, component_id: compId, quantity: qty, rate, deduct_raw: deduct, scrap_qty: scrap, notes });
           if (res.error) { this.toast(res.error, 'error'); return; }
@@ -6054,9 +6266,10 @@ const App = {
       }
       this._prefillWorkerForProduction = empId;
       this.showProductionEditor();
-      // pre-select the worker
+      // pre-select the worker AUR us ka saved per-piece rate bhi auto lagao
+      // (pehle sirf select hota tha — rate component default reh jata tha)
       const empSel = document.getElementById('pl-emp');
-      if (empSel) empSel.value = String(empId);
+      if (empSel) { empSel.value = String(empId); this._onProdWorkerChange(); }
     } catch (e) { this.toast('Failed to open', 'error'); }
   },
 
@@ -7099,7 +7312,8 @@ const App = {
       <tr data-row="${i}">
         <td><input type="number" step="any" min="0" value="${parseFloat(it.quantity) || 0}" oninput="App._updateBillRow(${i}, 'quantity', parseFloat(this.value)||0)"></td>
         <td><input type="text" list="bill-product-list" value="${this.escapeAttr(it.product_name || '')}"
-                 oninput="App._updateBillProductName(${i}, this.value)" onchange="App._matchBillProduct(${i}, this.value)" placeholder="Type or pick product"></td>
+                 oninput="App._updateBillProductName(${i}, this.value)" onchange="App._matchBillProduct(${i}, this.value)" placeholder="Type or pick product">
+            <div class="bill-match-hint" style="font-size:11px; margin-top:2px;">${it.product_id ? '<span style="color:#16a34a;"><i class="fas fa-check-circle"></i> Stock se matched — save par stock minus hoga</span>' : (it.product_name ? '<span style="color:#d97706;"><i class="fas fa-triangle-exclamation"></i> Inventory me match nahi — is line ka stock minus NAHI hoga</span>' : '')}</div></td>
         <td><input type="number" step="any" min="0" value="${parseFloat(it.rate) || 0}" oninput="App._updateBillRow(${i}, 'rate', parseFloat(this.value)||0)"></td>
         <td class="text-right font-bold amount-running">PKR ${this.fmt((parseFloat(it.quantity)||0) * (parseFloat(it.rate)||0))}</td>
         <td class="text-center"><button type="button" onclick="App._removeBillRow(${i})" class="text-red-500 hover:text-red-700"><i class="fas fa-trash text-sm"></i></button></td>
@@ -7116,10 +7330,39 @@ const App = {
     if (row) row.querySelector('td.amount-running').textContent = 'PKR ' + this.fmt(this._billItems[i].total);
     this._calcBill();
   },
-  _updateBillProductName(i, value) { if (this._billItems[i]) this._billItems[i].product_name = value; },
+  // STOCK FIX: naam type karte hi (change/blur ka intezar kiye baghair) foran
+  // case-insensitive + trim match try karo. Pehle matching sirf 'change' event
+  // par aur EXACT naam par hoti thi — zara sa farq aaye to product_id NULL reh
+  // jata aur bill ka stock minus hi nahi hota tha.
+  _updateBillProductName(i, value) {
+    if (!this._billItems[i]) return;
+    this._billItems[i].product_name = value;
+    const v = String(value || '').trim().toLowerCase();
+    const inv = v ? (this.state.inventory || []).find(p => String(p.name || '').trim().toLowerCase() === v) : null;
+    const row = document.querySelector(`#bill-items-body tr[data-row="${i}"]`);
+    const hint = row ? row.querySelector('.bill-match-hint') : null;
+    if (inv) {
+      const changed = this._billItems[i].product_id !== inv.id;
+      this._billItems[i].product_id = inv.id;
+      if (changed) {
+        const special = (this._billRateMap && this._billRateMap[String(inv.id)] !== undefined)
+          ? parseFloat(this._billRateMap[String(inv.id)]) : null;
+        this._billItems[i].rate = (special !== null && !isNaN(special)) ? special : (parseFloat(inv.rate) || 0);
+        this._billItems[i].manufacturing_cost = parseFloat(inv.manufacturing_cost) || 0;
+        this._billItems[i].total = (parseFloat(this._billItems[i].quantity) || 0) * this._billItems[i].rate;
+        this._renderBillItems(); this._calcBill();
+        return;
+      }
+      if (hint) hint.innerHTML = '<span style="color:#16a34a;"><i class="fas fa-check-circle"></i> Stock se matched — save par stock minus hoga</span>';
+    } else {
+      // Naam badal gaya / match nahi — purana product_id saaf karo warna ghalat product ka stock katega
+      this._billItems[i].product_id = null;
+      if (hint) hint.innerHTML = v ? '<span style="color:#d97706;"><i class="fas fa-triangle-exclamation"></i> Inventory me match nahi — is line ka stock minus NAHI hoga</span>' : '';
+    }
+  },
   _matchBillProduct(i, value) {
     if (!this._billItems[i]) return;
-    const inv = this.state.inventory.find(p => p.name === value);
+    const inv = this.state.inventory.find(p => String(p.name || '').trim().toLowerCase() === String(value || '').trim().toLowerCase());
     if (inv) {
       this._billItems[i].product_id = inv.id;
       this._billItems[i].product_name = inv.name;
@@ -7187,6 +7430,22 @@ const App = {
     const notes = document.getElementById('b-notes').value;
     if (!customerName) { this.toast('Customer name required', 'error'); return; }
     if (this._billItems.length === 0) { this.toast('At least one item required', 'error'); return; }
+    if (this._billSaving) return; // double-click se duplicate bill/stock deduction rokna
+    // STOCK FIX: save se pehle har line ka final match check. Jo line inventory
+    // se match nahi karti us ka stock minus NAHI hoga — user ko pehle bata do.
+    const unmatched = [];
+    this._billItems.forEach(it => {
+      if (!it.product_id && it.product_name) {
+        const inv = (this.state.inventory || []).find(p => String(p.name || '').trim().toLowerCase() === String(it.product_name || '').trim().toLowerCase());
+        if (inv) { it.product_id = inv.id; it.manufacturing_cost = parseFloat(inv.manufacturing_cost) || 0; }
+      }
+      if (!it.product_id && (parseFloat(it.quantity) || 0) > 0 && it.product_name) unmatched.push(it.product_name);
+    });
+    if (unmatched.length > 0) {
+      const ok = confirm(`⚠ Ye item(s) Inventory me match nahi hue:\n\n• ${unmatched.join('\n• ')}\n\nIn ka STOCK minus NAHI hoga (bill ban jayega).\nNaam check karke inventory wala exact naam select karein — ya phir bhi aage barhna ho to OK dabayein.`);
+      if (!ok) return;
+    }
+    this._billSaving = true;
     const subtotal = this._billItems.reduce((s, it) => s + ((parseFloat(it.quantity) || 0) * (parseFloat(it.rate) || 0)), 0);
     const taxable = subtotal - discount;
     const taxAmt = taxable * (taxPct / 100);
@@ -7212,10 +7471,15 @@ const App = {
       else { res = await this.api.post('/api/bills', payload); savedId = res?.id; }
       if (res?.error) { this.toast(res.error, 'error'); return; }
       this.closeModal();
-      this.toast(matched ? 'Bill saved & ledger auto-updated' : 'Bill saved', 'success');
+      if (res?.stock_warnings && res.stock_warnings.length > 0) {
+        this.toast(`Bill saved — LEKIN in items ka stock minus nahi hua (inventory match nahi): ${res.stock_warnings.join(', ')}`, 'error');
+      } else {
+        this.toast(matched ? 'Bill saved, stock minus ho gaya & ledger auto-updated' : 'Bill saved — stock minus ho gaya', 'success');
+      }
       await this.showBills();
       if (alsoPrint && savedId) setTimeout(() => this.printBill(savedId), 200);
     } catch (e) { this.toast('Save failed', 'error'); }
+    finally { this._billSaving = false; }
   },
 
   async deleteBill(id) {
@@ -7375,6 +7639,7 @@ const App = {
   async _buildBillPDF(bill) {
     const node = document.getElementById('bill-print-area');
     if (!node) { this.toast('Pehle bill preview kholें', 'error'); return null; }
+    await this._ensurePdfLibs();
     const jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
     if (!jsPDFCtor || !window.html2canvas) { this.toast('PDF library load nahi hui — page refresh karein', 'error'); return null; }
     // Make sure every <img> inside the bill (especially the logo) is fully
@@ -8343,8 +8608,9 @@ const App = {
   async downloadBankStatement(id) {
     const from = document.getElementById('stmt-from')?.value || '';
     const to = document.getElementById('stmt-to')?.value || '';
+    await this._ensurePdfLibs();
     const jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
-    if (!jsPDFCtor) { this.toast('PDF library load nahi hui — page refresh karein', 'error'); return; }
+    if (!jsPDFCtor) { this.toast('PDF library load nahi hui — net check karke dobara try karein', 'error'); return; }
     let qs = '';
     if (from) qs += `${qs?'&':'?'}from=${from}`;
     if (to) qs += `${qs?'&':'?'}to=${to}`;
@@ -8774,10 +9040,10 @@ const App = {
         </div>
       </div>
     `);
-    // Render barcode SVG
-    setTimeout(() => {
+    // Render barcode SVG (library lazy-load hoti hai)
+    setTimeout(async () => {
       try {
-        if (window.JsBarcode) {
+        if (await this._ensureJsBarcode()) {
           JsBarcode('#bc-detail-svg', item.code, { format: 'CODE128', width: 1.8, height: 60, displayValue: false, margin: 0 });
         }
       } catch (e) { console.error(e); }
@@ -9042,7 +9308,7 @@ const App = {
 
   _bcCameraInstance: null,
   async _bcStartCamera() {
-    if (!window.Html5Qrcode) { this.toast('Scanner library not loaded', 'error'); return; }
+    if (!(await this._ensureScannerLib())) { this.toast('Scanner library load nahi hui — net check karein', 'error'); return; }
     const btn = document.getElementById('bc-cam-btn');
     if (this._bcCameraInstance) { this._bcStopCamera(); return; }
     try {

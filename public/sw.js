@@ -8,10 +8,11 @@
  *   - When the network comes back, the next request hits the network again and
  *     the cache is refreshed automatically (so data re-syncs from the cloud).
  */
-const CACHE_VERSION = 'two-star-essentials-v3';
+const CACHE_VERSION = 'two-star-essentials-v4';
 const APP_SHELL = [
   '/',
   '/static/app.js',
+  '/static/tailwind.css',
   '/static/style.css',
   '/manifest.webmanifest',
   '/icons/icon-192.png',

@@ -693,6 +693,7 @@ app.put('/api/inventory/movements/:id', requireAuth, async (c) => {
   const mov = await c.env.DB.prepare('SELECT * FROM inventory_movements WHERE id = ?').bind(id).first() as any
   if (!mov) return c.json({ error: 'Not found' }, 404)
   if (mov.type === 'production') return c.json({ error: 'Packed-from-manufacturing entries ki edit Products Manufacturing se karein.' }, 400)
+  if (mov.bill_id) return c.json({ error: 'Ye entry Bill se bani hai — isay Bill edit karke badlein (yahan se edit karne par stock double ho jayega).' }, 400)
   const body = await c.req.json()
 
   const item = await c.env.DB.prepare('SELECT * FROM inventory WHERE id = ?').bind(mov.inventory_id).first() as any
@@ -756,6 +757,7 @@ app.delete('/api/inventory/movements/:id', requireAuth, async (c) => {
   const id = c.req.param('id')
   const mov = await c.env.DB.prepare('SELECT * FROM inventory_movements WHERE id = ?').bind(id).first() as any
   if (!mov) return c.json({ error: 'Not found' }, 404)
+  if (mov.bill_id) return c.json({ error: 'Ye entry Bill se bani hai — isay Bill delete karke hatayein (yahan se delete karne par stock double ho jayega).' }, 400)
   // Reverse the stock effect before deleting.
   // BUG1 FIX: 'adjust' now reverses using the persisted `direction` field instead of
   // being skipped — so create+delete is a true no-op round trip for every type.
@@ -1041,6 +1043,39 @@ async function syncBillLedger(env: any, billId: number, b: any) {
   await env.DB.prepare('UPDATE bills SET ledger_transaction_id = ? WHERE id = ?').bind(result.meta.last_row_id, billId).run()
 }
 
+// STOCK FIX (2026-11): bill item ka inventory product RESOLVE karna.
+// Pehle bug: stock sirf tab minus hota tha jab frontend exact product_id bhejta tha.
+// Agar user product ka naam haath se type karta tha (case farq, extra space, ya
+// naam thoda mukhtalif) to product_id NULL reh jata tha aur backend CHUP CHAAP
+// stock minus kiye baghair bill save kar deta tha — takreeban 10% bills me yahi
+// hota tha. Ab server khud: (1) diya gaya product_id verify karta hai,
+// (2) na mile to product_name se (trim + case-insensitive) inventory me dhoondta
+// hai. Jo item phir bhi match na ho, us ke liye warning return hoti hai taake
+// user ko pata chal jaye ke is line ka stock minus NAHI hua.
+async function resolveBillItemProduct(env: any, it: any): Promise<{ product_id: number | null, product_name: string, manufacturing_cost: number }> {
+  const name = String(it.product_name || '').trim()
+  let pid: number | null = it.product_id ? parseInt(it.product_id) : null
+  let mfg = parseFloat(it.manufacturing_cost) || 0
+  if (pid) {
+    const inv = await env.DB.prepare('SELECT id, name, manufacturing_cost FROM inventory WHERE id = ?').bind(pid).first() as any
+    if (inv) {
+      if ((!mfg || mfg <= 0) && inv.manufacturing_cost) mfg = parseFloat(inv.manufacturing_cost) || 0
+      return { product_id: inv.id, product_name: name || inv.name, manufacturing_cost: mfg }
+    }
+    pid = null // diya gaya id inventory me nahi mila — naam se koshish karo
+  }
+  if (name) {
+    const inv = await env.DB.prepare(
+      'SELECT id, name, manufacturing_cost FROM inventory WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) ORDER BY id ASC LIMIT 1'
+    ).bind(name).first() as any
+    if (inv) {
+      if ((!mfg || mfg <= 0) && inv.manufacturing_cost) mfg = parseFloat(inv.manufacturing_cost) || 0
+      return { product_id: inv.id, product_name: name, manufacturing_cost: mfg }
+    }
+  }
+  return { product_id: null, product_name: name, manufacturing_cost: mfg }
+}
+
 // ============ BILLS ============
 app.get('/api/bills', requireAuth, async (c) => {
   const result = await c.env.DB.prepare(`
@@ -1103,6 +1138,18 @@ app.post('/api/bills', requireAuth, async (c) => {
   const billDate = b.bill_date || new Date().toISOString().slice(0, 10)
   if (!billNoValid(billNo)) return c.json({ error: 'Bill No must contain at least 3 digits' }, 400)
   if (await isBillNoTaken(c.env, billNo)) return c.json({ error: `Bill No "${billNo}" already exists` }, 400)
+
+  // STOCK FIX: pehle SAARI items resolve karo (koi write se pehle).
+  const rawItems: any[] = Array.isArray(b.items) ? b.items : []
+  const resolvedItems: any[] = []
+  const stockWarnings: string[] = []
+  for (const it of rawItems) {
+    const qty = parseFloat(it.quantity) || 0
+    const r = await resolveBillItemProduct(c.env, it)
+    if (qty > 0 && !r.product_id && r.product_name) stockWarnings.push(r.product_name)
+    resolvedItems.push({ ...it, product_id: r.product_id, product_name: r.product_name, manufacturing_cost: r.manufacturing_cost, quantity: qty })
+  }
+
   const result = await c.env.DB.prepare(`
     INSERT INTO bills (bill_no, bill_date, client_id, customer_name, customer_phone, customer_address,
       subtotal, discount, tax, total, paid, notes, status, bank_account_id)
@@ -1116,32 +1163,41 @@ app.post('/api/bills', requireAuth, async (c) => {
   ).run()
   const billId = result.meta.last_row_id as number
 
-  if (Array.isArray(b.items)) {
-    // HARDENING: collect item inserts + stock updates and run them in ONE atomic batch
+  try {
+    // Items + stock deduction + sale movement log — EK atomic batch.
+    // Pehle bill insert aur batch alag thay: darmiyan me fail ho to bill ban
+    // jata tha lekin stock minus NAHI hota tha (wahi "kabhi kabhi" wala bug).
     const itemStmts: any[] = []
-    for (let i = 0; i < b.items.length; i++) {
-      const it = b.items[i]
-      // Snapshot manufacturing_cost from inventory if not explicitly provided
-      let mfgCost = parseFloat(it.manufacturing_cost) || 0
-      if ((!mfgCost || mfgCost <= 0) && it.product_id) {
-        const inv = await c.env.DB.prepare('SELECT manufacturing_cost FROM inventory WHERE id = ?').bind(it.product_id).first() as any
-        if (inv && inv.manufacturing_cost) mfgCost = parseFloat(inv.manufacturing_cost) || 0
-      }
+    for (let i = 0; i < resolvedItems.length; i++) {
+      const it = resolvedItems[i]
       itemStmts.push(c.env.DB.prepare(`
         INSERT INTO bill_items (bill_id, product_id, product_name, quantity, rate, total, sort_order, manufacturing_cost)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(billId, it.product_id || null, it.product_name || '',
-              parseFloat(it.quantity) || 0, parseFloat(it.rate) || 0, parseFloat(it.total) || 0, i, mfgCost))
-      if (it.product_id && parseFloat(it.quantity) > 0) {
-        itemStmts.push(c.env.DB.prepare('UPDATE inventory SET quantity = quantity - ? WHERE id = ?')
-          .bind(parseFloat(it.quantity), it.product_id))
+              it.quantity, parseFloat(it.rate) || 0, parseFloat(it.total) || 0, i, parseFloat(it.manufacturing_cost) || 0))
+      if (it.product_id && it.quantity > 0) {
+        itemStmts.push(c.env.DB.prepare('UPDATE inventory SET quantity = quantity - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+          .bind(it.quantity, it.product_id))
+        // Trace ke liye sale movement (bill_id ke saath) — Recent Entries me
+        // dikhega ke kis bill ne kitna stock minus kiya.
+        itemStmts.push(c.env.DB.prepare(
+          `INSERT INTO inventory_movements (inventory_id, product_name, entry_date, type, quantity, rate, total, customer_name, notes, direction, bill_id)
+           VALUES (?, ?, ?, 'sale', ?, ?, ?, ?, ?, -1, ?)`
+        ).bind(it.product_id, it.product_name || '', billDate, it.quantity,
+               parseFloat(it.rate) || 0, (parseFloat(it.rate) || 0) * it.quantity,
+               b.customer_name || '', `Bill ${billNo}`, billId))
       }
     }
     if (itemStmts.length > 0) await c.env.DB.batch(itemStmts)
+  } catch (e) {
+    // Batch fail => aadha bill na bache: bill row hata do taake user dobara
+    // saaf tor par try kar sake aur stock mismatch na bane.
+    await c.env.DB.prepare('DELETE FROM bills WHERE id = ?').bind(billId).run()
+    return c.json({ error: 'Bill save fail ho gaya (stock update issue) — dobara try karein. Koi stock change nahi hua.' }, 500)
   }
 
   // Compute & persist net_profit for this bill (sum of (rate - mfg_cost - labor) * qty)
-  await computeAndSaveBillProfit(c.env, billId, b.items || [])
+  await computeAndSaveBillProfit(c.env, billId, resolvedItems)
 
   // Auto-link to client ledger
   await syncBillLedger(c.env, billId, { ...b, bill_no: billNo, bill_date: billDate })
@@ -1155,7 +1211,7 @@ app.post('/api/bills', requireAuth, async (c) => {
     party_name: b.customer_name || '', description: `Bill ${billNo} payment received`
   })
 
-  return c.json({ id: billId, bill_no: billNo })
+  return c.json({ id: billId, bill_no: billNo, stock_warnings: stockWarnings })
 })
 
 app.put('/api/bills/:id', requireAuth, async (c) => {
@@ -1169,6 +1225,19 @@ app.put('/api/bills/:id', requireAuth, async (c) => {
     if (!billNoValid(billNoT)) return c.json({ error: 'Bill No must contain at least 3 digits' }, 400)
     if (await isBillNoTaken(c.env, billNoT, id, linkedTxId)) return c.json({ error: `Bill No "${billNoT}" already exists` }, 400)
   }
+
+  // STOCK FIX: nayi items bhi pehle resolve karo (naam se match) — warna edit
+  // par bhi product_id NULL wali lines ka stock minus nahi hota tha.
+  const rawItemsU: any[] = Array.isArray(b.items) ? b.items : []
+  const resolvedItemsU: any[] = []
+  const stockWarningsU: string[] = []
+  for (const it of rawItemsU) {
+    const qty = parseFloat(it.quantity) || 0
+    const r = await resolveBillItemProduct(c.env, it)
+    if (qty > 0 && !r.product_id && r.product_name) stockWarningsU.push(r.product_name)
+    resolvedItemsU.push({ ...it, product_id: r.product_id, product_name: r.product_name, manufacturing_cost: r.manufacturing_cost, quantity: qty })
+  }
+  b.items = resolvedItemsU
 
   // HARDENING: reverse old stock, update bill, swap items, apply new stock — all in ONE atomic batch.
   const oldItems = await c.env.DB.prepare('SELECT product_id, quantity FROM bill_items WHERE bill_id = ?').bind(id).all()
@@ -1194,6 +1263,8 @@ app.put('/api/bills/:id', requireAuth, async (c) => {
   ))
 
   stmts.push(c.env.DB.prepare('DELETE FROM bill_items WHERE bill_id = ?').bind(id))
+  // Purani bill-sale movement entries bhi saaf (stock bill logic khud reverse kar raha hai)
+  stmts.push(c.env.DB.prepare('DELETE FROM inventory_movements WHERE bill_id = ?').bind(id))
 
   if (Array.isArray(b.items)) {
     for (let i = 0; i < b.items.length; i++) {
@@ -1211,6 +1282,12 @@ app.put('/api/bills/:id', requireAuth, async (c) => {
               parseFloat(it.quantity) || 0, parseFloat(it.rate) || 0, parseFloat(it.total) || 0, i, mfgCost))
       if (it.product_id && parseFloat(it.quantity) > 0) {
         stmts.push(c.env.DB.prepare('UPDATE inventory SET quantity = quantity - ? WHERE id = ?').bind(parseFloat(it.quantity), it.product_id))
+        stmts.push(c.env.DB.prepare(
+          `INSERT INTO inventory_movements (inventory_id, product_name, entry_date, type, quantity, rate, total, customer_name, notes, direction, bill_id)
+           VALUES (?, ?, ?, 'sale', ?, ?, ?, ?, ?, -1, ?)`
+        ).bind(it.product_id, it.product_name || '', billDateU, parseFloat(it.quantity),
+               parseFloat(it.rate) || 0, (parseFloat(it.rate) || 0) * (parseFloat(it.quantity) || 0),
+               b.customer_name || '', `Bill ${billNoT || b.bill_no || ''}`, id))
       }
     }
   }
@@ -1230,7 +1307,7 @@ app.put('/api/bills/:id', requireAuth, async (c) => {
     party_name: b.customer_name || '', description: `Bill ${billNoT || b.bill_no} payment received`
   })
 
-  return c.json({ success: true })
+  return c.json({ success: true, stock_warnings: stockWarningsU })
 })
 
 app.delete('/api/bills/:id', requireAuth, async (c) => {
@@ -1248,6 +1325,7 @@ app.delete('/api/bills/:id', requireAuth, async (c) => {
   if (bill?.ledger_transaction_id) {
     stmts.push(c.env.DB.prepare('DELETE FROM transactions WHERE id = ?').bind(bill.ledger_transaction_id))
   }
+  stmts.push(c.env.DB.prepare('DELETE FROM inventory_movements WHERE bill_id = ?').bind(id))
   stmts.push(c.env.DB.prepare('DELETE FROM bills WHERE id = ?').bind(id))
   await c.env.DB.batch(stmts)
   return c.json({ success: true })
@@ -1314,25 +1392,39 @@ async function syncRawPurchaseLedger(env: any, purchaseId: number, p: any) {
 // Recompute the raw material's aggregate (quantity, weighted-avg rate, total_value)
 // from its underlying purchase rows. Keeps `supplier_id` / `supplier_name` as the
 // LAST (most recent) purchase's supplier (for display in the legacy column).
-async function recomputeRawMaterialFromPurchases(env: any, rawId: number) {
+// STOCK FIX (2026-11): raw material quantity ka purana tareeqa GALAT tha.
+// Pehle quantity = SUM(saari purchases) se recompute hoti thi — lekin production
+// me raw material USE hone par quantity direct minus hoti hai aur wo use kisi
+// purchase row me record nahi hota. Nateeja: jaise hi koi restock / purchase
+// edit / purchase delete hota, recompute purana use hua stock WAPAS add kar
+// deta tha — stock khud-ba-khud barh jata tha aur hisaab bigar jata tha.
+// Naya tareeqa: quantity hamesha AUTHORITATIVE hai; purchase change sirf us ka
+// DELTA (jitna change hua) apply karta hai. Avg rate purchases se (stock-
+// correction rows ke baghair) nikalta hai, total_value = quantity x avg rate.
+async function syncRawMaterialAfterPurchase(env: any, rawId: number, qtyDelta: number) {
+  const rm = await env.DB.prepare('SELECT quantity, rate FROM raw_materials WHERE id = ?').bind(rawId).first() as any
+  if (!rm) return
   const purchases = await env.DB.prepare(
     'SELECT * FROM raw_material_purchases WHERE raw_material_id = ? ORDER BY entry_date ASC, id ASC'
   ).bind(rawId).all()
-  const rows = (purchases.results as any[]) || []
-  let totalQty = 0
-  let totalValue = 0
+  const rows = ((purchases.results as any[]) || []).filter(r => !String(r.notes || '').startsWith('[Stock Correction]'))
+  let sumQty = 0, sumValue = 0
   for (const r of rows) {
     const q = parseFloat(r.quantity) || 0
     const rt = parseFloat(r.rate) || 0
-    totalQty += q
-    totalValue += q * rt
+    if (q > 0) { sumQty += q; sumValue += q * rt }
   }
-  const avgRate = totalQty > 0 ? (totalValue / totalQty) : 0
-  // Latest supplier
+  const avgRate = sumQty > 0 ? (sumValue / sumQty) : (parseFloat(rm.rate) || 0)
+  const newQty = Math.max(0, (parseFloat(rm.quantity) || 0) + (qtyDelta || 0))
   const last: any = rows.length > 0 ? rows[rows.length - 1] : null
   await env.DB.prepare(
     `UPDATE raw_materials SET quantity=?, rate=?, total_value=?, supplier_id=?, supplier_name=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
-  ).bind(totalQty, avgRate, totalValue, last ? (last.supplier_id || null) : null, last ? (last.supplier_name || '') : '', rawId).run()
+  ).bind(newQty, avgRate, newQty * avgRate, last ? (last.supplier_id || null) : null, last ? (last.supplier_name || '') : '', rawId).run()
+}
+
+// Backward-compatible wrapper: baghair delta ke sirf rate/supplier refresh hota hai, quantity NAHI badalti.
+async function recomputeRawMaterialFromPurchases(env: any, rawId: number) {
+  await syncRawMaterialAfterPurchase(env, rawId, 0)
 }
 
 app.get('/api/raw-materials', requireAuth, async (c) => {
@@ -1412,6 +1504,15 @@ app.post('/api/raw-materials', requireAuth, async (c) => {
   const body = await c.req.json()
   const { name, unit, quantity, rate, supplier_id, supplier_name, category, notes,
           merge_mode, target_id, paid_amount, entry_date } = body
+  // KG -> Pieces conversion (optional): purchase_unit (e.g. 'kg') +
+  // pieces_per_purchase_unit (1 kg = kitne pcs). quantity/rate hamesha STOCK
+  // unit (pieces) me aate hain (frontend convert karke bhejta hai); asal input
+  // input_quantity/input_unit/input_rate me audit ke liye save hota hai.
+  const convUnit = (body.purchase_unit || '').toString().trim()
+  const convPer = parseFloat(body.pieces_per_purchase_unit) || 0
+  const inpQty = body.input_quantity != null ? (parseFloat(body.input_quantity) || 0) : null
+  const inpUnit = (body.input_unit || '').toString()
+  const inpRate = body.input_rate != null ? (parseFloat(body.input_rate) || 0) : null
   const bank_account_id = body.bank_account_id
   if (!name) return c.json({ error: 'Name required' }, 400)
   const q = parseFloat(quantity) || 0, r = parseFloat(rate) || 0
@@ -1428,9 +1529,11 @@ app.post('/api/raw-materials', requireAuth, async (c) => {
     if (q <= 0) return // nothing actually purchased — skip batch entry
     const ins = await c.env.DB.prepare(
       `INSERT INTO raw_material_purchases (raw_material_id, supplier_id, supplier_name, entry_date,
-                                           quantity, rate, total_amount, paid_amount, remaining_amount, notes, bank_account_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(rawId, sid, sname, eDate, q, r, total, paid, remaining, notes || '', bank_account_id ? parseInt(bank_account_id) : null).run()
+                                           quantity, rate, total_amount, paid_amount, remaining_amount, notes, bank_account_id,
+                                           input_quantity, input_unit, input_rate)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(rawId, sid, sname, eDate, q, r, total, paid, remaining, notes || '', bank_account_id ? parseInt(bank_account_id) : null,
+           inpQty, inpUnit, inpRate).run()
     const purchaseId = ins.meta.last_row_id as number
     await syncRawPurchaseLedger(c.env, purchaseId, {
       supplier_id: sid, supplier_name: sname, entry_date: eDate,
@@ -1453,7 +1556,8 @@ app.post('/api/raw-materials', requireAuth, async (c) => {
     const existing = await c.env.DB.prepare('SELECT * FROM raw_materials WHERE id = ?').bind(target_id).first() as any
     if (existing) {
       await recordPurchase(target_id)
-      await recomputeRawMaterialFromPurchases(c.env, target_id)
+      if (convUnit || convPer > 0) await c.env.DB.prepare('UPDATE raw_materials SET purchase_unit=?, pieces_per_purchase_unit=? WHERE id=?').bind(convUnit, convPer, target_id).run()
+      await syncRawMaterialAfterPurchase(c.env, target_id, q)
       return c.json({ id: target_id, merged: true })
     }
   }
@@ -1466,23 +1570,24 @@ app.post('/api/raw-materials', requireAuth, async (c) => {
     ).bind(name, u).first() as any
     if (dup) {
       await recordPurchase(dup.id)
-      // Update name/category/notes if user changed them, then recompute
+      // Update name/category/notes if user changed them, then delta-apply
       await c.env.DB.prepare(
         `UPDATE raw_materials SET category=COALESCE(NULLIF(?, ''), category), notes=COALESCE(NULLIF(?, ''), notes) WHERE id=?`
       ).bind(category || '', notes || '', dup.id).run()
-      await recomputeRawMaterialFromPurchases(c.env, dup.id)
+      if (convUnit || convPer > 0) await c.env.DB.prepare('UPDATE raw_materials SET purchase_unit=?, pieces_per_purchase_unit=? WHERE id=?').bind(convUnit, convPer, dup.id).run()
+      await syncRawMaterialAfterPurchase(c.env, dup.id, q)
       return c.json({ id: dup.id, merged: true })
     }
   }
 
   // Create brand new material
   const result = await c.env.DB.prepare(
-    `INSERT INTO raw_materials (name, unit, quantity, rate, total_value, supplier_id, supplier_name, category, notes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(name, u, 0, 0, 0, sid, sname, category || '', notes || '').run()
+    `INSERT INTO raw_materials (name, unit, quantity, rate, total_value, supplier_id, supplier_name, category, notes, purchase_unit, pieces_per_purchase_unit)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(name, u, 0, 0, 0, sid, sname, category || '', notes || '', convUnit, convPer).run()
   const newId = result.meta.last_row_id as number
   await recordPurchase(newId)
-  await recomputeRawMaterialFromPurchases(c.env, newId)
+  await syncRawMaterialAfterPurchase(c.env, newId, q)
   return c.json({ id: newId })
 })
 
@@ -1492,6 +1597,10 @@ app.post('/api/raw-materials/:id/restock', requireAuth, async (c) => {
   const body = await c.req.json()
   const { quantity, rate, supplier_id, supplier_name, paid_amount, entry_date, notes } = body
   const bank_account_id = body.bank_account_id
+  // KG -> Pieces: quantity/rate stock unit (pcs) me hain; asal input audit ke liye.
+  const inpQty = body.input_quantity != null ? (parseFloat(body.input_quantity) || 0) : null
+  const inpUnit = (body.input_unit || '').toString()
+  const inpRate = body.input_rate != null ? (parseFloat(body.input_rate) || 0) : null
   const addQty = parseFloat(quantity) || 0
   const addRate = parseFloat(rate) || 0
   if (addQty <= 0) return c.json({ error: 'Quantity must be > 0' }, 400)
@@ -1505,9 +1614,11 @@ app.post('/api/raw-materials/:id/restock', requireAuth, async (c) => {
   const eDate = entry_date || new Date().toISOString().slice(0, 10)
   const ins = await c.env.DB.prepare(
     `INSERT INTO raw_material_purchases (raw_material_id, supplier_id, supplier_name, entry_date,
-                                         quantity, rate, total_amount, paid_amount, remaining_amount, notes, bank_account_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(id, sid, sname, eDate, addQty, addRate, total, paid, remaining, notes || '', bank_account_id ? parseInt(bank_account_id) : null).run()
+                                         quantity, rate, total_amount, paid_amount, remaining_amount, notes, bank_account_id,
+                                         input_quantity, input_unit, input_rate)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(id, sid, sname, eDate, addQty, addRate, total, paid, remaining, notes || '', bank_account_id ? parseInt(bank_account_id) : null,
+         inpQty, inpUnit, inpRate).run()
   const purchaseId = ins.meta.last_row_id as number
   await syncRawPurchaseLedger(c.env, purchaseId, {
     supplier_id: sid, supplier_name: sname, entry_date: eDate,
@@ -1521,7 +1632,7 @@ app.post('/api/raw-materials/:id/restock', requireAuth, async (c) => {
     category: 'raw_material', source: 'raw_material',
     party_name: sname, description: `Raw material: ${existing.name} (${addQty} ${existing.unit})`
   })
-  await recomputeRawMaterialFromPurchases(c.env, id)
+  await syncRawMaterialAfterPurchase(c.env, id, addQty)
   return c.json({ success: true, id, purchase_id: purchaseId })
 })
 
@@ -1540,11 +1651,16 @@ app.put('/api/raw-material-purchases/:pid', requireAuth, async (c) => {
   const paid = parseFloat(paid_amount) || 0
   const remaining = Math.max(0, total - paid)
   const eDate = entry_date || existing.entry_date
+  const inpQtyU = body.input_quantity != null ? (parseFloat(body.input_quantity) || 0) : (existing.input_quantity ?? null)
+  const inpUnitU = body.input_unit != null ? String(body.input_unit) : (existing.input_unit || '')
+  const inpRateU = body.input_rate != null ? (parseFloat(body.input_rate) || 0) : (existing.input_rate ?? null)
   await c.env.DB.prepare(
     `UPDATE raw_material_purchases SET supplier_id=?, supplier_name=?, entry_date=?,
-        quantity=?, rate=?, total_amount=?, paid_amount=?, remaining_amount=?, notes=?, bank_account_id=?, updated_at=CURRENT_TIMESTAMP
+        quantity=?, rate=?, total_amount=?, paid_amount=?, remaining_amount=?, notes=?, bank_account_id=?,
+        input_quantity=?, input_unit=?, input_rate=?, updated_at=CURRENT_TIMESTAMP
      WHERE id=?`
-  ).bind(sid, sname, eDate, q, rt, total, paid, remaining, notes || '', bank_account_id ? parseInt(bank_account_id) : null, pid).run()
+  ).bind(sid, sname, eDate, q, rt, total, paid, remaining, notes || '', bank_account_id ? parseInt(bank_account_id) : null,
+         inpQtyU, inpUnitU, inpRateU, pid).run()
   // Get raw name/unit for ledger description
   const rm = await c.env.DB.prepare('SELECT name, unit FROM raw_materials WHERE id = ?').bind(existing.raw_material_id).first() as any
   await syncRawPurchaseLedger(c.env, pid, {
@@ -1559,7 +1675,7 @@ app.put('/api/raw-material-purchases/:pid', requireAuth, async (c) => {
     category: 'raw_material', source: 'raw_material',
     party_name: sname, description: `Raw material: ${rm?.name || ''} (${q} ${rm?.unit || ''})`
   })
-  await recomputeRawMaterialFromPurchases(c.env, existing.raw_material_id)
+  await syncRawMaterialAfterPurchase(c.env, existing.raw_material_id, q - (parseFloat(existing.quantity) || 0))
   return c.json({ success: true })
 })
 
@@ -1573,7 +1689,7 @@ app.delete('/api/raw-material-purchases/:pid', requireAuth, async (c) => {
   }
   if (existing.bank_txn_id) await deleteBankTxn(c.env, existing.bank_txn_id)
   await c.env.DB.prepare('DELETE FROM raw_material_purchases WHERE id = ?').bind(pid).run()
-  await recomputeRawMaterialFromPurchases(c.env, existing.raw_material_id)
+  await syncRawMaterialAfterPurchase(c.env, existing.raw_material_id, -(parseFloat(existing.quantity) || 0))
   return c.json({ success: true })
 })
 
@@ -1613,11 +1729,19 @@ app.post('/api/raw-material-purchases/:pid/pay', requireAuth, async (c) => {
 
 app.put('/api/raw-materials/:id', requireAuth, async (c) => {
   const id = c.req.param('id')
-  const { name, unit, category, notes } = await c.req.json()
+  const body = await c.req.json()
+  const { name, unit, category, notes } = body
   // Only basic fields editable here — quantity/rate/supplier are derived from purchases.
-  await c.env.DB.prepare(
-    `UPDATE raw_materials SET name=?, unit=?, category=?, notes=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
-  ).bind(name, unit || 'pcs', category || '', notes || '', id).run()
+  // KG -> Pieces conversion fields sirf tab update hote hain jab body me bheje jayein.
+  if (body.purchase_unit !== undefined || body.pieces_per_purchase_unit !== undefined) {
+    await c.env.DB.prepare(
+      `UPDATE raw_materials SET name=?, unit=?, category=?, notes=?, purchase_unit=?, pieces_per_purchase_unit=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
+    ).bind(name, unit || 'pcs', category || '', notes || '', (body.purchase_unit || '').toString().trim(), parseFloat(body.pieces_per_purchase_unit) || 0, id).run()
+  } else {
+    await c.env.DB.prepare(
+      `UPDATE raw_materials SET name=?, unit=?, category=?, notes=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
+    ).bind(name, unit || 'pcs', category || '', notes || '', id).run()
+  }
   return c.json({ success: true })
 })
 
@@ -1642,10 +1766,10 @@ app.post('/api/raw-materials/:id/stock-correction', requireAuth, async (c) => {
   if (Math.abs(delta) < 1e-9) {
     return c.json({ success: true, no_change: true })
   }
-  // Record the correction as a zero-cost purchase batch with the delta as
-  // quantity. Rate is 0 (correction, not a purchase) so weighted average rate
-  // is NOT distorted — recomputeRawMaterialFromPurchases will keep the same
-  // avg rate but adjust the aggregate quantity.
+  // Correction ko ek zero-cost batch ke tor par record karo (history ke liye).
+  // Rate/avg par koi asar nahi: sync function correction rows ko rate hisaab
+  // se bahir rakhta hai, aur quantity par sirf DELTA apply hota hai — is liye
+  // final quantity bilkul wahi hogi jo user ne physical count batai.
   // Supplier is kept blank (manual stock correction, no supplier involved).
   const descNote = `[Stock Correction] ${delta > 0 ? '+' : ''}${delta} ${rm.unit || ''} · was ${currentQty}, now ${newQty}${reason ? ' · ' + reason : ''}`
   await c.env.DB.prepare(
@@ -1653,8 +1777,7 @@ app.post('/api/raw-materials/:id/stock-correction', requireAuth, async (c) => {
        (raw_material_id, supplier_id, supplier_name, quantity, rate, total_amount, paid_amount, remaining_amount, entry_date, notes)
      VALUES (?, NULL, '', ?, 0, 0, 0, 0, ?, ?)`
   ).bind(id, delta, dateStr, descNote).run()
-  // Recompute aggregate quantity (avg rate is unchanged because new row has rate=0 and total=0).
-  await recomputeRawMaterialFromPurchases(c.env, id)
+  await syncRawMaterialAfterPurchase(c.env, id, delta)
   return c.json({ success: true, delta, new_quantity: newQty })
 })
 
@@ -2041,7 +2164,8 @@ app.post('/api/product-production', requireAuth, async (c) => {
     : stage === 'paint' ? (parseFloat(product.paint_rate) || 0)
     : (parseFloat(product.pack_rate) || 0)
   let r: number
-  if (rate === undefined || rate === null || rate === '') {
+  // SALARY FIX: rate 0 ko bhi "missing" samjho (warna payout 0 -> salary entry hi nahi banti)
+  if (rate === undefined || rate === null || rate === '' || !(parseFloat(rate) > 0)) {
     const empRate = employee_id ? await getEmployeeItemRate(c.env, employee_id, [
       `${product.name} ${stage}`,   // "rack paint"
       `${stage} ${product.name}`,   // "paint rack"
@@ -2058,6 +2182,11 @@ app.post('/api/product-production', requireAuth, async (c) => {
 
   const assembled = parseFloat(product.assembled_qty) || 0
   const painted = parseFloat(product.painted_qty) || 0
+
+  // SNAPSHOT FIX: assemble par use hue components/raw ka snapshot rakho —
+  // edit/delete ka reversal MAUJOUDA recipe se hota tha, recipe badal jaye
+  // to stock ghalat reverse hota tha. Ab har entry apna usage record rakhegi.
+  const assembleUsageSnapshot: { source_type: string, source_id: number, item_name: string, qty_used: number }[] = []
 
   // ---- Stock movement checks + apply ----
   if (stage === 'assemble') {
@@ -2089,11 +2218,17 @@ app.post('/api/product-production', requireAuth, async (c) => {
       if (shortages.length > 0) return c.json({ error: 'Not enough stock to assemble this quantity.', shortages }, 400)
       for (const pc of comps) {
         const need = (parseFloat(pc.quantity_required) || 0) * qty
-        if (need > 0) await c.env.DB.prepare('UPDATE components SET quantity = MAX(0, quantity - ?), updated_at=CURRENT_TIMESTAMP WHERE id = ?').bind(need, pc.component_id).run()
+        if (need > 0) {
+          await c.env.DB.prepare('UPDATE components SET quantity = MAX(0, quantity - ?), updated_at=CURRENT_TIMESTAMP WHERE id = ?').bind(need, pc.component_id).run()
+          assembleUsageSnapshot.push({ source_type: 'component', source_id: pc.component_id, item_name: pc.comp_name || '', qty_used: need })
+        }
       }
       for (const ing of ings) {
         const need = (parseFloat(ing.quantity_required) || 0) * qty
-        if (need > 0) await c.env.DB.prepare('UPDATE raw_materials SET quantity = MAX(0, quantity - ?), total_value = MAX(0, quantity - ?) * rate, updated_at=CURRENT_TIMESTAMP WHERE id = ?').bind(need, need, ing.raw_material_id).run()
+        if (need > 0) {
+          await c.env.DB.prepare('UPDATE raw_materials SET quantity = MAX(0, quantity - ?), total_value = MAX(0, quantity - ?) * rate, updated_at=CURRENT_TIMESTAMP WHERE id = ?').bind(need, need, ing.raw_material_id).run()
+          assembleUsageSnapshot.push({ source_type: 'raw', source_id: ing.raw_material_id, item_name: ing.raw_name || '', qty_used: need })
+        }
       }
     }
     await c.env.DB.prepare('UPDATE products SET assembled_qty = assembled_qty + ?, updated_at=CURRENT_TIMESTAMP WHERE id = ?').bind(qty, product_id).run()
@@ -2110,6 +2245,11 @@ app.post('/api/product-production', requireAuth, async (c) => {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(dateStr, stage, product_id, product.name, employee_id || null, emp?.name || '', qty, r, payout, doDeduct, notes || '', wantBarcodes ? 1 : 0).run()
   const logId = insLog.meta.last_row_id as number
+
+  // Assemble usage snapshot save karo (edit/delete reversal ke liye)
+  for (const u of assembleUsageSnapshot) {
+    await c.env.DB.prepare('INSERT INTO product_recipe_usage (product_log_id, source_type, source_id, item_name, qty_used) VALUES (?, ?, ?, ?, ?)').bind(logId, u.source_type, u.source_id, u.item_name, u.qty_used).run()
+  }
 
   if (stage === 'pack') {
     if (doDeduct && qty > painted + 1e-9) {
@@ -2241,8 +2381,46 @@ app.put('/api/product-production/:id', requireAuth, async (c) => {
 
   if (old.product_id && qtyDelta !== 0) {
     if (old.stage === 'assemble') {
+      // SNAPSHOT FIX: is entry ka apna usage snapshot hai to adjustment usi
+      // se hoga — recipe badal jane par bhi hisaab sahi rahega.
+      let assembleViaSnapshot = false
+      if (deducted && oldQty > 0) {
+        const snapRes0 = await c.env.DB.prepare('SELECT * FROM product_recipe_usage WHERE product_log_id = ?').bind(id).all()
+        const snapRows0: any[] = (snapRes0.results as any[]) || []
+        if (snapRows0.length > 0) {
+          assembleViaSnapshot = true
+          const scale0 = finalQty / oldQty
+          if (qtyDelta > 0) {
+            const shortages0: string[] = []
+            for (const u of snapRows0) {
+              const extra = (parseFloat(u.qty_used) || 0) * (scale0 - 1)
+              if (extra <= 0 || !u.source_id) continue
+              if (u.source_type === 'component') {
+                const cp = await c.env.DB.prepare('SELECT quantity FROM components WHERE id = ?').bind(u.source_id).first() as any
+                const have = cp ? (parseFloat(cp.quantity) || 0) : 0
+                if (extra > have + 1e-9) shortages0.push(`${u.item_name}: need ${+extra.toFixed(3)} more, have ${+have.toFixed(3)}`)
+              } else if (u.source_type === 'raw') {
+                const rm = await c.env.DB.prepare('SELECT quantity FROM raw_materials WHERE id = ?').bind(u.source_id).first() as any
+                const have = rm ? (parseFloat(rm.quantity) || 0) : 0
+                if (extra > have + 1e-9) shortages0.push(`${u.item_name}: need ${+extra.toFixed(3)} more, have ${+have.toFixed(3)}`)
+              }
+            }
+            if (shortages0.length > 0) return c.json({ error: 'Not enough stock for the increased quantity.', shortages: shortages0 }, 400)
+          }
+          for (const u of snapRows0) {
+            const oldUsed = parseFloat(u.qty_used) || 0
+            const newUsed = oldUsed * scale0
+            const netConsume = newUsed - oldUsed
+            if (u.source_id && netConsume !== 0) {
+              if (u.source_type === 'component') stmts.push(c.env.DB.prepare('UPDATE components SET quantity = MAX(0, quantity - ?), updated_at=CURRENT_TIMESTAMP WHERE id = ?').bind(netConsume, u.source_id))
+              else if (u.source_type === 'raw') stmts.push(c.env.DB.prepare('UPDATE raw_materials SET quantity = MAX(0, quantity - ?), total_value = MAX(0, quantity - ?) * rate, updated_at=CURRENT_TIMESTAMP WHERE id = ?').bind(netConsume, netConsume, u.source_id))
+            }
+            stmts.push(c.env.DB.prepare('UPDATE product_recipe_usage SET qty_used = ? WHERE id = ?').bind(newUsed, u.id))
+          }
+        }
+      }
       // Reverse old + apply new on the recipe consumption (net = perUnit * delta)
-      if (deducted) {
+      if (deducted && !assembleViaSnapshot) {
         const compRes = await c.env.DB.prepare(
           `SELECT pc.*, cp.name as comp_name, cp.quantity as comp_quantity
            FROM product_components pc LEFT JOIN components cp ON cp.id = pc.component_id
@@ -2358,6 +2536,18 @@ app.put('/api/product-production/:id', requireAuth, async (c) => {
   }
   await c.env.DB.batch(stmts)
 
+  // SALARY FIX: create ke waqt payout 0 tha (emp_tx nahi bani) aur ab edit par
+  // rate/payout aa gaya — salary entry bana do warna hamesha ghayab rehti.
+  if (!old.emp_tx_id && old.employee_id && payout > 0) {
+    const stageLbl = old.stage === 'assemble' ? 'Assemble' : old.stage === 'paint' ? 'Paint' : 'Pack'
+    const insTx2 = await c.env.DB.prepare(
+      `INSERT INTO employee_transactions
+        (employee_id, entry_date, type, amount, description, entry_type, item_id, item_name, quantity, rate, paid_amount, product_log_id)
+       VALUES (?, ?, 'salary', ?, ?, 'per_piece', NULL, ?, ?, ?, 0, ?)`
+    ).bind(old.employee_id, newDate, payout, `${stageLbl}: ${old.product_name || ''}`, `${old.product_name || ''} (${stageLbl})`, finalQty, newRate, id).run()
+    await c.env.DB.prepare('UPDATE product_production_logs SET emp_tx_id = ? WHERE id = ?').bind(insTx2.meta.last_row_id, id).run()
+  }
+
   // After the main batch: adjust auto-generated barcodes for pack logs so the
   // number of barcodes stays in sync with the final quantity.
   //  • If quantity went UP   → generate the extra barcodes
@@ -2420,15 +2610,29 @@ app.delete('/api/product-production/:id', requireAuth, async (c) => {
       // remove assembled units; if it had deducted recipe stock, restore it
       stmts.push(c.env.DB.prepare('UPDATE products SET assembled_qty = MAX(0, assembled_qty - ?) WHERE id = ?').bind(qty, old.product_id))
       if (old.deducted) {
-        const compRes = await c.env.DB.prepare('SELECT * FROM product_components WHERE product_id = ?').bind(old.product_id).all()
-        for (const pc of (compRes.results as any[])) {
-          const back = (parseFloat(pc.quantity_required) || 0) * qty
-          if (back > 0) stmts.push(c.env.DB.prepare('UPDATE components SET quantity = quantity + ? WHERE id = ?').bind(back, pc.component_id))
-        }
-        const ingRes = await c.env.DB.prepare('SELECT * FROM product_ingredients WHERE product_id = ?').bind(old.product_id).all()
-        for (const ing of (ingRes.results as any[])) {
-          const back = (parseFloat(ing.quantity_required) || 0) * qty
-          if (back > 0) stmts.push(c.env.DB.prepare('UPDATE raw_materials SET quantity = quantity + ?, total_value = (quantity + ?) * rate WHERE id = ?').bind(back, back, ing.raw_material_id))
+        // SNAPSHOT FIX: pehle is entry ka usage snapshot dekho — wahi asal
+        // consumption tha. Snapshot na ho (purani entry) to current recipe fallback.
+        const snapDel = await c.env.DB.prepare('SELECT * FROM product_recipe_usage WHERE product_log_id = ?').bind(id).all()
+        const snapDelRows: any[] = (snapDel.results as any[]) || []
+        if (snapDelRows.length > 0) {
+          for (const u of snapDelRows) {
+            const back = parseFloat(u.qty_used) || 0
+            if (back <= 0 || !u.source_id) continue
+            if (u.source_type === 'component') stmts.push(c.env.DB.prepare('UPDATE components SET quantity = quantity + ? WHERE id = ?').bind(back, u.source_id))
+            else if (u.source_type === 'raw') stmts.push(c.env.DB.prepare('UPDATE raw_materials SET quantity = quantity + ?, total_value = (quantity + ?) * rate WHERE id = ?').bind(back, back, u.source_id))
+          }
+          stmts.push(c.env.DB.prepare('DELETE FROM product_recipe_usage WHERE product_log_id = ?').bind(id))
+        } else {
+          const compRes = await c.env.DB.prepare('SELECT * FROM product_components WHERE product_id = ?').bind(old.product_id).all()
+          for (const pc of (compRes.results as any[])) {
+            const back = (parseFloat(pc.quantity_required) || 0) * qty
+            if (back > 0) stmts.push(c.env.DB.prepare('UPDATE components SET quantity = quantity + ? WHERE id = ?').bind(back, pc.component_id))
+          }
+          const ingRes = await c.env.DB.prepare('SELECT * FROM product_ingredients WHERE product_id = ?').bind(old.product_id).all()
+          for (const ing of (ingRes.results as any[])) {
+            const back = (parseFloat(ing.quantity_required) || 0) * qty
+            if (back > 0) stmts.push(c.env.DB.prepare('UPDATE raw_materials SET quantity = quantity + ?, total_value = (quantity + ?) * rate WHERE id = ?').bind(back, back, ing.raw_material_id))
+          }
         }
       }
     } else if (old.stage === 'paint') {
@@ -2727,7 +2931,12 @@ app.post('/api/production', requireAuth, async (c) => {
   // per-item rate (employee_items) for this component; only fall back to the
   // component's default_rate when the worker has no custom rate saved.
   let r: number
-  if (rate === undefined || rate === null || rate === '') {
+  // SALARY FIX: frontend aksar rate 0 bhej deta hai jab auto-fill miss ho jaye —
+  // pehle is surat me payout 0 banta aur worker ki salary entry banti hi NAHI
+  // thi (user ko lagta tha "salary update nahi hoti"). Ab rate 0 ko bhi
+  // "missing" samajh kar pehle worker ka saved rate, phir component ka
+  // default rate lagta hai.
+  if (rate === undefined || rate === null || rate === '' || !(parseFloat(rate) > 0)) {
     const empRate = employee_id ? await getEmployeeItemRate(c.env, employee_id, [comp.name]) : null
     r = empRate !== null ? empRate : (parseFloat(comp.default_rate) || 0)
   } else {
@@ -2790,13 +2999,14 @@ app.post('/api/production', requireAuth, async (c) => {
   let totalRawUsed = 0
 
   // Insert production log first (to get id)
+  // stock_added = GOOD pieces (qty - scrap) jo asal me component stock me jayenge.
   const insLog = await c.env.DB.prepare(
     `INSERT INTO production_logs
-      (entry_date, employee_id, employee_name, component_id, component_name, quantity, rate, payout, raw_used, scrap_qty, deducted_raw, notes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      (entry_date, employee_id, employee_name, component_id, component_name, quantity, rate, payout, raw_used, scrap_qty, deducted_raw, notes, stock_added)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     dateStr, employee_id || null, emp?.name || '', component_id, comp.name,
-    qty, r, payout, 0, totalScrap, doDeduct, notes || ''
+    qty, r, payout, 0, totalScrap, doDeduct, notes || '', payableQty
   ).run()
   const logId = insLog.meta.last_row_id as number
 
@@ -2830,21 +3040,21 @@ app.post('/api/production', requireAuth, async (c) => {
     }
   }
 
-  // If scrap entered AND there is a single ingredient, deduct scrap from that raw material too
-  if (doDeduct && totalScrap > 0 && ings.length === 1) {
-    const ing = ings[0]
-    await c.env.DB.prepare(
-      `UPDATE raw_materials SET quantity = MAX(0, quantity - ?), total_value = MAX(0, quantity - ?) * rate, updated_at=CURRENT_TIMESTAMP WHERE id = ?`
-    ).bind(totalScrap, totalScrap, ing.raw_material_id).run()
-  }
+  // SCRAP FIX: pehle scrap par EK AUR alag raw deduction hoti thi (sirf
+  // single-ingredient par, woh bhi raw "units" me pieces ki jagah) — halanke
+  // recipe deduction (perUnit x qty) me scrap pieces ka raw pehle hi kat
+  // chuka hota hai. Wo double-count tha aur delete par wapas bhi nahi hota
+  // tha (usage rows me record nahi thi). Ab scrap ka raw alag se NAHI katega.
 
   // Update raw_used on the log
   await c.env.DB.prepare('UPDATE production_logs SET raw_used = ? WHERE id = ?').bind(totalRawUsed, logId).run()
 
-  // Add produced quantity to component stock
+  // Component stock me sirf GOOD pieces jate hain (qty - scrap).
+  // Pehle scrap pieces bhi stock me add ho jate thay — stock hamesha asal se
+  // zyada dikhta tha aur aage assemble me wohi ghalat stock use hota tha.
   await c.env.DB.prepare(
     'UPDATE components SET quantity = quantity + ?, updated_at=CURRENT_TIMESTAMP WHERE id = ?'
-  ).bind(qty, component_id).run()
+  ).bind(payableQty, component_id).run()
 
   // Record the worker's per-piece payout in employee_transactions (so it shows in profile + weekly total)
   let empTxId: number | null = null
@@ -2871,29 +3081,83 @@ app.put('/api/production/:id', requireAuth, async (c) => {
   const old = await c.env.DB.prepare('SELECT * FROM production_logs WHERE id = ?').bind(id).first() as any
   if (!old) return c.json({ error: 'Not found' }, 404)
 
+  const oldQty = parseFloat(old.quantity) || 0
+  const oldScrap = parseFloat(old.scrap_qty) || 0
   const newQty = parseFloat(body.quantity)
-  const finalQty = isNaN(newQty) ? (parseFloat(old.quantity) || 0) : newQty
+  const finalQty = isNaN(newQty) ? oldQty : newQty
+  if (finalQty <= 0) return c.json({ error: 'Quantity must be > 0' }, 400)
   const newRate = (body.rate === undefined || body.rate === null || body.rate === '') ? (parseFloat(old.rate) || 0) : (parseFloat(body.rate) || 0)
   const newDate = body.entry_date || old.entry_date
-  const newScrap = (body.scrap_qty === undefined || body.scrap_qty === null || body.scrap_qty === '') ? (parseFloat(old.scrap_qty) || 0) : (parseFloat(body.scrap_qty) || 0)
+  const newScrap = (body.scrap_qty === undefined || body.scrap_qty === null || body.scrap_qty === '') ? oldScrap : (parseFloat(body.scrap_qty) || 0)
   const newNotes = body.notes !== undefined ? body.notes : old.notes
   // BUG5 FIX: payout excludes scrap pieces on edit as well
   const payableQty = Math.max(0, finalQty - newScrap)
   const payout = payableQty * newRate
 
-  // Adjust component stock by the delta (newQty - oldQty)
-  const qtyDelta = finalQty - (parseFloat(old.quantity) || 0)
+  // PROD FIX (miscalculation): pehle EDIT par sirf component stock (bina scrap
+  // adjustment) aur payout badalta tha — RAW MATERIAL ka use bilkul update
+  // NAHI hota tha. Quantity 100 se 150 karo to extra 50 ka raw katega hi
+  // nahi; 100 se 50 karo to kata hua raw wapas nahi aata tha. Hisab roz
+  // bigarta tha. Ab:
+  //   - Component stock delta = GOOD pieces ka delta (stock_added based)
+  //   - Raw/child usage purane SNAPSHOT (production_raw_usage) ko nayi qty
+  //     ke hisaab se scale karke stock adjust hota hai (pack-edit wala tareeqa)
+  const oldStockAdded = (old.stock_added !== null && old.stock_added !== undefined) ? (parseFloat(old.stock_added) || 0) : oldQty
+  const stockDelta = payableQty - oldStockAdded
+
+  // Agar qty barhi hai to pehle check karo ke extra raw/component stock hai bhi ya nahi
+  let usageRows: any[] = []
+  if (old.deducted_raw) {
+    const usage = await c.env.DB.prepare('SELECT * FROM production_raw_usage WHERE production_log_id = ?').bind(id).all()
+    usageRows = (usage.results as any[]) || []
+    if (finalQty > oldQty && oldQty > 0) {
+      const shortages: string[] = []
+      for (const u of usageRows) {
+        const extra = (parseFloat(u.qty_used) || 0) * (finalQty / oldQty - 1)
+        if (extra <= 0) continue
+        if (u.raw_material_id) {
+          const rm = await c.env.DB.prepare('SELECT name, quantity FROM raw_materials WHERE id = ?').bind(u.raw_material_id).first() as any
+          const have = rm ? (parseFloat(rm.quantity) || 0) : 0
+          if (extra > have + 1e-9) shortages.push(`${rm?.name || u.raw_name || 'Raw material'}: need ${+extra.toFixed(3)} more, have ${+have.toFixed(3)}`)
+        } else if (u.child_component_id) {
+          const cp = await c.env.DB.prepare('SELECT name, quantity FROM components WHERE id = ?').bind(u.child_component_id).first() as any
+          const have = cp ? (parseFloat(cp.quantity) || 0) : 0
+          if (extra > have + 1e-9) shortages.push(`${cp?.name || u.raw_name || 'Component'}: need ${+extra.toFixed(3)} more, have ${+have.toFixed(3)}`)
+        }
+      }
+      if (shortages.length > 0) return c.json({ error: 'Not enough stock for the increased quantity.', shortages }, 400)
+    }
+  }
 
   // HARDENING: all writes in ONE atomic batch
   const stmts: any[] = []
-  if (old.component_id && qtyDelta !== 0) {
+  if (old.component_id && stockDelta !== 0) {
     stmts.push(c.env.DB.prepare(
       'UPDATE components SET quantity = MAX(0, quantity + ?), updated_at=CURRENT_TIMESTAMP WHERE id = ?'
-    ).bind(qtyDelta, old.component_id))
+    ).bind(stockDelta, old.component_id))
+  }
+  // Raw/child usage scaling
+  if (old.deducted_raw && oldQty > 0 && finalQty !== oldQty) {
+    const scale = finalQty / oldQty
+    for (const u of usageRows) {
+      const oldUsed = parseFloat(u.qty_used) || 0
+      const newUsed = oldUsed * scale
+      const net = newUsed - oldUsed // + = aur consume, - = wapas
+      if (net !== 0) {
+        if (u.raw_material_id) {
+          stmts.push(c.env.DB.prepare('UPDATE raw_materials SET quantity = MAX(0, quantity - ?), total_value = MAX(0, quantity - ?) * rate, updated_at=CURRENT_TIMESTAMP WHERE id = ?').bind(net, net, u.raw_material_id))
+        } else if (u.child_component_id) {
+          stmts.push(c.env.DB.prepare('UPDATE components SET quantity = MAX(0, quantity - ?), updated_at=CURRENT_TIMESTAMP WHERE id = ?').bind(net, u.child_component_id))
+        }
+      }
+      stmts.push(c.env.DB.prepare('UPDATE production_raw_usage SET qty_used = ? WHERE id = ?').bind(newUsed, u.id))
+    }
+    const totalNewRawUsed = usageRows.reduce((sum, x) => sum + (parseFloat(x.qty_used) || 0) * (finalQty / oldQty), 0)
+    stmts.push(c.env.DB.prepare('UPDATE production_logs SET raw_used = ? WHERE id = ?').bind(totalNewRawUsed, id))
   }
   stmts.push(c.env.DB.prepare(
-    `UPDATE production_logs SET entry_date=?, quantity=?, rate=?, payout=?, scrap_qty=?, notes=? WHERE id=?`
-  ).bind(newDate, finalQty, newRate, payout, newScrap, newNotes, id))
+    `UPDATE production_logs SET entry_date=?, quantity=?, rate=?, payout=?, scrap_qty=?, notes=?, stock_added=? WHERE id=?`
+  ).bind(newDate, finalQty, newRate, payout, newScrap, newNotes, payableQty, id))
   // Update linked employee transaction (payout)
   if (old.emp_tx_id) {
     stmts.push(c.env.DB.prepare(
@@ -2902,7 +3166,18 @@ app.put('/api/production/:id', requireAuth, async (c) => {
   }
   await c.env.DB.batch(stmts)
 
-  // MANUAL TEST (BUG5): log 100 pcs with 10 scrap at rate 5 → payout must be 450 (90*5), not 500.
+  // SALARY FIX: agar create ke waqt rate 0 tha to koi salary entry NAHI bani
+  // thi (emp_tx_id null). Ab edit par rate aa gaya hai — salary entry BANA do,
+  // warna worker ki salary hamesha ke liye ghayab rehti thi.
+  if (!old.emp_tx_id && old.employee_id && payout > 0) {
+    const insTx = await c.env.DB.prepare(
+      `INSERT INTO employee_transactions
+        (employee_id, entry_date, type, amount, description, entry_type, item_id, item_name, quantity, rate, paid_amount, production_log_id)
+       VALUES (?, ?, 'salary', ?, ?, 'per_piece', NULL, ?, ?, ?, 0, ?)`
+    ).bind(old.employee_id, newDate, payout, `Production: ${old.component_name || ''}`, old.component_name || '', payableQty, newRate, id).run()
+    await c.env.DB.prepare('UPDATE production_logs SET emp_tx_id = ? WHERE id = ?').bind(insTx.meta.last_row_id, id).run()
+  }
+
   return c.json({ success: true, payout })
 })
 
@@ -2913,11 +3188,13 @@ app.delete('/api/production/:id', requireAuth, async (c) => {
   if (!old) return c.json({ error: 'Not found' }, 404)
   // HARDENING: all reversal writes in ONE atomic batch
   const stmts: any[] = []
-  // reverse component stock
+  // reverse component stock — jitne GOOD pieces add hue thay (stock_added)
+  // utne hi minus. Purani entries me stock_added = quantity backfill hai.
   if (old.component_id) {
+    const addedBack = (old.stock_added !== null && old.stock_added !== undefined) ? (parseFloat(old.stock_added) || 0) : (parseFloat(old.quantity) || 0)
     stmts.push(c.env.DB.prepare(
       'UPDATE components SET quantity = MAX(0, quantity - ?), updated_at=CURRENT_TIMESTAMP WHERE id = ?'
-    ).bind(parseFloat(old.quantity) || 0, old.component_id))
+    ).bind(addedBack, old.component_id))
   }
   // restore deducted raw materials AND child components
   if (old.deducted_raw) {
@@ -3714,13 +3991,18 @@ app.get('/api/dashboard', requireAuth, async (c) => {
       LEFT JOIN client_net cn ON cn.folder_id = f.id
       GROUP BY f.id ORDER BY f.sort_order
     `).all(),
+    // WhatsApp Payment Reminders ke liye: sirf CUSTOMER folders, NET due
+    // (opening + pending - received) ke hisaab se, sirf jin ka due > 0 hai.
     c.env.DB.prepare(`
-      SELECT cl.id, cl.name, f.name as folder_name,
+      SELECT cl.id, cl.name, cl.phone, f.name as folder_name,
+             COALESCE(cl.opening_balance,0) as opening_balance,
              COALESCE(SUM(t.amount_pending),0) as pending,
-             COALESCE(SUM(t.amount_received),0) as received
+             COALESCE(SUM(t.amount_received),0) as received,
+             COALESCE(cl.opening_balance,0) + COALESCE(SUM(t.amount_pending),0) - COALESCE(SUM(t.amount_received),0) as net_due
       FROM clients cl LEFT JOIN folders f ON f.id = cl.folder_id
       LEFT JOIN transactions t ON t.client_id = cl.id
-      GROUP BY cl.id ORDER BY pending DESC LIMIT 10
+      WHERE COALESCE(f.ledger_type,'customer') = 'customer'
+      GROUP BY cl.id HAVING net_due > 0 ORDER BY net_due DESC LIMIT 10
     `).all(),
     c.env.DB.prepare(`
       SELECT t.*, cl.name as client_name, f.name as folder_name
@@ -4428,13 +4710,12 @@ app.get('/', (c) => {
 <link rel="icon" type="image/png" href="/icons/favicon.png">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-<link rel="preconnect" href="https://cdn.tailwindcss.com">
-<script src="https://cdn.tailwindcss.com"></script>
+<!-- SPEED FIX: Tailwind ab pehle se compile ki hui static CSS hai (Play CDN
+     runtime compiler hata diya — wahi slowness ki sab se bari wajah tha).
+     jsPDF / html2canvas / JsBarcode / html5-qrcode bhi ab page load par NAHI
+     aatein — app.js inhein pehli zaroorat par lazy-load karta hai. -->
+<link href="/static/tailwind.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="bg-gray-100 antialiased">

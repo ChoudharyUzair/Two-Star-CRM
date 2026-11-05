@@ -6,7 +6,46 @@
 - **Goal**: Complete business CRM for Two Star Industries — manage clients, ledgers, inventory, raw materials, manufacturing recipes, employees, side expenses, and bills with auto Net Profit tracking.
 - **Stack**: Hono (TypeScript) + Cloudflare Pages + Cloudflare D1 (SQLite) + TailwindCSS + Vanilla JS frontend
 
-## What's New (latest update — 2026-10-03) — Pack Barcode Checkbox + Bulk Barcode Delete
+## What's New (latest update — 2026-11-05) — Stock Calculation Fixes + Speed + WhatsApp Reminders + KG→Pieces
+
+> Owner ki 6 requests par kaam: (1) WhatsApp payment reminder, (2) app ki slowness, (3) bill par stock kabhi minus na hona + doosri calculation ghaltiyan, (4) Raw Material KG → Pieces conversion, (5) Production module ki miscalculation, (6) Employee salary / pieces update delay. Migrations `0025` + `0026`. Tests: purani regression 19/19 + nayi `tests/regression2.sh` 23/23 + `tests/regression3.sh` 20/20 PASS.
+
+### 🧮 1. Bill stock fix — "bill bana, stock minus nahi hua" (sab se bara bug)
+- **Wajah:** stock sirf tab kat-ta tha jab frontend exact `product_id` bhejta tha. Naam haath se type karne par (case farq, extra space) id NULL reh jata aur backend chup chaap bill save kar deta — stock nahi kat-ta tha. Bill insert aur stock update alag steps me thay, darmiyan fail ho to bill ban jata, stock nahi kat-ta.
+- **Fix:** server ab har item ko khud resolve karta hai (pehle id verify, phir naam se trim + case-insensitive match). Items + stock + sale-movement EK atomic batch me. Batch fail → bill bhi rollback. Jo item phir bhi match na ho us ka naam `stock_warnings` me wapas aata hai aur frontend save se pehle bhi warning deta hai.
+- Har bill sale ab `inventory_movements` me `bill_id` ke saath record hoti hai (trace ke liye). Bill-linked entries Recent Entries se manually edit/delete blocked hain (double reversal rokne ke liye); bill edit/delete unhein khud sync karta hai.
+- Frontend: product naam type karte hi live match (change event ka intezar nahi), row me ✓ matched / ⚠ not matched hint, save par double-click guard.
+
+### 📦 2. Raw Material stock fix — use hua stock "wapas" aa jata tha
+- **Wajah:** quantity = SUM(purchases) se recompute hoti thi, lekin production consumption kisi purchase row me record nahi hota. Koi bhi restock/edit/delete recompute chala kar use hua stock wapas add kar deta tha.
+- **Fix:** quantity ab authoritative hai; purchase changes sirf DELTA apply karte hain (`syncRawMaterialAfterPurchase`). Avg rate purchases se (stock-correction rows ke baghair), `total_value = qty × avg rate`.
+
+### ⚖️ 3. KG → Pieces conversion (Raw Material)
+- Har material par set kar sakte hain: **Purchase Unit** (kg) + **1 kg = kitne Pieces** (Raw Material → Edit → "KG → Pieces Conversion", ya Add form me).
+- Phir Restock me sirf **KG** aur **Rate per KG** likhein — stock **Pieces** me khud add hota hai, rate per piece khud calculate hota hai, supplier ka saved rate per KG hi auto-fetch hota hai aur per KG hi save hota hai.
+- Har purchase par asal input (input_quantity/input_unit/input_rate) record hota hai; Recent Entries me "+10 kg (= 2,500 pcs)" dikhta hai.
+
+### 🏭 4. Production module calculation fixes
+- **Component stock me sirf GOOD pieces** (qty − scrap) jate hain — pehle scrap bhi stock me add ho jata tha. Scrap par alag raw double-deduction hata di (recipe deduction me pehle hi shamil tha, delete par wapas bhi nahi hota tha). `production_logs.stock_added` (migration `0026`) reversal ko purani/nayi entries dono par sahi rakhta hai.
+- **Production EDIT par raw bhi update hota hai** — pehle quantity edit karne par component stock + payout badalta tha lekin raw usage bilkul nahi (hisaab roz bigarta tha). Ab usage snapshot (`production_raw_usage`) nayi qty par scale hota hai, barhane par pehle stock check hota hai.
+- **Assemble usage snapshot** (`product_recipe_usage`): pehle assemble ka koi usage record nahi banta tha; edit/delete reversal maujooda recipe se hota tha — recipe badli to stock ghalat reverse hota tha. Ab har assemble entry apna snapshot rakhti hai (purani entries ke liye purana tareeqa fallback hai).
+
+### 👷 5. Employee salary / pieces update delay fix
+- **Wajah 1:** rate auto-fill miss ho jaye to frontend rate `0` bhej deta tha → payout 0 → salary entry banti hi nahi thi. Ab rate 0 ko bhi "missing" samajh kar worker ka saved rate, warna default rate lagta hai.
+- **Wajah 2:** production EDIT ke errors frontend chupa deta tha aur "saved" ka jhoota toast aata tha. Ab asli error dikhta hai, modal band nahi hota.
+- **Wajah 3:** edit par agar create ke waqt salary entry nahi bani thi (rate 0 waja se) to wo hamesha ghayab rehti thi — ab edit par payout bante hi entry bana di jati hai. Worker profile se Log Production kholne par ab worker ka rate bhi foran auto-fill hota hai.
+
+### 💬 6. WhatsApp Payment Reminder
+- **Ledger page** par green **Payment Reminder** button (jab customer ka baqaya ho) — ready-made message customer ke WhatsApp par khul jata hai.
+- **Customer cards** par bhi chhota Reminder button (baqaya > 0 + phone ho to).
+- **Dashboard** par nayi section "Payment Reminders — Sab Se Zyada Baqaya": top 10 NET-due customers (backend ab `topPending` me net due + phone bhejta hai) — ek click par reminder.
+
+### ⚡ 7. Speed fix
+- **Tailwind Play CDN hata diya** — wo browser me har load par poori CSS runtime par generate karta tha (slowness ki sab se bari wajah). Ab pehle se compiled static `public/static/tailwind.css` (24 KB) aati hai. Build: `npm run build` me `build:css` shamil hai; nayi Tailwind class use karo to build dobara chalana hoga.
+- **Heavy libraries lazy-load:** jsPDF, html2canvas, JsBarcode, html5-qrcode (~1 MB JS) ab pehle page load par NAHI aatein — sirf PDF / barcode / scanner kholne par pehli dafa load hoti hain.
+- Service worker cache version `v4` (purana cache khud saaf ho jayega).
+
+## What's New (previous update — 2026-10-03) — Pack Barcode Checkbox + Bulk Barcode Delete
 
 ### ☑️ 1. Products Manufacturing → Pack entry: "Generate Barcode" checkbox
 - Pack stage ki entry (Log Product Production) me ab **Generate Barcode** checkbox hai (sirf Pack stage pe dikhta hai).
