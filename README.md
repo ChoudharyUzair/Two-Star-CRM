@@ -71,6 +71,11 @@ Har kisi ke proper records, table ki surat me, **date filter** (All Time / Today
 - **Stat cards ki spacing theek:** reports ke stat cards aur table card ke darmiyan ab baqi pages jaisi saaf spacing hai, aur card ki value label se thori neeche (mt-1) aati hai.
 - **Poore CRM se static hints khatam:** har page ke neeche wali subtitle lines (17), modals ke description/information paragraphs, fields ke neeche wali rahnumai lines, login page ka default-password note box, Dashboard ka Lena/Dena legend, Products ka "Manufacturing flow" box, Components ka "Kaise kaam karta hai" box, folder editor ki radio descriptions aur ledger header ki chhoti explanation lines — sab remove kar di gayi hain. **Data wali text (counts, totals, Product/Material/Period lines) aur dynamic alerts (rate-missing warning, conversion preview, shortage errors, empty states) waisay ke waisay hain** — sirf khari rahnumai wali static lines gayi hain.
 
+### 🔎 14. Detail popup ke andar bhi Filter
+- Customer / Employee / Supplier ki detail popup ke andar ab **apna Filter** hai ("Filter — Time Period" dropdown): All Time, Today, Yesterday, Last 7 Days, Last 30 Days, This Month, Last Month, This Year, ya **Custom Range** (From/To dates + Apply).
+- Period badalte hi **usi shakhs ka record usi naye period ke liye dobara load** ho jata hai — popup band karke page wala filter badalne ki zaroorat nahi. Peeche wali summary table apni jagah rehti hai (page ka filter alag hai).
+- Popup ki PDF bhi hamesha wohi period deti hai jo popup me screen par dikh raha ho. Jis period me us shakhs ka koi record na ho, wahan popup khali (zero) record ke saath khula rehta hai taake aap doosra period chun saken.
+
 ### ⚡ 7. Speed fix
 - **Tailwind Play CDN hata diya** — wo browser me har load par poori CSS runtime par generate karta tha (slowness ki sab se bari wajah). Ab pehle se compiled static `public/static/tailwind.css` (24 KB) aati hai. Build: `npm run build` me `build:css` shamil hai; nayi Tailwind class use karo to build dobara chalana hoga.
 - **Heavy libraries lazy-load:** jsPDF, html2canvas, JsBarcode, html5-qrcode (~1 MB JS) ab pehle page load par NAHI aatein — sirf PDF / barcode / scanner kholne par pehli dafa load hoti hain.

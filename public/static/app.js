@@ -7757,6 +7757,8 @@ const App = {
   _reportData: null,
   _reportPdf: null,
   _reportDetailPdf: null,
+  _reportDetailCtx: null,
+  _reportDetailFilter: null,
   _reportStockSection: 'inventory',
 
   async showReports(tab) {
@@ -8066,14 +8068,65 @@ const App = {
   },
 
   // Row ki detail POPUP (modal) me — page ke neeche nahi khulti.
+  // Popup ke ANDAR apna Filter bhi hai: period badal kar usi shakhs ka
+  // record dobara load ho jata hai, popup band karne ki zaroorat nahi.
   openReportDetail(kind, idx) {
     const d = this._reportData; if (!d) return;
+    const rows = d[kind] || [];
+    const sel = rows[idx]; if (!sel) return;
+    const keyField = kind === 'customers' ? 'customer_key' : kind === 'employees' ? 'employee_key' : 'supplier_key';
+    const items = (d.items || []).filter(x => x[keyField] === sel.key);
+    const name = kind === 'customers' ? sel.customer_name : kind === 'employees' ? sel.employee_name : sel.supplier_name;
+    this._reportDetailCtx = { kind, key: sel.key, name };
     const { from, to } = this._reportPeriod();
+    this._reportDetailFilter = { preset: (this._reportFilter && this._reportFilter.preset) || 'all', from, to };
+    this._renderReportDetail(sel, items, from, to);
+  },
+
+  _onDetailPreset(v) {
+    if (v === 'custom') {
+      const row = document.getElementById('rep-detail-custom');
+      if (row) row.style.display = 'flex';
+      return;
+    }
+    const r = this._reportRangeFor(v);
+    this._reportDetailFilter = { preset: v, from: r.from, to: r.to };
+    this._reloadReportDetail();
+  },
+
+  _applyDetailCustom() {
+    const from = document.getElementById('rep-detail-from')?.value || '';
+    const to = document.getElementById('rep-detail-to')?.value || '';
+    this._reportDetailFilter = { preset: 'custom', from, to };
+    this._reloadReportDetail();
+  },
+
+  async _reloadReportDetail() {
+    const ctx = this._reportDetailCtx; const f = this._reportDetailFilter;
+    if (!ctx || !f) return;
+    try {
+      const d = await this.api.get(`/api/reports/${ctx.kind}?from=${encodeURIComponent(f.from || '')}&to=${encodeURIComponent(f.to || '')}`);
+      const sel = (d[ctx.kind] || []).find(r => r.key === ctx.key) || null;
+      const keyField = ctx.kind === 'customers' ? 'customer_key' : ctx.kind === 'employees' ? 'employee_key' : 'supplier_key';
+      const items = (d.items || []).filter(x => x[keyField] === ctx.key);
+      this._renderReportDetail(sel, items, f.from, f.to);
+    } catch { this.toast('Report dobara load nahi hui — dobara try karein', 'error'); }
+  },
+
+  _renderReportDetail(selIn, items, from, to) {
+    const ctx = this._reportDetailCtx; if (!ctx) return;
+    const kind = ctx.kind;
     const period = this._reportRangeLabel(from, to);
+    const f = this._reportDetailFilter || { preset: 'all' };
+    // Is period me record na ho to zero wali khali row bana lo (naam popup me qaim rahe)
+    let sel = selIn;
+    if (!sel) {
+      if (kind === 'customers') sel = { customer_name: ctx.name, bills: 0, total_amount: 0, total_paid: 0, due: 0 };
+      else if (kind === 'employees') sel = { employee_name: ctx.name, entries: 0, good_pieces: 0, scrap: 0, payout: 0 };
+      else sel = { supplier_name: ctx.name, purchases: 0, total_amount: 0, total_paid: 0, remaining: 0 };
+    }
     let title = '', icon = 'fa-list', headers = [], rowsHtml = '', pdf = null, summaryLine = '';
     if (kind === 'customers') {
-      const sel = (d.customers || [])[idx]; if (!sel) return;
-      const items = (d.items || []).filter(x => x.customer_key === sel.key);
       title = `${sel.customer_name} — konsi cheez kitni khareedi`; icon = 'fa-users';
       summaryLine = `Bills: <strong>${sel.bills}</strong> · Total: <strong>PKR ${this.fmt(sel.total_amount)}</strong> · Paid: <strong>PKR ${this.fmt(sel.total_paid)}</strong> · Due: <strong class="text-red-600">PKR ${this.fmt(sel.due)}</strong>`;
       headers = [{t:'#'},{t:'Product'},{t:'Qty',r:1},{t:'Bills',r:1},{t:'Amount',r:1}];
@@ -8082,8 +8135,6 @@ const App = {
         rows: items.map((x, i) => [i + 1, x.product_name, this.fmt(x.quantity), x.bills, this.fmt(x.amount)]),
         totals: ['', 'TOTAL', this.fmt(items.reduce((s, x) => s + (parseFloat(x.quantity) || 0), 0)), '', this.fmt(items.reduce((s, x) => s + (parseFloat(x.amount) || 0), 0))] };
     } else if (kind === 'employees') {
-      const sel = (d.employees || [])[idx]; if (!sel) return;
-      const items = (d.items || []).filter(x => x.employee_key === sel.key);
       title = `${sel.employee_name} — konsi cheez kitni banayi`; icon = 'fa-user-tie';
       summaryLine = `Entries: <strong>${sel.entries}</strong> · Good pieces: <strong>${this.fmt(sel.good_pieces)}</strong> · Scrap: <strong>${this.fmt(sel.scrap)}</strong> · Payout: <strong class="text-green-700">PKR ${this.fmt(sel.payout)}</strong>`;
       headers = [{t:'#'},{t:'Item / Stage'},{t:'Entries',r:1},{t:'Pieces',r:1},{t:'Payout',r:1}];
@@ -8092,8 +8143,6 @@ const App = {
         rows: items.map((x, i) => [i + 1, x.item_name, x.entries, this.fmt(x.pieces), this.fmt(x.payout)]),
         totals: ['', 'TOTAL', items.reduce((s, x) => s + x.entries, 0), this.fmt(items.reduce((s, x) => s + (parseFloat(x.pieces) || 0), 0)), this.fmt(items.reduce((s, x) => s + (parseFloat(x.payout) || 0), 0))] };
     } else if (kind === 'suppliers') {
-      const sel = (d.suppliers || [])[idx]; if (!sel) return;
-      const items = (d.items || []).filter(x => x.supplier_key === sel.key);
       title = `${sel.supplier_name} — konsa material kitna liya`; icon = 'fa-truck';
       summaryLine = `Purchases: <strong>${sel.purchases}</strong> · Total: <strong>PKR ${this.fmt(sel.total_amount)}</strong> · Paid: <strong>PKR ${this.fmt(sel.total_paid)}</strong> · Remaining: <strong class="text-red-600">PKR ${this.fmt(sel.remaining)}</strong>`;
       headers = [{t:'#'},{t:'Material'},{t:'Qty',r:1},{t:'Amount',r:1}];
@@ -8103,10 +8152,22 @@ const App = {
         totals: ['', 'TOTAL', this.fmt(items.reduce((s, x) => s + (parseFloat(x.quantity) || 0), 0)), this.fmt(items.reduce((s, x) => s + (parseFloat(x.amount) || 0), 0))] };
     } else { return; }
     this._reportDetailPdf = pdf;
+    const presetOpts = [['all','All Time'],['today','Today'],['yesterday','Yesterday'],['week','Last 7 Days'],['last30','Last 30 Days'],['month','This Month'],['lastmonth','Last Month'],['year','This Year'],['custom','Custom Range']];
     this.openModal(`
       <h2 class="text-xl font-bold mb-1"><i class="fas ${icon} text-blue-500 mr-2"></i>${this.escapeHtml(title)}</h2>
       <p class="text-sm text-gray-500 mb-1">Period: ${period}</p>
-      <p class="text-sm text-gray-700 mb-4">${summaryLine}</p>
+      <p class="text-sm text-gray-700 mb-3">${summaryLine}</p>
+      <div class="flex flex-wrap items-end gap-2 mb-4 bg-gray-50 border rounded-xl p-3">
+        <div><label class="block text-xs text-gray-500 mb-1"><i class="fas fa-filter mr-1"></i>Filter — Time Period</label>
+          <select id="rep-detail-preset" class="input-field" style="width:auto" onchange="App._onDetailPreset(this.value)">
+            ${presetOpts.map(([v, l]) => `<option value="${v}" ${f.preset === v ? 'selected' : ''}>${l}</option>`).join('')}
+          </select></div>
+        <div id="rep-detail-custom" style="display:${f.preset === 'custom' ? 'flex' : 'none'};gap:.5rem;flex-wrap:wrap;align-items:flex-end;">
+          <div><label class="block text-xs text-gray-500 mb-1">From Date</label><input id="rep-detail-from" type="date" class="input-field" value="${from || ''}"></div>
+          <div><label class="block text-xs text-gray-500 mb-1">To Date</label><input id="rep-detail-to" type="date" class="input-field" value="${to || ''}"></div>
+          <button type="button" class="btn btn-primary btn-sm" onclick="App._applyDetailCustom()"><i class="fas fa-check"></i> Apply</button>
+        </div>
+      </div>
       <div class="bg-white rounded-xl border overflow-hidden mb-4">
         <div class="overflow-x-auto"><table class="ledger-table">
           <thead><tr>${headers.map(h => `<th class="${h.r ? 'text-right' : ''}">${h.t}</th>`).join('')}</tr></thead>
