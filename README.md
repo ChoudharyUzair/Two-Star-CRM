@@ -52,6 +52,11 @@ Har kisi ke proper records, table ki surat me, **date filter** (All Time / Today
 - Customer ke ledger me jo entry kisi bill se auto-linked hai, us ke **Bill No ke saath ab neela print/view button** aata hai (Bills wali list jaisa hi icon). Click karte hi wahi bill khul jata hai — andar kya items thay, rate, total sab dikh jata hai — **ledger chhor kar Bills page par jane ki zaroorat nahi**.
 - Peeche API ab har ledger transaction ke saath us ke asal bill ka `bill_id` bheijti hai (`bills.ledger_transaction_id` se exact match). Manual entries (Cash, Discount waghera) par koi button nahi aata kyunke un ka koi bill nahi hota.
 
+### 🔍 10. Bills search + Ledger search hata diya + bill-view button ki shakal theek
+- **Bills page par ab search field hai** (table ke upar): bill no, customer naam, date ya status likhte hi list filter ho jati hai, saath "X of Y bills" count bhi dikhta hai. Sirf table update hoti hai — likhne ke doran focus nahi jata.
+- **Ledger ke andar wala search field hata diya** (owner ki hidayat par) — us ka saara code bhi saaf kar diya, ledger ki pagination pehle ki tarah normal chalti hai.
+- **Ledger ka bill-view button saaf kar diya:** pehle wo lambi neeli pill ki shakal me number ke upar charh jata tha. Ab wo aik **chhota sa fixed-size (24×24) neela square icon** hai jo Bill No ke saath saaf dikhta hai, aur Bill No wala column bhi thora wide kar diya hai taake number + button aram se ajayen.
+
 ### ⚡ 7. Speed fix
 - **Tailwind Play CDN hata diya** — wo browser me har load par poori CSS runtime par generate karta tha (slowness ki sab se bari wajah). Ab pehle se compiled static `public/static/tailwind.css` (24 KB) aati hai. Build: `npm run build` me `build:css` shamil hai; nayi Tailwind class use karo to build dobara chalana hoga.
 - **Heavy libraries lazy-load:** jsPDF, html2canvas, JsBarcode, html5-qrcode (~1 MB JS) ab pehle page load par NAHI aatein — sirf PDF / barcode / scanner kholne par pehli dafa load hoti hain.

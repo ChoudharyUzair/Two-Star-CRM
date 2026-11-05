@@ -810,7 +810,6 @@ const App = {
   async openClient(clientId) {
     this.state.currentClientId = clientId;
     this.state.view = 'ledger';
-    this._ledgerSearch = '';   // reset the ledger entry search for the new client
     this.setActiveNav('');
     this.closeSidebarOnMobile();
     try {
@@ -919,13 +918,6 @@ const App = {
           <div class="px-4 py-3 border-b flex items-center justify-between flex-wrap gap-2">
             <h2 class="font-bold text-gray-800"><i class="fas fa-book mr-2"></i>Khata / Ledger</h2>
             <div class="flex items-center gap-2 flex-wrap">
-              <div class="relative">
-                <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs"></i>
-                <input type="text" id="ledger-search" placeholder="Search entries (date, bill, amount, note)..."
-                  class="input-field pl-8" style="max-width:280px;padding-top:6px;padding-bottom:6px;"
-                  value="${this.escapeAttr(this._ledgerSearch || '')}"
-                  oninput="App.onLedgerSearch(this.value)">
-              </div>
               <button onclick="App.addRow()" class="btn btn-success btn-sm"><i class="fas fa-plus"></i> Add Row</button>
             </div>
           </div>
@@ -934,7 +926,7 @@ const App = {
               <thead><tr>
                 <th style="width:40px;">${colHeader('sno')}</th>
                 <th style="width:120px;">${colHeader('date')}</th>
-                <th style="width:110px;">${colHeader('bill_no')}</th>
+                <th style="width:140px;">${colHeader('bill_no')}</th>
                 <th style="width:130px;">${colHeader('amount_pending')}</th>
                 <th style="width:130px;">${colHeader('amount_received')}</th>
                 <th style="width:120px;">${colHeader('status')}</th>
@@ -962,8 +954,6 @@ const App = {
   },
 
   _renderLedgerPager() {
-    // While a search is active we show all matches on one page, so hide the pager.
-    if ((this._ledgerSearch || '').trim()) return '';
     const total = this.state.transactions.length;
     const { totalPages, page } = this.paginate(this.state.transactions, 'ledger');
     return this.renderPager('ledger', page, totalPages, total, 'refreshLedgerBody');
@@ -979,52 +969,20 @@ const App = {
     try { document.getElementById('ledger-table').scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {}
   },
 
-  // Does a ledger transaction match the current search term? Searches across
-  // date, bill no, amounts, status, description and any custom-column values.
-  _ledgerRowMatches(t, term) {
-    if (!term) return true;
-    const q = term.toLowerCase();
-    const customData = (() => { try { return JSON.parse(t.custom_data || '{}'); } catch { return {}; } })();
-    const parts = [
-      t.entry_date, t.bill_no, t.description, t.status,
-      String(parseFloat(t.amount_pending) || 0),
-      String(parseFloat(t.amount_received) || 0),
-      ...Object.values(customData || {})
-    ];
-    return parts.some(v => v != null && String(v).toLowerCase().includes(q));
-  },
-
-  onLedgerSearch(val) {
-    this._ledgerSearch = val || '';
-    // Reset to first page whenever the filter changes so results are visible.
-    this._setPage('ledger', 1);
-    this.refreshLedgerBody();
-    // Keep focus in the search box after re-render.
-    const el = document.getElementById('ledger-search');
-    if (el) { el.focus(); try { el.setSelectionRange(el.value.length, el.value.length); } catch (e) {} }
-  },
-
   renderRows(opening) {
     if (this.state.transactions.length === 0) {
       return `<tr><td colspan="${9 + this.state.customColumns.length}" class="text-center py-8 text-gray-500">
         <i class="fas fa-inbox text-3xl mb-2 block"></i>No transactions yet. Click "Add Row" to start.</td></tr>`;
     }
-    const term = (this._ledgerSearch || '').trim();
-    // When searching, show ALL matching rows (ignore pagination) but still
-    // compute the running balance from the full, unfiltered list so every row's
-    // balance stays correct. When not searching, paginate as before.
     const { page } = this.paginate(this.state.transactions, 'ledger');
-    const startIdx = term ? 0 : (page - 1) * this.PAGE_SIZE;
-    const endIdx = term ? this.state.transactions.length : startIdx + this.PAGE_SIZE;
+    const startIdx = (page - 1) * this.PAGE_SIZE;
+    const endIdx = startIdx + this.PAGE_SIZE;
     let running = opening;
-    let shown = 0;
     const html = this.state.transactions.map((t, i) => {
       const rec = parseFloat(t.amount_received) || 0;
       const pen = parseFloat(t.amount_pending) || 0;
       running = running + pen - rec;
       if (i < startIdx || i >= endIdx) return '';
-      if (term && !this._ledgerRowMatches(t, term)) return '';
-      shown++;
       const customData = (() => { try { return JSON.parse(t.custom_data || '{}'); } catch { return {}; } })();
       const isAuto = t.auto_generated == 1;
       const lockIcon = isAuto ? `<i class="fas fa-link text-blue-400 ml-1" title="Auto-linked from Bill #${this.escapeAttr(t.bill_no || '')}"></i>` : '';
@@ -1038,7 +996,7 @@ const App = {
         <tr data-id="${t.id}" class="${isAuto ? 'row-auto' : ''}">
           <td class="text-gray-500">${i + 1}${lockIcon}</td>
           <td class="cell-display">${t.entry_date || ''}</td>
-          <td class="cell-display">${this.escapeHtml(t.bill_no || '')}${t.bill_id ? ` <button onclick="App.printBill(${t.bill_id})" class="btn btn-primary btn-sm" style="padding:1px 7px;font-size:11px;vertical-align:middle;" title="Bill dekhein — is bill me kya tha"><i class="fas fa-print"></i></button>` : ''}</td>
+          <td class="cell-display"><span style="white-space:nowrap;">${this.escapeHtml(t.bill_no || '')}${t.bill_id ? `<button type="button" onclick="App.printBill(${t.bill_id})" title="Bill dekhein — is bill me kya tha" style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;min-width:24px;border-radius:6px;background:#2563eb;color:#fff;border:none;cursor:pointer;vertical-align:middle;margin-left:6px;font-size:11px;padding:0;line-height:1;"><i class="fas fa-print"></i></button>` : ''}</span></td>
           <td class="amount-pending cell-display">${isPaid ? '<span class="text-gray-400">—</span>' : 'PKR ' + this.fmt(pen)}</td>
           <td class="amount-received cell-display">PKR ${this.fmt(rec)}</td>
           <td><span class="status-badge status-${statusClass}">${this.escapeHtml(statusDisplay)}</span></td>
@@ -1051,10 +1009,6 @@ const App = {
           </td>
         </tr>`;
     }).join('');
-    if (term && shown === 0) {
-      return `<tr><td colspan="${9 + this.state.customColumns.length}" class="text-center py-8 text-gray-500">
-        <i class="fas fa-magnifying-glass text-3xl mb-2 block"></i>"${this.escapeHtml(term)}" ke liye koi entry nahi mili.</td></tr>`;
-    }
     return html;
   },
 
@@ -7099,6 +7053,7 @@ const App = {
     document.getElementById('content-area').innerHTML = `
       <div class="page-header"><h1 class="page-title"><i class="fas fa-file-invoice text-blue-500"></i>Bills</h1></div>
       <div class="p-6"><div class="text-gray-400 text-center py-8"><i class="fas fa-spinner fa-spin text-2xl"></i></div></div>`;
+    this._billSearch = '';   // har dafa Bills page khulne par search saaf
     try {
       const data = await this.api.get('/api/bills');
       this.state.bills = data.bills || [];
@@ -7126,35 +7081,83 @@ const App = {
           <div class="stat-card"><p class="text-xs text-gray-500">Outstanding</p><p class="text-xl font-bold amount-pending">PKR ${this.fmt(due)}</p></div>
         </div>
         <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+          <div class="px-4 py-3 border-b flex items-center justify-between flex-wrap gap-2">
+            <div class="relative">
+              <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs"></i>
+              <input type="text" id="bills-search" placeholder="Search bills (bill no, customer, date, status)..."
+                class="input-field pl-8" style="width:320px;max-width:100%;padding-top:6px;padding-bottom:6px;"
+                value="${this.escapeAttr(this._billSearch || '')}"
+                oninput="App.onBillSearch(this.value)">
+            </div>
+            <span id="bills-count" class="text-xs text-gray-500"></span>
+          </div>
           <div class="overflow-x-auto"><table class="ledger-table">
             <thead><tr>
               <th>Bill No</th><th>Date</th><th>Customer</th>
               <th class="text-right">Total</th><th class="text-right">Paid</th>
               <th class="text-right">Due</th><th>Status</th>
               <th style="width:160px;">Actions</th>
-            </tr></thead><tbody>
-              ${this.state.bills.length === 0 ? `<tr><td colspan="8" class="text-center py-8 text-gray-500">
-                <i class="fas fa-file-invoice text-3xl mb-2 block"></i>No bills yet.</td></tr>` :
-                this.state.bills.map(b => {
-                  const due = (parseFloat(b.total) || 0) - (parseFloat(b.paid) || 0);
-                  return `<tr>
-                    <td class="font-semibold">${this.escapeHtml(b.bill_no)}</td>
-                    <td>${b.bill_date}</td>
-                    <td>${this.escapeHtml(b.customer_name || b.client_name || '-')}${b.client_id ? ' <i class="fas fa-link text-blue-400 text-xs" title="Linked to client ledger"></i>' : ''}</td>
-                    <td class="text-right font-medium">PKR ${this.fmt(b.total)}</td>
-                    <td class="text-right amount-received">PKR ${this.fmt(b.paid)}</td>
-                    <td class="text-right amount-pending">PKR ${this.fmt(due)}</td>
-                    <td><span class="status-badge status-${(b.status||'').toLowerCase()}">${this.escapeHtml(b.status || 'Unpaid')}</span></td>
-                    <td>
-                      <button onclick="App.showBillEditor(${b.id})" class="btn btn-secondary btn-sm"><i class="fas fa-edit"></i></button>
-                      <button onclick="App.printBill(${b.id})" class="btn btn-primary btn-sm"><i class="fas fa-print"></i></button>
-                      <button onclick="App.deleteBill(${b.id})" class="btn btn-danger btn-sm"><i class="fas fa-trash"></i></button>
-                    </td>
-                  </tr>`;
-                }).join('')}
-            </tbody></table></div>
+            </tr></thead><tbody id="bills-tbody">${this.renderBillsRows()}</tbody></table></div>
         </div>
       </div>`;
+    this.updateBillsCount();
+  },
+
+  // Bills search: bill no, customer naam, date aur status par filter.
+  // Sirf table body update hoti hai — search box ka focus nahi jata.
+  _billMatches(b, q) {
+    const parts = [b.bill_no, b.customer_name, b.client_name, b.bill_date, b.status, String(parseFloat(b.total) || 0)];
+    return parts.some(v => v != null && String(v).toLowerCase().includes(q));
+  },
+
+  _filteredBills() {
+    const q = (this._billSearch || '').trim().toLowerCase();
+    if (!q) return this.state.bills || [];
+    return (this.state.bills || []).filter(b => this._billMatches(b, q));
+  },
+
+  onBillSearch(val) {
+    this._billSearch = val || '';
+    const tb = document.getElementById('bills-tbody');
+    if (tb) tb.innerHTML = this.renderBillsRows();
+    this.updateBillsCount();
+  },
+
+  updateBillsCount() {
+    const el = document.getElementById('bills-count');
+    if (!el) return;
+    const n = this._filteredBills().length;
+    const total = (this.state.bills || []).length;
+    el.textContent = (this._billSearch || '').trim() ? `${n} of ${total} bill(s)` : '';
+  },
+
+  renderBillsRows() {
+    const bills = this._filteredBills();
+    if ((this.state.bills || []).length === 0) {
+      return `<tr><td colspan="8" class="text-center py-8 text-gray-500">
+        <i class="fas fa-file-invoice text-3xl mb-2 block"></i>No bills yet.</td></tr>`;
+    }
+    if (bills.length === 0) {
+      return `<tr><td colspan="8" class="text-center py-8 text-gray-500">
+        <i class="fas fa-magnifying-glass text-3xl mb-2 block"></i>"${this.escapeHtml(this._billSearch || '')}" ke liye koi bill nahi mila.</td></tr>`;
+    }
+    return bills.map(b => {
+      const due = (parseFloat(b.total) || 0) - (parseFloat(b.paid) || 0);
+      return `<tr>
+        <td class="font-semibold">${this.escapeHtml(b.bill_no)}</td>
+        <td>${b.bill_date}</td>
+        <td>${this.escapeHtml(b.customer_name || b.client_name || '-')}${b.client_id ? ' <i class="fas fa-link text-blue-400 text-xs" title="Linked to client ledger"></i>' : ''}</td>
+        <td class="text-right font-medium">PKR ${this.fmt(b.total)}</td>
+        <td class="text-right amount-received">PKR ${this.fmt(b.paid)}</td>
+        <td class="text-right amount-pending">PKR ${this.fmt(due)}</td>
+        <td><span class="status-badge status-${(b.status||'').toLowerCase()}">${this.escapeHtml(b.status || 'Unpaid')}</span></td>
+        <td>
+          <button onclick="App.showBillEditor(${b.id})" class="btn btn-secondary btn-sm"><i class="fas fa-edit"></i></button>
+          <button onclick="App.printBill(${b.id})" class="btn btn-primary btn-sm"><i class="fas fa-print"></i></button>
+          <button onclick="App.deleteBill(${b.id})" class="btn btn-danger btn-sm"><i class="fas fa-trash"></i></button>
+        </td>
+      </tr>`;
+    }).join('');
   },
 
   async showBillEditor(billId = null) {
