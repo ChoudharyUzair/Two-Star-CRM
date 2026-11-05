@@ -62,6 +62,10 @@ Har kisi ke proper records, table ki surat me, **date filter** (All Time / Today
 - **Fix (backend):** endpoint ab sirf un clients ko deta hai jo **supplier folder** me hain (folder ka ledger_type 'supplier', ya section/name se supplier) — wahi usool jo baqi system istemal karta hai.
 - **Fix (frontend):** naya `_supplierClients()` helper Restock, Edit Purchase aur Raw Material Editor — teeno supplier dropdowns par lag gaya; agar allClients me kabhi saare clients bharay hon tab bhi sirf suppliers dikhenge. Edit ke waqt pehle se select shuda supplier hamesha list me rehta hai.
 
+### 🎨 12. Reports UI — baqi CRM jaisa + detail ab POPUP me
+- Reports page ka UI ab baqi CRM jaisa hai: page header, filter card ke andar segmented tab buttons (Customers / Employees / Suppliers / Stock), har tab par **stat cards** (Bills page wali style) aur title bar wali white table cards.
+- **Row ki detail ab page ke neeche NAHI khulti** — customer/employee/supplier ki row (ya eye button) par click karne se detail **popup (modal)** me aati hai: naam, period, totals aur cheez-war table ke saath. Popup ke andar se usi detail ki **PDF** bhi download ho jati hai; page wala PDF button hamesha summary report deta hai.
+
 ### ⚡ 7. Speed fix
 - **Tailwind Play CDN hata diya** — wo browser me har load par poori CSS runtime par generate karta tha (slowness ki sab se bari wajah). Ab pehle se compiled static `public/static/tailwind.css` (24 KB) aati hai. Build: `npm run build` me `build:css` shamil hai; nayi Tailwind class use karo to build dobara chalana hoga.
 - **Heavy libraries lazy-load:** jsPDF, html2canvas, JsBarcode, html5-qrcode (~1 MB JS) ab pehle page load par NAHI aatein — sirf PDF / barcode / scanner kholne par pehli dafa load hoti hain.

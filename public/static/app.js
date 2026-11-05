@@ -7781,10 +7781,13 @@ const App = {
   //   Employees (kis ne kitna maal banaya, pieces + payout)
   //   Suppliers (kis se kitna raw khareeda)
   //   Stock (period me opening / in / out / closing)
+  // UI baqi CRM jaisa hai (page header, stat cards, white table cards) aur
+  // kisi row par click karne se us ki detail neeche NAHI khulti — POPUP
+  // (modal) me aati hai.
   _reportTab: 'customers',
-  _reportKey: null,
   _reportData: null,
   _reportPdf: null,
+  _reportDetailPdf: null,
   _reportStockSection: 'inventory',
 
   async showReports(tab) {
@@ -7798,25 +7801,27 @@ const App = {
     const area = document.getElementById('content-area');
     area.innerHTML = `
       <div class="page-header">
-        <div><h1 class="page-title"><i class="fas fa-table text-indigo-500"></i>Reports</h1>
+        <div><h1 class="page-title"><i class="fas fa-table text-blue-500"></i>Reports</h1>
           <p class="page-subtitle">Customers, Employees, Suppliers aur Stock ke mukammal records — date filter + PDF ke saath</p></div>
         <button onclick="App.downloadReportPDF()" class="btn btn-primary"><i class="fas fa-file-pdf"></i> Download PDF</button>
       </div>
-      <div class="p-4 md:p-6 space-y-4">
-        <div class="bg-white rounded-xl shadow-sm p-3 flex flex-wrap items-end gap-3">
-          <div><label class="block text-xs text-gray-500 mb-1">From Date</label><input id="rep-from" type="date" class="input-field" style="width:auto"></div>
-          <div><label class="block text-xs text-gray-500 mb-1">To Date</label><input id="rep-to" type="date" class="input-field" style="width:auto"></div>
-          <button onclick="App.loadReport()" class="btn btn-secondary btn-sm"><i class="fas fa-filter"></i> Filter</button>
-          <div class="flex gap-1 flex-wrap">
-            <button onclick="App._reportQuick('all')" class="btn btn-secondary btn-sm">All Time</button>
-            <button onclick="App._reportQuick('today')" class="btn btn-secondary btn-sm">Today</button>
-            <button onclick="App._reportQuick('week')" class="btn btn-secondary btn-sm">Last 7 Days</button>
-            <button onclick="App._reportQuick('month')" class="btn btn-secondary btn-sm">This Month</button>
+      <div class="p-4 md:p-6 space-y-5">
+        <div class="bg-white rounded-xl shadow-sm p-4 space-y-3">
+          <div class="flex flex-wrap items-end gap-3">
+            <div><label class="block text-xs text-gray-500 mb-1">From Date</label><input id="rep-from" type="date" class="input-field" style="width:auto"></div>
+            <div><label class="block text-xs text-gray-500 mb-1">To Date</label><input id="rep-to" type="date" class="input-field" style="width:auto"></div>
+            <button onclick="App.loadReport()" class="btn btn-secondary btn-sm"><i class="fas fa-filter"></i> Filter</button>
+            <div class="flex gap-1 flex-wrap">
+              <button onclick="App._reportQuick('all')" class="btn btn-secondary btn-sm">All Time</button>
+              <button onclick="App._reportQuick('today')" class="btn btn-secondary btn-sm">Today</button>
+              <button onclick="App._reportQuick('week')" class="btn btn-secondary btn-sm">Last 7 Days</button>
+              <button onclick="App._reportQuick('month')" class="btn btn-secondary btn-sm">This Month</button>
+            </div>
           </div>
-        </div>
-        <div class="flex gap-1 border-b text-sm flex-wrap">
-          ${[['customers','fa-users','Customers — Khareed'],['employees','fa-user-tie','Employees — Production'],['suppliers','fa-truck','Suppliers — Khareed'],['stock','fa-boxes','Stock Report']].map(([t,ic,lbl]) => `
-            <button onclick="App.showReports('${t}')" class="px-3 py-2 border-b-2 ${this._reportTab === t ? 'border-indigo-500 text-indigo-700 font-semibold' : 'border-transparent text-gray-600'}"><i class="fas ${ic} mr-1"></i>${lbl}</button>`).join('')}
+          <div class="flex gap-2 flex-wrap border-t pt-3">
+            ${[['customers','fa-users','Customers — Khareed'],['employees','fa-user-tie','Employees — Production'],['suppliers','fa-truck','Suppliers — Khareed'],['stock','fa-boxes','Stock Report']].map(([t,ic,lbl]) => `
+              <button onclick="App.showReports('${t}')" class="btn btn-sm ${this._reportTab === t ? 'btn-primary' : 'btn-secondary'}"><i class="fas ${ic}"></i> ${lbl}</button>`).join('')}
+          </div>
         </div>
         <div id="report-body"><div class="text-gray-400 text-center py-8"><i class="fas fa-spinner fa-spin text-2xl"></i></div></div>
       </div>`;
@@ -7840,13 +7845,18 @@ const App = {
     return `${from || '...'} se ${to || '...'} tak`;
   },
 
+  _reportPeriod() {
+    return {
+      from: document.getElementById('rep-from')?.value || '',
+      to: document.getElementById('rep-to')?.value || ''
+    };
+  },
+
   async loadReport() {
-    const from = document.getElementById('rep-from')?.value || '';
-    const to = document.getElementById('rep-to')?.value || '';
+    const { from, to } = this._reportPeriod();
     const body = document.getElementById('report-body');
     if (!body) return;
     body.innerHTML = '<div class="text-gray-400 text-center py-8"><i class="fas fa-spinner fa-spin text-2xl"></i></div>';
-    this._reportKey = null;
     try {
       if (this._reportTab === 'customers') {
         const d = await this.api.get(`/api/reports/customers?from=${from}&to=${to}`);
@@ -7867,104 +7877,113 @@ const App = {
     } catch (e) { body.innerHTML = '<p class="text-red-500 text-center py-8">Report load nahi ho saki.</p>'; }
   },
 
-  _reportTable(headers, rowsHtml, emptyMsg) {
-    return `<div class="bg-white rounded-xl shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="ledger-table">
-      <thead><tr>${headers.map(h => `<th class="${h.r ? 'text-right' : ''}">${h.t}</th>`).join('')}</tr></thead>
-      <tbody>${rowsHtml || `<tr><td colspan="${headers.length}" class="text-center py-8 text-gray-500">${emptyMsg}</td></tr>`}</tbody></table></div></div>`;
+  // CRM-style table card: upar title bar (title + right side chhota note),
+  // andar ledger-table — bilkul Bills/Ledger pages jaisa.
+  _reportCard(title, icon, note, headers, rowsHtml, emptyMsg) {
+    return `<div class="bg-white rounded-xl shadow-sm overflow-hidden">
+      <div class="px-4 py-3 border-b flex items-center justify-between flex-wrap gap-2">
+        <h2 class="font-bold text-gray-800"><i class="fas ${icon} mr-2"></i>${title}</h2>
+        <span class="text-xs text-gray-500">${note || ''}</span>
+      </div>
+      <div class="overflow-x-auto"><table class="ledger-table">
+        <thead><tr>${headers.map(h => `<th class="${h.r ? 'text-right' : ''}">${h.t}</th>`).join('')}</tr></thead>
+        <tbody>${rowsHtml || `<tr><td colspan="${headers.length}" class="text-center py-8 text-gray-500">${emptyMsg}</td></tr>`}</tbody>
+      </table></div></div>`;
+  },
+
+  _reportStat(label, value, color) {
+    return `<div class="stat-card"><p class="text-xs text-gray-500">${label}</p><p class="text-xl font-bold ${color || 'text-gray-800'}">${value}</p></div>`;
   },
 
   renderReportCustomers() {
     const d = this._reportData; if (!d) return;
-    const from = document.getElementById('rep-from')?.value || '', to = document.getElementById('rep-to')?.value || '';
+    const { from, to } = this._reportPeriod();
     const cs = d.customers || [];
     const tAmt = cs.reduce((s, x) => s + (parseFloat(x.total_amount) || 0), 0);
     const tQty = cs.reduce((s, x) => s + (parseFloat(x.total_qty) || 0), 0);
+    const tPaid = cs.reduce((s, x) => s + (parseFloat(x.total_paid) || 0), 0);
     const tDue = cs.reduce((s, x) => s + (parseFloat(x.due) || 0), 0);
     const rows = cs.map((x, i) => `
-      <tr class="cursor-pointer hover:bg-gray-50 ${this._reportKey === x.key ? 'bg-indigo-50' : ''}" onclick="App._selectReportKey('${x.key}')">
+      <tr class="cursor-pointer hover:bg-gray-50" onclick="App.openReportDetail('customers', ${i})" title="Detail ke liye click karein">
         <td>${i + 1}</td><td class="font-semibold">${this.escapeHtml(x.customer_name)}</td>
         <td class="text-right">${x.bills}</td><td class="text-right">${this.fmt(x.total_qty)}</td>
         <td class="text-right font-bold">PKR ${this.fmt(x.total_amount)}</td>
-        <td class="text-right text-green-700">PKR ${this.fmt(x.total_paid)}</td>
-        <td class="text-right ${x.due > 0 ? 'text-red-600 font-bold' : 'text-gray-400'}">PKR ${this.fmt(x.due)}</td>
+        <td class="text-right amount-received">PKR ${this.fmt(x.total_paid)}</td>
+        <td class="text-right ${x.due > 0 ? 'amount-pending font-bold' : 'text-gray-400'}">PKR ${this.fmt(x.due)}</td>
+        <td class="text-center"><button class="btn btn-secondary btn-sm" title="Cheez-war detail"><i class="fas fa-eye"></i></button></td>
       </tr>`).join('');
-    let html = `<p class="text-sm text-gray-600"><i class="fas fa-info-circle mr-1"></i>Period: <strong>${this._reportRangeLabel(from, to)}</strong> · Total sale: <strong>PKR ${this.fmt(tAmt)}</strong> · Kul items: <strong>${this.fmt(tQty)}</strong> · Kul baqaya: <strong class="text-red-600">PKR ${this.fmt(tDue)}</strong>. Kisi customer par click karein — neeche us ki cheez-war detail aa jayegi.</p>`;
-    html += this._reportTable([{t:'#'},{t:'Customer'},{t:'Bills',r:1},{t:'Items Qty',r:1},{t:'Total Amount',r:1},{t:'Paid',r:1},{t:'Due',r:1}], rows, 'Is period me koi bill nahi bana.');
+    let html = `<div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      ${this._reportStat('Total Customers', cs.length, 'text-blue-600')}
+      ${this._reportStat('Total Sale', 'PKR ' + this.fmt(tAmt), 'text-purple-600')}
+      ${this._reportStat('Received', 'PKR ' + this.fmt(tPaid), 'amount-received')}
+      ${this._reportStat('Outstanding (Baqaya)', 'PKR ' + this.fmt(tDue), 'amount-pending')}
+    </div>`;
+    html += this._reportCard('Customers — Khareed Record', 'fa-users', `Period: ${this._reportRangeLabel(from, to)} · Kul items: ${this.fmt(tQty)} · Kisi customer par click karein — cheez-war detail popup me khulegi`,
+      [{t:'#'},{t:'Customer'},{t:'Bills',r:1},{t:'Items Qty',r:1},{t:'Total Amount',r:1},{t:'Paid',r:1},{t:'Due',r:1},{t:'Detail'}], rows, 'Is period me koi bill nahi bana.');
     this._reportPdf = { title: 'Customer Purchase Report', subtitle: this._reportRangeLabel(from, to), headers: ['#', 'Customer', 'Bills', 'Items Qty', 'Total Amount', 'Paid', 'Due'],
       rows: cs.map((x, i) => [i + 1, x.customer_name, x.bills, this.fmt(x.total_qty), this.fmt(x.total_amount), this.fmt(x.total_paid), this.fmt(x.due)]),
-      totals: ['', 'TOTAL', cs.reduce((s, x) => s + x.bills, 0), this.fmt(tQty), this.fmt(tAmt), this.fmt(cs.reduce((s, x) => s + (parseFloat(x.total_paid) || 0), 0)), this.fmt(tDue)] };
-    if (this._reportKey) {
-      const sel = cs.find(x => x.key === this._reportKey);
-      const items = (d.items || []).filter(x => x.customer_key === this._reportKey);
-      const irows = items.map((x, i) => `<tr><td>${i + 1}</td><td>${this.escapeHtml(x.product_name)}</td><td class="text-right">${this.fmt(x.quantity)}</td><td class="text-right">${x.bills}</td><td class="text-right font-bold">PKR ${this.fmt(x.amount)}</td></tr>`).join('');
-      html += `<h3 class="font-bold text-gray-800 mt-4 mb-2"><i class="fas fa-list mr-1"></i>${this.escapeHtml(sel ? sel.customer_name : '')} — konsi cheez kitni khareedi</h3>`;
-      html += this._reportTable([{t:'#'},{t:'Product'},{t:'Qty',r:1},{t:'Bills',r:1},{t:'Amount',r:1}], irows, 'Koi item nahi.');
-      this._reportPdf = { title: `Customer Report — ${sel ? sel.customer_name : ''}`, subtitle: this._reportRangeLabel(from, to), headers: ['#', 'Product', 'Qty', 'Bills', 'Amount'],
-        rows: items.map((x, i) => [i + 1, x.product_name, this.fmt(x.quantity), x.bills, this.fmt(x.amount)]),
-        totals: ['', 'TOTAL', this.fmt(items.reduce((s, x) => s + (parseFloat(x.quantity) || 0), 0)), '', this.fmt(items.reduce((s, x) => s + (parseFloat(x.amount) || 0), 0))] };
-    }
+      totals: ['', 'TOTAL', cs.reduce((s, x) => s + x.bills, 0), this.fmt(tQty), this.fmt(tAmt), this.fmt(tPaid), this.fmt(tDue)] };
     document.getElementById('report-body').innerHTML = html;
   },
 
   renderReportEmployees() {
     const d = this._reportData; if (!d) return;
-    const from = document.getElementById('rep-from')?.value || '', to = document.getElementById('rep-to')?.value || '';
+    const { from, to } = this._reportPeriod();
     const es = d.employees || [];
     const tPieces = es.reduce((s, x) => s + (parseFloat(x.good_pieces) || 0), 0);
+    const tTotal = es.reduce((s, x) => s + (parseFloat(x.total_pieces) || 0), 0);
     const tPay = es.reduce((s, x) => s + (parseFloat(x.payout) || 0), 0);
     const tScrap = es.reduce((s, x) => s + (parseFloat(x.scrap) || 0), 0);
     const rows = es.map((x, i) => `
-      <tr class="cursor-pointer hover:bg-gray-50 ${this._reportKey === x.key ? 'bg-indigo-50' : ''}" onclick="App._selectReportKey('${x.key}')">
+      <tr class="cursor-pointer hover:bg-gray-50" onclick="App.openReportDetail('employees', ${i})" title="Detail ke liye click karein">
         <td>${i + 1}</td><td class="font-semibold">${this.escapeHtml(x.employee_name)}</td>
         <td class="text-right">${x.entries}</td><td class="text-right font-bold">${this.fmt(x.good_pieces)}</td>
         <td class="text-right">${this.fmt(x.total_pieces)}</td>
         <td class="text-right ${x.scrap > 0 ? 'text-red-600' : 'text-gray-400'}">${this.fmt(x.scrap)}</td>
-        <td class="text-right font-bold text-green-700">PKR ${this.fmt(x.payout)}</td>
+        <td class="text-right font-bold amount-received">PKR ${this.fmt(x.payout)}</td>
+        <td class="text-center"><button class="btn btn-secondary btn-sm" title="Item-war detail"><i class="fas fa-eye"></i></button></td>
       </tr>`).join('');
-    let html = `<p class="text-sm text-gray-600"><i class="fas fa-info-circle mr-1"></i>Period: <strong>${this._reportRangeLabel(from, to)}</strong> · Kul good pieces: <strong>${this.fmt(tPieces)}</strong> · Kul scrap: <strong class="text-red-600">${this.fmt(tScrap)}</strong> · Kul payout: <strong>PKR ${this.fmt(tPay)}</strong>. Kisi employee par click karein — neeche us ki item-war detail.</p>`;
-    html += this._reportTable([{t:'#'},{t:'Employee'},{t:'Entries',r:1},{t:'Good Pieces',r:1},{t:'Total Pieces',r:1},{t:'Scrap',r:1},{t:'Payout',r:1}], rows, 'Is period me koi production entry nahi.');
+    let html = `<div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      ${this._reportStat('Total Employees', es.length, 'text-blue-600')}
+      ${this._reportStat('Good Pieces', this.fmt(tPieces), 'text-purple-600')}
+      ${this._reportStat('Scrap', this.fmt(tScrap), 'text-red-600')}
+      ${this._reportStat('Total Payout', 'PKR ' + this.fmt(tPay), 'amount-received')}
+    </div>`;
+    html += this._reportCard('Employees — Production Record', 'fa-user-tie', `Period: ${this._reportRangeLabel(from, to)} · Kul pieces (scrap samait): ${this.fmt(tTotal)} · Kisi employee par click karein — item-war detail popup me khulegi`,
+      [{t:'#'},{t:'Employee'},{t:'Entries',r:1},{t:'Good Pieces',r:1},{t:'Total Pieces',r:1},{t:'Scrap',r:1},{t:'Payout',r:1},{t:'Detail'}], rows, 'Is period me koi production entry nahi.');
     this._reportPdf = { title: 'Employee Production Report', subtitle: this._reportRangeLabel(from, to), headers: ['#', 'Employee', 'Entries', 'Good Pieces', 'Total Pieces', 'Scrap', 'Payout (PKR)'],
       rows: es.map((x, i) => [i + 1, x.employee_name, x.entries, this.fmt(x.good_pieces), this.fmt(x.total_pieces), this.fmt(x.scrap), this.fmt(x.payout)]),
-      totals: ['', 'TOTAL', es.reduce((s, x) => s + x.entries, 0), this.fmt(tPieces), this.fmt(es.reduce((s, x) => s + (parseFloat(x.total_pieces) || 0), 0)), this.fmt(tScrap), this.fmt(tPay)] };
-    if (this._reportKey) {
-      const sel = es.find(x => x.key === this._reportKey);
-      const items = (d.items || []).filter(x => x.employee_key === this._reportKey);
-      const irows = items.map((x, i) => `<tr><td>${i + 1}</td><td>${this.escapeHtml(x.item_name)}</td><td class="text-right">${x.entries}</td><td class="text-right font-bold">${this.fmt(x.pieces)}</td><td class="text-right text-green-700">PKR ${this.fmt(x.payout)}</td></tr>`).join('');
-      html += `<h3 class="font-bold text-gray-800 mt-4 mb-2"><i class="fas fa-list mr-1"></i>${this.escapeHtml(sel ? sel.employee_name : '')} — konsi cheez kitni banayi</h3>`;
-      html += this._reportTable([{t:'#'},{t:'Item / Stage'},{t:'Entries',r:1},{t:'Pieces',r:1},{t:'Payout',r:1}], irows, 'Koi item nahi.');
-      this._reportPdf = { title: `Employee Report — ${sel ? sel.employee_name : ''}`, subtitle: this._reportRangeLabel(from, to), headers: ['#', 'Item / Stage', 'Entries', 'Pieces', 'Payout (PKR)'],
-        rows: items.map((x, i) => [i + 1, x.item_name, x.entries, this.fmt(x.pieces), this.fmt(x.payout)]),
-        totals: ['', 'TOTAL', items.reduce((s, x) => s + x.entries, 0), this.fmt(items.reduce((s, x) => s + (parseFloat(x.pieces) || 0), 0)), this.fmt(items.reduce((s, x) => s + (parseFloat(x.payout) || 0), 0))] };
-    }
+      totals: ['', 'TOTAL', es.reduce((s, x) => s + x.entries, 0), this.fmt(tPieces), this.fmt(tTotal), this.fmt(tScrap), this.fmt(tPay)] };
     document.getElementById('report-body').innerHTML = html;
   },
 
   renderReportSuppliers() {
     const d = this._reportData; if (!d) return;
-    const from = document.getElementById('rep-from')?.value || '', to = document.getElementById('rep-to')?.value || '';
+    const { from, to } = this._reportPeriod();
     const ss = d.suppliers || [];
     const tAmt = ss.reduce((s, x) => s + (parseFloat(x.total_amount) || 0), 0);
+    const tPaid = ss.reduce((s, x) => s + (parseFloat(x.total_paid) || 0), 0);
     const tRem = ss.reduce((s, x) => s + (parseFloat(x.remaining) || 0), 0);
     const rows = ss.map((x, i) => `
-      <tr class="cursor-pointer hover:bg-gray-50 ${this._reportKey === x.key ? 'bg-indigo-50' : ''}" onclick="App._selectReportKey('${x.key}')">
+      <tr class="cursor-pointer hover:bg-gray-50" onclick="App.openReportDetail('suppliers', ${i})" title="Detail ke liye click karein">
         <td>${i + 1}</td><td class="font-semibold">${this.escapeHtml(x.supplier_name)}</td>
         <td class="text-right">${x.purchases}</td><td class="text-right">${this.fmt(x.total_qty)}</td>
         <td class="text-right font-bold">PKR ${this.fmt(x.total_amount)}</td>
-        <td class="text-right text-green-700">PKR ${this.fmt(x.total_paid)}</td>
-        <td class="text-right ${x.remaining > 0 ? 'text-red-600 font-bold' : 'text-gray-400'}">PKR ${this.fmt(x.remaining)}</td>
+        <td class="text-right amount-received">PKR ${this.fmt(x.total_paid)}</td>
+        <td class="text-right ${x.remaining > 0 ? 'amount-pending font-bold' : 'text-gray-400'}">PKR ${this.fmt(x.remaining)}</td>
+        <td class="text-center"><button class="btn btn-secondary btn-sm" title="Material-war detail"><i class="fas fa-eye"></i></button></td>
       </tr>`).join('');
-    let html = `<p class="text-sm text-gray-600"><i class="fas fa-info-circle mr-1"></i>Period: <strong>${this._reportRangeLabel(from, to)}</strong> · Kul khareed: <strong>PKR ${this.fmt(tAmt)}</strong> · Suppliers ko kul dena baqi: <strong class="text-red-600">PKR ${this.fmt(tRem)}</strong>. Supplier par click karein — material-war detail neeche.</p>`;
-    html += this._reportTable([{t:'#'},{t:'Supplier'},{t:'Purchases',r:1},{t:'Qty',r:1},{t:'Total Amount',r:1},{t:'Paid',r:1},{t:'Remaining',r:1}], rows, 'Is period me koi purchase nahi.');
+    let html = `<div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      ${this._reportStat('Total Suppliers', ss.length, 'text-blue-600')}
+      ${this._reportStat('Total Khareed', 'PKR ' + this.fmt(tAmt), 'text-purple-600')}
+      ${this._reportStat('Paid', 'PKR ' + this.fmt(tPaid), 'amount-received')}
+      ${this._reportStat('Dena Baqi', 'PKR ' + this.fmt(tRem), 'amount-pending')}
+    </div>`;
+    html += this._reportCard('Suppliers — Khareed Record', 'fa-truck', `Period: ${this._reportRangeLabel(from, to)} · Kisi supplier par click karein — material-war detail popup me khulegi`,
+      [{t:'#'},{t:'Supplier'},{t:'Purchases',r:1},{t:'Qty',r:1},{t:'Total Amount',r:1},{t:'Paid',r:1},{t:'Remaining',r:1},{t:'Detail'}], rows, 'Is period me koi purchase nahi.');
     this._reportPdf = { title: 'Supplier Purchase Report', subtitle: this._reportRangeLabel(from, to), headers: ['#', 'Supplier', 'Purchases', 'Qty', 'Total Amount', 'Paid', 'Remaining'],
       rows: ss.map((x, i) => [i + 1, x.supplier_name, x.purchases, this.fmt(x.total_qty), this.fmt(x.total_amount), this.fmt(x.total_paid), this.fmt(x.remaining)]),
-      totals: ['', 'TOTAL', ss.reduce((s, x) => s + x.purchases, 0), '', this.fmt(tAmt), this.fmt(ss.reduce((s, x) => s + (parseFloat(x.total_paid) || 0), 0)), this.fmt(tRem)] };
-    if (this._reportKey) {
-      const sel = ss.find(x => x.key === this._reportKey);
-      const items = (d.items || []).filter(x => x.supplier_key === this._reportKey);
-      const irows = items.map((x, i) => `<tr><td>${i + 1}</td><td>${this.escapeHtml(x.material_name)}</td><td class="text-right">${this.fmt(x.quantity)} ${this.escapeHtml(x.unit || '')}</td><td class="text-right font-bold">PKR ${this.fmt(x.amount)}</td></tr>`).join('');
-      html += `<h3 class="font-bold text-gray-800 mt-4 mb-2"><i class="fas fa-list mr-1"></i>${this.escapeHtml(sel ? sel.supplier_name : '')} — konsa material kitna liya</h3>`;
-      html += this._reportTable([{t:'#'},{t:'Material'},{t:'Qty',r:1},{t:'Amount',r:1}], irows, 'Koi material nahi.');
-    }
+      totals: ['', 'TOTAL', ss.reduce((s, x) => s + x.purchases, 0), '', this.fmt(tAmt), this.fmt(tPaid), this.fmt(tRem)] };
     document.getElementById('report-body').innerHTML = html;
   },
 
@@ -7979,34 +7998,94 @@ const App = {
     const rows = items.map((x, i) => `
       <tr><td>${i + 1}</td><td class="font-semibold">${this.escapeHtml(x.name)} <span class="text-xs text-gray-400">${this.escapeHtml(x.unit || '')}</span></td>
         <td class="text-right">${this.fmt(x.opening)}</td>
-        <td class="text-right text-green-700 font-semibold">+${this.fmt(x.in_qty)}</td>
-        <td class="text-right text-red-600 font-semibold">-${this.fmt(x.out_qty)}</td>
+        <td class="text-right amount-received font-semibold">+${this.fmt(x.in_qty)}</td>
+        <td class="text-right amount-pending font-semibold">-${this.fmt(x.out_qty)}</td>
         <td class="text-right font-bold">${this.fmt(x.closing)}</td></tr>`).join('');
-    let html = `
-      <div class="flex gap-2 flex-wrap items-center">
-        <span class="text-sm font-medium">Section:</span>
-        ${[['inventory','Finished Goods'],['raw','Raw Materials'],['components','Components']].map(([v, l]) => `<button onclick="App._reportStockSection='${v}'; App.loadReport()" class="btn btn-sm ${this._reportStockSection === v ? 'btn-primary' : 'btn-secondary'}">${l}</button>`).join('')}
+    let html = `<div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      ${this._reportStat('Total Items', items.length, 'text-blue-600')}
+      ${this._reportStat('Opening (Kul)', this.fmt(tOpen), 'text-gray-800')}
+      ${this._reportStat('In (+)', this.fmt(tIn), 'amount-received')}
+      ${this._reportStat('Out (-)', this.fmt(tOut), 'amount-pending')}
+    </div>
+    <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+      <div class="px-4 py-3 border-b flex items-center justify-between flex-wrap gap-2">
+        <h2 class="font-bold text-gray-800"><i class="fas fa-boxes mr-2"></i>Stock Report — ${secLabel}</h2>
+        <div class="flex gap-1 flex-wrap">
+          ${[['inventory','Finished Goods'],['raw','Raw Materials'],['components','Components']].map(([v, l]) => `<button onclick="App._reportStockSection='${v}'; App.loadReport()" class="btn btn-sm ${this._reportStockSection === v ? 'btn-primary' : 'btn-secondary'}">${l}</button>`).join('')}
+        </div>
       </div>
-      <p class="text-sm text-gray-600"><i class="fas fa-info-circle mr-1"></i><strong>${secLabel}</strong> · Period: <strong>${this._reportRangeLabel(d.from, d.to)}</strong> — Opening = period ke shuru me kitna stock tha · In = kitna naya aaya/bana · Out = kitna bika/use hua · Closing = period ke aakhir me kitna bacha.</p>`;
-    html += this._reportTable([{t:'#'},{t:'Item'},{t:'Opening',r:1},{t:'In (+)',r:1},{t:'Out (-)',r:1},{t:'Closing',r:1}], rows, 'Is section me koi item nahi.');
-    html += `<p class="text-xs text-gray-400"><i class="fas fa-triangle-exclamation mr-1"></i>Note: Closing maujooda stock se peeche hisaab karke nikala gaya hai. Bohat purani tareekhon ke liye (jab system me har movement record nahi hota tha) opening takreebi ho sakta hai — nayi entries ke baad ye bilkul exact rahega.</p>`;
+      <div class="px-4 py-2 text-xs text-gray-500 border-b">Period: <strong>${this._reportRangeLabel(d.from, d.to)}</strong> — Opening = period ke shuru me kitna stock tha · In = kitna naya aaya/bana · Out = kitna bika/use hua · Closing = period ke aakhir me kitna bacha (kul closing: <strong>${this.fmt(tClose)}</strong>)</div>
+      <div class="overflow-x-auto"><table class="ledger-table">
+        <thead><tr><th>#</th><th>Item</th><th class="text-right">Opening</th><th class="text-right">In (+)</th><th class="text-right">Out (-)</th><th class="text-right">Closing</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="6" class="text-center py-8 text-gray-500">Is section me koi item nahi.</td></tr>`}</tbody>
+      </table></div>
+    </div>
+    <p class="text-xs text-gray-400"><i class="fas fa-triangle-exclamation mr-1"></i>Note: Closing maujooda stock se peeche hisaab karke nikala gaya hai. Bohat purani tareekhon ke liye (jab system me har movement record nahi hota tha) opening takreebi ho sakta hai — nayi entries ke baad ye bilkul exact rahega.</p>`;
     this._reportPdf = { title: `Stock Report — ${secLabel}`, subtitle: this._reportRangeLabel(d.from, d.to), headers: ['#', 'Item', 'Opening', 'In (+)', 'Out (-)', 'Closing'],
       rows: items.map((x, i) => [i + 1, `${x.name} (${x.unit || ''})`, this.fmt(x.opening), this.fmt(x.in_qty), this.fmt(x.out_qty), this.fmt(x.closing)]),
       totals: ['', 'TOTAL', this.fmt(tOpen), this.fmt(tIn), this.fmt(tOut), this.fmt(tClose)] };
     document.getElementById('report-body').innerHTML = html;
   },
 
-  _selectReportKey(key) {
-    this._reportKey = (this._reportKey === key) ? null : key;
-    if (this._reportTab === 'customers') this.renderReportCustomers();
-    else if (this._reportTab === 'employees') this.renderReportEmployees();
-    else if (this._reportTab === 'suppliers') this.renderReportSuppliers();
+  // Row ki detail POPUP (modal) me — page ke neeche nahi khulti.
+  openReportDetail(kind, idx) {
+    const d = this._reportData; if (!d) return;
+    const { from, to } = this._reportPeriod();
+    const period = this._reportRangeLabel(from, to);
+    let title = '', icon = 'fa-list', headers = [], rowsHtml = '', pdf = null, summaryLine = '';
+    if (kind === 'customers') {
+      const sel = (d.customers || [])[idx]; if (!sel) return;
+      const items = (d.items || []).filter(x => x.customer_key === sel.key);
+      title = `${sel.customer_name} — konsi cheez kitni khareedi`; icon = 'fa-users';
+      summaryLine = `Bills: <strong>${sel.bills}</strong> · Total: <strong>PKR ${this.fmt(sel.total_amount)}</strong> · Paid: <strong>PKR ${this.fmt(sel.total_paid)}</strong> · Due: <strong class="text-red-600">PKR ${this.fmt(sel.due)}</strong>`;
+      headers = [{t:'#'},{t:'Product'},{t:'Qty',r:1},{t:'Bills',r:1},{t:'Amount',r:1}];
+      rowsHtml = items.map((x, i) => `<tr><td>${i + 1}</td><td>${this.escapeHtml(x.product_name)}</td><td class="text-right">${this.fmt(x.quantity)}</td><td class="text-right">${x.bills}</td><td class="text-right font-bold">PKR ${this.fmt(x.amount)}</td></tr>`).join('');
+      pdf = { title: `Customer Report — ${sel.customer_name}`, subtitle: period, headers: ['#', 'Product', 'Qty', 'Bills', 'Amount'],
+        rows: items.map((x, i) => [i + 1, x.product_name, this.fmt(x.quantity), x.bills, this.fmt(x.amount)]),
+        totals: ['', 'TOTAL', this.fmt(items.reduce((s, x) => s + (parseFloat(x.quantity) || 0), 0)), '', this.fmt(items.reduce((s, x) => s + (parseFloat(x.amount) || 0), 0))] };
+    } else if (kind === 'employees') {
+      const sel = (d.employees || [])[idx]; if (!sel) return;
+      const items = (d.items || []).filter(x => x.employee_key === sel.key);
+      title = `${sel.employee_name} — konsi cheez kitni banayi`; icon = 'fa-user-tie';
+      summaryLine = `Entries: <strong>${sel.entries}</strong> · Good pieces: <strong>${this.fmt(sel.good_pieces)}</strong> · Scrap: <strong>${this.fmt(sel.scrap)}</strong> · Payout: <strong class="text-green-700">PKR ${this.fmt(sel.payout)}</strong>`;
+      headers = [{t:'#'},{t:'Item / Stage'},{t:'Entries',r:1},{t:'Pieces',r:1},{t:'Payout',r:1}];
+      rowsHtml = items.map((x, i) => `<tr><td>${i + 1}</td><td>${this.escapeHtml(x.item_name)}</td><td class="text-right">${x.entries}</td><td class="text-right font-bold">${this.fmt(x.pieces)}</td><td class="text-right amount-received">PKR ${this.fmt(x.payout)}</td></tr>`).join('');
+      pdf = { title: `Employee Report — ${sel.employee_name}`, subtitle: period, headers: ['#', 'Item / Stage', 'Entries', 'Pieces', 'Payout (PKR)'],
+        rows: items.map((x, i) => [i + 1, x.item_name, x.entries, this.fmt(x.pieces), this.fmt(x.payout)]),
+        totals: ['', 'TOTAL', items.reduce((s, x) => s + x.entries, 0), this.fmt(items.reduce((s, x) => s + (parseFloat(x.pieces) || 0), 0)), this.fmt(items.reduce((s, x) => s + (parseFloat(x.payout) || 0), 0))] };
+    } else if (kind === 'suppliers') {
+      const sel = (d.suppliers || [])[idx]; if (!sel) return;
+      const items = (d.items || []).filter(x => x.supplier_key === sel.key);
+      title = `${sel.supplier_name} — konsa material kitna liya`; icon = 'fa-truck';
+      summaryLine = `Purchases: <strong>${sel.purchases}</strong> · Total: <strong>PKR ${this.fmt(sel.total_amount)}</strong> · Paid: <strong>PKR ${this.fmt(sel.total_paid)}</strong> · Remaining: <strong class="text-red-600">PKR ${this.fmt(sel.remaining)}</strong>`;
+      headers = [{t:'#'},{t:'Material'},{t:'Qty',r:1},{t:'Amount',r:1}];
+      rowsHtml = items.map((x, i) => `<tr><td>${i + 1}</td><td>${this.escapeHtml(x.material_name)}</td><td class="text-right">${this.fmt(x.quantity)} ${this.escapeHtml(x.unit || '')}</td><td class="text-right font-bold">PKR ${this.fmt(x.amount)}</td></tr>`).join('');
+      pdf = { title: `Supplier Report — ${sel.supplier_name}`, subtitle: period, headers: ['#', 'Material', 'Qty', 'Amount'],
+        rows: items.map((x, i) => [i + 1, x.material_name, this.fmt(x.quantity), this.fmt(x.amount)]),
+        totals: ['', 'TOTAL', this.fmt(items.reduce((s, x) => s + (parseFloat(x.quantity) || 0), 0)), this.fmt(items.reduce((s, x) => s + (parseFloat(x.amount) || 0), 0))] };
+    } else { return; }
+    this._reportDetailPdf = pdf;
+    this.openModal(`
+      <h2 class="text-xl font-bold mb-1"><i class="fas ${icon} text-blue-500 mr-2"></i>${this.escapeHtml(title)}</h2>
+      <p class="text-sm text-gray-500 mb-1">Period: ${period}</p>
+      <p class="text-sm text-gray-700 mb-4">${summaryLine}</p>
+      <div class="bg-white rounded-xl border overflow-hidden mb-4">
+        <div class="overflow-x-auto"><table class="ledger-table">
+          <thead><tr>${headers.map(h => `<th class="${h.r ? 'text-right' : ''}">${h.t}</th>`).join('')}</tr></thead>
+          <tbody>${rowsHtml || `<tr><td colspan="${headers.length}" class="text-center py-6 text-gray-500">Is period me koi detail nahi.</td></tr>`}</tbody>
+        </table></div>
+      </div>
+      <div class="flex gap-2 justify-end">
+        <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Close</button>
+        <button type="button" class="btn btn-primary" onclick="App.downloadReportPDF('detail')"><i class="fas fa-file-pdf"></i> Download PDF</button>
+      </div>`, 'modal-lg');
   },
 
-  // Generic report PDF (text-based, bank statement wali style) — current tab
-  // aur current selection ki table hi PDF banti hai.
-  async downloadReportPDF() {
-    const rp = this._reportPdf;
+  // Generic report PDF (text-based, bank statement wali style).
+  // which = 'detail' ho to khuli hui popup wali detail ki PDF, warna
+  // current tab ki summary table ki PDF banti hai.
+  async downloadReportPDF(which) {
+    const rp = which === 'detail' ? this._reportDetailPdf : this._reportPdf;
     if (!rp || !rp.rows || rp.rows.length === 0) { this.toast('PDF ke liye pehle report load karein / is period me data nahi', 'error'); return; }
     if (!(await this._ensurePdfLibs())) { this.toast('PDF library load nahi hui — net check karein', 'error'); return; }
     const jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
