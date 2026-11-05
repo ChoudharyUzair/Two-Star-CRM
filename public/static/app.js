@@ -277,11 +277,6 @@ const App = {
             <button type="submit" class="btn btn-primary w-full justify-center" style="padding: 0.75rem;">
               <i class="fas fa-sign-in-alt"></i> Login
             </button>
-            <div class="text-xs text-gray-500 text-center mt-4 p-3 bg-gray-50 rounded-lg">
-              <i class="fas fa-info-circle mr-1"></i>
-              Default: <strong>admin</strong> / <strong>admin123</strong><br>
-              <span class="text-orange-600">Change password after first login!</span>
-            </div>
           </form>
         </div>
       </div>
@@ -517,7 +512,6 @@ const App = {
     await this._ensureClientsForSearch(true);
     this.openModal(`
       <h2 class="text-xl font-bold mb-3"><i class="fas fa-search text-green-600 mr-2"></i>Search Customer Ledger</h2>
-      <p class="text-sm text-gray-500 mb-3">Customer ka naam, phone ya section type karein — uska ledger direct khul jayega.</p>
       <div class="relative mb-3">
         <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
         <input type="text" id="cust-search-modal" class="input-field" style="padding-left:2.25rem;" placeholder="Type customer name..." autocomplete="off"
@@ -591,12 +585,12 @@ const App = {
             <label class="flex items-start gap-2 border rounded-lg p-2 cursor-pointer hover:bg-blue-50">
               <input type="radio" name="f-ledger" value="customer" class="mt-1" checked>
               <span><span class="font-semibold text-green-700"><i class="fas fa-arrow-down mr-1"></i>Customer — We RECEIVE payment</span>
-                <span class="block text-xs text-gray-500">Two Star customers / Wire customers. Their bills ADD to profit.</span></span>
+                </span>
             </label>
             <label class="flex items-start gap-2 border rounded-lg p-2 cursor-pointer hover:bg-amber-50">
               <input type="radio" name="f-ledger" value="supplier" class="mt-1">
               <span><span class="font-semibold text-amber-700"><i class="fas fa-arrow-up mr-1"></i>Supplier — We PAY them</span>
-                <span class="block text-xs text-gray-500">Raw material suppliers. Their bills are a COST (subtract from gross profit).</span></span>
+                </span>
             </label>
           </div>
         </div>
@@ -648,12 +642,12 @@ const App = {
             <label class="flex items-start gap-2 border rounded-lg p-2 cursor-pointer hover:bg-blue-50">
               <input type="radio" name="f-ledger" value="customer" class="mt-1" ${folder.ledger_type !== 'supplier' ? 'checked' : ''}>
               <span><span class="font-semibold text-green-700"><i class="fas fa-arrow-down mr-1"></i>Customer — We RECEIVE payment</span>
-                <span class="block text-xs text-gray-500">Bills ADD to profit.</span></span>
+                </span>
             </label>
             <label class="flex items-start gap-2 border rounded-lg p-2 cursor-pointer hover:bg-amber-50">
               <input type="radio" name="f-ledger" value="supplier" class="mt-1" ${folder.ledger_type === 'supplier' ? 'checked' : ''}>
               <span><span class="font-semibold text-amber-700"><i class="fas fa-arrow-up mr-1"></i>Supplier — We PAY them</span>
-                <span class="block text-xs text-gray-500">Bills are a COST.</span></span>
+                </span>
             </label>
           </div>
         </div>
@@ -729,7 +723,7 @@ const App = {
             <i class="fas ${folder.icon}" style="color: ${folder.color}"></i>
             ${this.escapeHtml(folder.name)}
           </h1>
-          <p class="page-subtitle">${this.state.clients.length} entry(ies)</p>
+          
         </div>
         <button onclick="App.showAddClient(${folder.id})" class="btn btn-primary">
           <i class="fas fa-user-plus"></i> Add Entry
@@ -779,7 +773,7 @@ const App = {
         <div><label class="block text-sm font-medium mb-1">Email</label><input id="c-email" type="email" class="input-field"></div>
         <div><label class="block text-sm font-medium mb-1">Address</label><input id="c-address" type="text" class="input-field"></div>
         <div><label class="block text-sm font-medium mb-1">Opening Balance</label><input id="c-balance" type="number" step="any" value="0" class="input-field">
-          <p class="text-xs text-gray-500 mt-1"><i class="fas fa-info-circle mr-1"></i>${obHint}</p></div>
+</div>
         <div><label class="block text-sm font-medium mb-1">Notes</label><textarea id="c-notes" class="input-field" rows="2"></textarea></div>
         <div class="flex gap-2 justify-end pt-2">
           <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
@@ -906,12 +900,12 @@ const App = {
           <div class="stat-card" title="${isSupplier ? 'Shuru me aapne is supplier ko jitna dena tha' : 'Shuru me is customer se aapne jitna lena tha'}">
             <p class="text-xs text-gray-500">Opening Balance</p>
             <p class="text-xl font-bold text-gray-800 mt-1">PKR ${this.fmt(opening)}</p>
-            <p class="text-xs mt-1" style="color:${isSupplier ? '#dc2626' : '#16a34a'}">${isSupplier ? 'Supplier ko dena tha' : 'Customer se lena tha'}</p></div>
+</div>
           <div class="stat-card"><p class="text-xs text-gray-500">${this.escapeHtml(this.getColLabel('amount_received'))}</p>
             <p class="text-xl font-bold mt-1 amount-received">PKR ${this.fmt(totalReceived)}</p></div>
           <div class="balance-box"><p class="text-xs opacity-90">${isSupplier ? 'Outstanding Balance' : 'Remaining Balance'}</p>
             <p class="text-2xl font-bold mt-1">PKR ${this.fmt(netBalance)}</p>
-            <p class="text-xs opacity-80 mt-1">${balanceHint}</p></div>
+            </div>
         </div>
 
         <div class="bg-white rounded-xl shadow-sm overflow-hidden">
@@ -1051,7 +1045,7 @@ const App = {
               ).map(s => `<option value="${s}" ${t.status === s ? 'selected' : ''}>${s}</option>`).join('')}
           </select></div>
         <div>${this.bankSelectHtml('er-bank', t.bank_account_id || '', true, (isSup ? 'Pay from Bank/Cash' : 'Receive into Bank/Cash'))}
-          <p class="text-xs text-gray-500 mt-1"><i class="fas fa-info-circle mr-1"></i>${isSup ? 'Amount is subtracted from the selected account.' : 'Amount received is added to the selected account.'}</p></div>
+</div>
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">${this.escapeHtml(this.getColLabel('description'))}</label>
           <textarea id="er-desc" class="input-field" rows="2">${this.escapeHtml(t.description || '')}</textarea></div>
         ${customRows ? `<div class="md:col-span-2 pt-2 border-t"><h3 class="font-semibold text-sm text-gray-700 mb-2">Custom Columns</h3>
@@ -1183,7 +1177,6 @@ const App = {
     const totalRows = this.state.transactions.length;
     this.openModal(`
       <h2 class="text-xl font-bold mb-1"><i class="fas fa-file-pdf text-red-500 mr-2"></i>Ledger PDF — ${this.escapeHtml(c.name)}</h2>
-      <p class="text-sm text-gray-500 mb-4">Customer ko uska khata (ledger) PDF form mein bhejein. Logo automatically PDF par lagega.</p>
       <div class="space-y-3">
         <div>
           <label class="block text-sm font-medium mb-1">Kitni aakhri (last) entries ka PDF banana hai?</label>
@@ -1449,7 +1442,7 @@ const App = {
         <div><label class="block text-sm font-medium mb-1">Email</label><input id="c-email" type="email" class="input-field" value="${this.escapeAttr(c.email || '')}"></div>
         <div><label class="block text-sm font-medium mb-1">Address</label><input id="c-address" type="text" class="input-field" value="${this.escapeAttr(c.address || '')}"></div>
         <div><label class="block text-sm font-medium mb-1">Opening Balance</label><input id="c-balance" type="number" step="any" class="input-field" value="${c.opening_balance || 0}">
-          <p class="text-xs text-gray-500 mt-1"><i class="fas fa-info-circle mr-1"></i>${obHint}</p></div>
+</div>
         <div><label class="block text-sm font-medium mb-1">Notes</label><textarea id="c-notes" class="input-field" rows="2">${this.escapeHtml(c.notes || '')}</textarea></div>
         <div class="flex gap-2 justify-end pt-2">
           <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
@@ -1502,7 +1495,6 @@ const App = {
 
     this.openModal(`
       <h2 class="text-xl font-bold mb-1"><i class="fas fa-tags text-blue-500 mr-2"></i>Product Rates — ${this.escapeHtml(c.name)}</h2>
-      <p class="text-sm text-gray-500 mb-3"><i class="fas fa-info-circle mr-1"></i>Yahan is customer ke liye har product ka <b>selling rate</b> ek hi dafa set karein. Jab is customer ka bill banega aur ye product add hoga, ye rate <b>khud-ba-khud</b> lag jayega. (Manufacturing rate sab ke liye same rehta hai.)</p>
 
       <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
         <div class="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
@@ -1623,7 +1615,6 @@ const App = {
 
     this.openModal(`
       <h2 class="text-xl font-bold mb-1"><i class="fas fa-tags text-amber-600 mr-2"></i>Supplier Buy Rates — ${this.escapeHtml(c.name)}</h2>
-      <p class="text-sm text-gray-500 mb-3"><i class="fas fa-info-circle mr-1"></i>Yahan is supplier se har item ka <b>buy rate</b> (jis rate par hum lete hain) set karein. Jab is supplier se restock karenge (Inventory ya Raw Material), ye rate <b>khud-ba-khud</b> lag jayega — selling rate nahi.</p>
 
       <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
         <div class="grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
@@ -1948,7 +1939,7 @@ const App = {
       <div class="page-header">
         <div>
           <h1 class="page-title"><i class="fas fa-chart-line text-purple-500"></i>Dashboard</h1>
-          <p class="page-subtitle">Overall financial summary — auto-updated</p>
+          
         </div>
         <button onclick="App.showDashboard()" class="btn btn-secondary btn-sm"><i class="fas fa-sync-alt"></i> Refresh</button>
       </div>
@@ -2177,9 +2168,7 @@ const App = {
                     </td>
                   </tr>`}).join('')}
               </tbody></table></div>
-            <p class="text-xs text-gray-500 mt-2"><i class="fas fa-info-circle mr-1"></i>
-              <span style="color:#16a34a">Customer (Lena)</span> = jo aapko customers se milna hai.
-              <span style="color:#dc2626">Supplier (Dena)</span> = jo aapne suppliers ko dena hai.</p>`}
+`}
         </section>
 
         <!-- Inventory Summary -->
@@ -2591,7 +2580,7 @@ const App = {
     area.innerHTML = `
       <div class="page-header">
         <div><h1 class="page-title"><i class="fas fa-boxes text-orange-500"></i>Inventory</h1>
-          <p class="page-subtitle">${this.state.inventory.length} product(s) · Total Value: PKR ${this.fmt(totalValue)}</p></div>
+          </div>
         <div class="flex gap-2 flex-wrap">
           <input type="text" id="inv-search" placeholder="Search..." class="input-field" style="max-width:240px;" oninput="App.renderInventory(this.value)" value="${this.escapeAttr(filter)}">
           <button onclick="App.showReturnModal('customer')" class="btn btn-warning" title="Customer se ek saath multiple products ki return entry — ledger auto-sync"><i class="fas fa-rotate-left"></i> Customer Return</button>
@@ -2730,7 +2719,7 @@ const App = {
             <option value="restock" ${m.type === 'restock' ? 'selected' : ''}>Restock (stock increases)</option>
             <option value="adjust" ${m.type === 'adjust' ? 'selected' : ''}>Adjustment</option>
           </select>
-          <p class="text-xs text-gray-500 mt-1"><i class="fas fa-info-circle mr-1"></i>Customer/Supplier return ki entry yahan se edit nahi hoti — delete karke dobara add karein (ledger auto-adjust).</p></div>
+</div>
         <div id="me-dir-wrap" style="display:${m.type === 'adjust' ? 'block' : 'none'};"><label class="block text-sm font-medium mb-1">Adjust Direction</label>
           <select id="me-dir" class="input-field">
             <option value="in" ${dirGuess === 'in' ? 'selected' : ''}>Add to stock (+)</option>
@@ -2808,7 +2797,7 @@ const App = {
             <option value="restock">Restock (stock increases — from supplier)</option>
             <option value="adjust">Adjustment</option>
           </select>
-          <p class="text-xs text-gray-500 mt-1"><i class="fas fa-info-circle mr-1"></i>Customer / Supplier <b>Return</b> ke liye Inventory page ke "Customer Return" / "Supplier Return" button use karein (multiple products ek saath).</p></div>
+</div>
         <div id="m-dir-wrap" style="display:none;"><label class="block text-sm font-medium mb-1">Adjust Direction</label>
           <select id="m-dir" class="input-field">
             <option value="in">Add to stock (+)</option>
@@ -3020,7 +3009,6 @@ const App = {
       : 'Ledger mein is return ko customer ke <strong>credit</strong> (Amount Received) ke tor par likha jayega — jitna customer ne dena tha usme se minus. Stock barh jayega.';
     this.openModal(`
       <h2 class="text-xl font-bold mb-1"><i class="fas ${icon} ${isSup ? 'text-red-500' : 'text-amber-500'} mr-2"></i>${title}</h2>
-      <p class="text-sm text-gray-500 mb-4">${isSup ? 'Supplier' : 'Customer'} select karein, phir jo jo products return hue add karein. Rate ${isSup ? 'us supplier ke buy-rate' : 'customer ke saved rate'} se apne aap lag jayega. Ledger auto-sync ho jayega.</p>
       <form id="ret-form" class="space-y-3">
         <div class="grid grid-cols-2 gap-3">
           <div>
@@ -3064,9 +3052,6 @@ const App = {
         </div>
         <div><label class="block text-sm font-medium mb-1">Note (optional)</label>
           <input id="ret-notes" type="text" class="input-field" placeholder="e.g. damaged pieces wapas"></div>
-        <div class="${isSup ? 'bg-red-50 border-red-200 text-red-800' : 'bg-blue-50 border-blue-200 text-blue-800'} border rounded p-2 text-xs">
-          <i class="fas fa-info-circle mr-1"></i>${ledgerNote}
-        </div>
         <div class="flex gap-2 justify-end pt-2 border-t">
           <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
           <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Return</button>
@@ -3374,7 +3359,7 @@ const App = {
     area.innerHTML = `
       <div class="page-header">
         <div><h1 class="page-title"><i class="fas fa-cubes text-orange-500"></i>Raw Material</h1>
-          <p class="page-subtitle">${items.length} item(s) · Total Value: PKR ${this.fmt(totalValue)}</p></div>
+          </div>
         <div class="flex gap-2">
           <button onclick="App.showRestock()" class="btn btn-success" title="Product restock karein — supplier select karein, rate khud lag jayega"><i class="fas fa-recycle"></i> Restock</button>
           <button onclick="App.showRawEditor()" class="btn btn-primary"><i class="fas fa-plus"></i> Add Raw Material</button>
@@ -3737,7 +3722,6 @@ const App = {
               <button type="submit" class="btn btn-success"><i class="fas fa-check"></i> Apply Correction</button>
             </div>
           </form>
-          <p class="text-xs text-gray-500 mt-2"><i class="fas fa-info-circle mr-1"></i>Ye correction supplier ledger ko touch nahi karti — sirf stock quantity update hoti hai aur history me ek "Stock Correction" entry ban jati hai.</p>
         </div>
 
         <!-- Tab: Batches / Payments -->
@@ -3798,7 +3782,6 @@ const App = {
     const today = new Date().toISOString().slice(0, 10);
     this.openModal(`
       <h2 class="text-xl font-bold mb-1"><i class="fas fa-cubes text-orange-500 mr-2"></i>Add Raw Material</h2>
-      <p class="text-sm text-gray-500 mb-4"><i class="fas fa-info-circle mr-1"></i>Naya material add karein. Pehle se mojood product me stock barhana ho to upar <strong>Restock</strong> button use karein.</p>
       <form id="raw-form" class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Material Name *</label>
           <input id="r-name" type="text" required class="input-field" value="" oninput="App._checkRawDuplicate()"></div>
@@ -3849,7 +3832,7 @@ const App = {
             <div><label class="block text-sm font-medium mb-1">Remaining (Owed)</label>
               <div id="r-remaining" class="input-field" style="background:#fef2f2; font-weight:bold; color:#b91c1c;">PKR 0.00</div></div>
             <div class="md:col-span-2">${this.bankSelectHtml('r-bank', '', true, 'Pay from Bank/Cash')}
-              <p class="text-xs text-red-600 mt-1"><i class="fas fa-money-bill-transfer mr-1"></i>Only the <strong>Amount Paid Now</strong> is subtracted from the selected account.</p></div>
+              </div>
           </div>
         </div>
 
@@ -3992,7 +3975,6 @@ const App = {
 
     this.openModal(`
       <h2 class="text-xl font-bold mb-1"><i class="fas fa-recycle text-green-600 mr-2"></i>Restock Product</h2>
-      <p class="text-sm text-gray-500 mb-4">Product aur supplier select karein — supplier ke profile wala rate khud lag jayega. Jitna pay kiya likhein; baqaya supplier ke ledger me chala jayega.</p>
       <form id="restock-form" class="grid grid-cols-1 md:grid-cols-2 gap-3">
 
         <div class="md:col-span-2"><label class="block text-sm font-semibold mb-1"><i class="fas fa-box mr-1 text-orange-500"></i>Product *</label>
@@ -4028,9 +4010,8 @@ const App = {
             <div><label class="block text-sm font-medium mb-1">Remaining (Owed)</label>
               <div id="rs-remaining" class="input-field" style="background:#fef2f2; font-weight:bold; color:#b91c1c;">PKR 0.00</div></div>
             <div class="md:col-span-2">${this.bankSelectHtml('rs-bank', '', true, 'Paid From — Bank / Cash')}
-              <p class="text-xs text-red-600 mt-1"><i class="fas fa-money-bill-transfer mr-1"></i>Sirf <strong>Amount Paid Now</strong> account se minus hoga.</p></div>
+              </div>
           </div>
-          <p class="text-xs text-gray-600 mt-2"><i class="fas fa-info-circle mr-1"></i>Baqaya (Remaining) supplier ke ledger me "humara dena" ke tor par khud add ho jayega.</p>
         </div>
 
         <div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Notes</label>
@@ -4284,7 +4265,7 @@ const App = {
       <div class="page-header">
         <div>
           <h1 class="page-title"><i class="fas fa-industry text-purple-600"></i>Products Manufacturing</h1>
-          <p class="page-subtitle">${this.state.products.length} product(s) · Components → Assemble → Paint → Pack</p>
+          
         </div>
         <div class="flex gap-2 flex-wrap">
           <input type="text" id="prod-search" placeholder="Search products..." class="input-field" style="max-width:200px;" oninput="App.renderProducts(this.value)" value="${this.escapeAttr(filter)}">
@@ -4391,15 +4372,7 @@ const App = {
           <div id="stage-corr-body">${this.renderStageCorrections()}</div>
         </div>
 
-        <div class="bg-purple-50 border border-purple-200 rounded-xl p-4 text-sm text-purple-900">
-          <i class="fas fa-info-circle mr-1"></i>
-          <strong>Manufacturing flow:</strong>
-          <span class="inline-block px-2 py-0.5 rounded bg-teal-100 text-teal-700 mx-0.5"><i class="fas fa-puzzle-piece mr-1"></i>Components</span> →
-          <span class="inline-block px-2 py-0.5 rounded bg-amber-100 text-amber-700 mx-0.5"><i class="fas fa-screwdriver-wrench mr-1"></i>Assemble</span> (non-painted) →
-          <span class="inline-block px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 mx-0.5"><i class="fas fa-fill-drip mr-1"></i>Paint</span> →
-          <span class="inline-block px-2 py-0.5 rounded bg-green-100 text-green-700 mx-0.5"><i class="fas fa-box mr-1"></i>Pack</span> (final finished product).
-          Har stage worker karta hai aur per-piece payout uski profile + weekly total mein add hota hai. Pack karte waqt "set items" (e.g. tyres, rolling 460, tiers) stock se minus hote hain.
-        </div>
+        
       </div>`;
   },
 
@@ -4461,7 +4434,7 @@ const App = {
     };
     this.openModal(`
       <h2 class="text-xl font-bold mb-1"><i class="fas fa-sliders text-rose-600 mr-2"></i>Correct Stage Stock</h2>
-      <p class="text-sm text-gray-500 mb-4">Product: <strong>${this.escapeHtml(p.name)}</strong>. Agar stock upar-neeche ho gaya ho to yahan se sahi value set karein — correction log mein record ho jayega.</p>
+      <p class="text-sm text-gray-500 mb-4">Product: <strong>${this.escapeHtml(p.name)}</strong></p>
       <form id="stage-corr-form" class="space-y-3">
         <div>
           <label class="block text-sm font-medium mb-1">Stage *</label>
@@ -5429,7 +5402,7 @@ const App = {
       <div class="page-header">
         <div>
           <h1 class="page-title"><i class="fas fa-puzzle-piece text-teal-600"></i>Components Production</h1>
-          <p class="page-subtitle">${this.state.components.length} component(s) · Raw Material → Components → Product</p>
+          
         </div>
         <div class="flex gap-2 flex-wrap">
           <input type="text" id="comp-search" placeholder="Search components..." class="input-field" style="max-width:220px;" oninput="App.renderComponents(this.value)" value="${this.escapeAttr(filter)}">
@@ -5506,12 +5479,7 @@ const App = {
           <div id="comp-log-body">${this.renderComponentProductionLog()}</div>
         </div>
 
-        <div class="bg-teal-50 border border-teal-200 rounded-xl p-4 text-sm text-teal-900">
-          <i class="fas fa-info-circle mr-1"></i>
-          <strong>Kaise kaam karta hai:</strong> Pehle component banao (e.g. "Rings") aur uska raw-material recipe + per-piece rate set karo.
-          Jab koi worker bole "aaj maine itne pieces banaye", to <strong>Log Production</strong> daba kar worker + component + quantity daalo.
-          System component stock barhaega, raw material kam karega (agar recipe linked hai), scrap record karega, aur worker ki profile + weekly (Friday→Thursday) total mein per-piece payout add karega.
-        </div>
+        
       </div>`;
   },
 
@@ -5874,7 +5842,7 @@ const App = {
     area.innerHTML = `
       <div class="page-header">
         <div><h1 class="page-title"><i class="fas fa-user-tie text-blue-500"></i>Employees</h1>
-          <p class="page-subtitle">${emps.length} employee(s) · Monthly Salaries: PKR ${this.fmt(totalSalary)}</p></div>
+          </div>
         <button onclick="App.showEmployeeEditor()" class="btn btn-primary"><i class="fas fa-user-plus"></i> Add Employee</button>
       </div>
       <div class="p-4 md:p-6 space-y-5">
@@ -6102,7 +6070,7 @@ const App = {
         <div>
           <div class="text-xs text-gray-500"><a href="#" onclick="App.showEmployees(); return false;" class="hover:text-blue-500"><i class="fas fa-user-tie mr-1"></i>Employees</a></div>
           <h1 class="page-title">${this.escapeHtml(e.name)}</h1>
-          <p class="page-subtitle">${this.escapeHtml(e.designation || '')} · ${e.phone ? `<i class="fas fa-phone mx-1"></i>${this.escapeHtml(e.phone)}` : ''} · Salary PKR ${this.fmt(e.monthly_salary)}</p>
+          
         </div>
         <div class="flex gap-2">
           <button onclick="App.showEmployeeEditor(${e.id})" class="btn btn-secondary btn-sm"><i class="fas fa-edit"></i> Edit</button>
@@ -6563,7 +6531,7 @@ const App = {
     area.innerHTML = `
       <div class="page-header">
         <div><h1 class="page-title"><i class="fas fa-money-bill-wave text-red-500"></i>Side Expenses</h1>
-          <p class="page-subtitle">${folders.length} ledger folder(s) · ${allExpenses.length} total entry(ies)</p></div>
+          </div>
         <div class="flex gap-2">
           <button onclick="App.showSideExpenseFolderEditor()" class="btn btn-secondary"><i class="fas fa-folder-plus"></i> New Folder</button>
           <button onclick="App.showSideExpenseEditor()" class="btn btn-primary"><i class="fas fa-plus"></i> Add Expense</button>
@@ -6654,7 +6622,7 @@ const App = {
             <button onclick="App.showSideExpenses()" class="text-gray-500 hover:text-gray-800 mr-2" title="Back to folders"><i class="fas fa-arrow-left"></i></button>
             <i class="fas ${headerIcon}" style="color:${headerColor}"></i>${this.escapeHtml(headerTitle)}
           </h1>
-          <p class="page-subtitle">${items.length} entry(ies) · Total: PKR ${this.fmt(total)} ${folder && folder.description ? '· ' + this.escapeHtml(folder.description) : ''}</p>
+          
         </div>
         <div class="flex gap-2">
           ${folder ? `<button onclick="App.showSideExpenseFolderEditor(${folder.id})" class="btn btn-secondary"><i class="fas fa-edit"></i> Edit Folder</button>` : ''}
@@ -6984,7 +6952,7 @@ const App = {
     area.innerHTML = `
       <div class="page-header">
         <div><h1 class="page-title"><i class="fas ${sec.icon}" style="color:${sec.color}"></i>${this.escapeHtml(sec.name)}</h1>
-          <p class="page-subtitle">${rows.length} row(s)</p></div>
+          </div>
         <div class="flex gap-2">
           <button onclick="App.editCustomSection(${sec.id})" class="btn btn-secondary btn-sm"><i class="fas fa-cog"></i> Edit Section</button>
           <button onclick="App.showCustomRowEditor()" class="btn btn-primary"><i class="fas fa-plus"></i> Add Row</button>
@@ -7094,7 +7062,7 @@ const App = {
     area.innerHTML = `
       <div class="page-header">
         <div><h1 class="page-title"><i class="fas fa-file-invoice text-blue-500"></i>Bills / Invoices</h1>
-          <p class="page-subtitle">${totalBills} bill(s) · auto-linked with client ledger</p></div>
+          </div>
         <button onclick="App.showBillEditor()" class="btn btn-primary"><i class="fas fa-plus"></i> New Bill</button>
       </div>
       <div class="p-4 md:p-6 space-y-5">
@@ -7785,6 +7753,7 @@ const App = {
   // kisi row par click karne se us ki detail neeche NAHI khulti — POPUP
   // (modal) me aati hai.
   _reportTab: 'customers',
+  _reportFilter: { preset: 'all', from: '', to: '' },
   _reportData: null,
   _reportPdf: null,
   _reportDetailPdf: null,
@@ -7802,20 +7771,29 @@ const App = {
     area.innerHTML = `
       <div class="page-header">
         <div><h1 class="page-title"><i class="fas fa-table text-blue-500"></i>Reports</h1>
-          <p class="page-subtitle">Customers, Employees, Suppliers aur Stock ke mukammal records — date filter + PDF ke saath</p></div>
+          </div>
         <button onclick="App.downloadReportPDF()" class="btn btn-primary"><i class="fas fa-file-pdf"></i> Download PDF</button>
       </div>
       <div class="p-4 md:p-6 space-y-5">
         <div class="bg-white rounded-xl shadow-sm p-4 space-y-3">
-          <div class="flex flex-wrap items-end gap-3">
-            <div><label class="block text-xs text-gray-500 mb-1">From Date</label><input id="rep-from" type="date" class="input-field" style="width:auto"></div>
-            <div><label class="block text-xs text-gray-500 mb-1">To Date</label><input id="rep-to" type="date" class="input-field" style="width:auto"></div>
-            <button onclick="App.loadReport()" class="btn btn-secondary btn-sm"><i class="fas fa-filter"></i> Filter</button>
-            <div class="flex gap-1 flex-wrap">
-              <button onclick="App._reportQuick('all')" class="btn btn-secondary btn-sm">All Time</button>
-              <button onclick="App._reportQuick('today')" class="btn btn-secondary btn-sm">Today</button>
-              <button onclick="App._reportQuick('week')" class="btn btn-secondary btn-sm">Last 7 Days</button>
-              <button onclick="App._reportQuick('month')" class="btn btn-secondary btn-sm">This Month</button>
+          <div class="flex flex-wrap items-center gap-3">
+            <div class="relative" id="rep-filter-wrap">
+              <button type="button" class="btn btn-secondary" onclick="App.toggleReportFilter(event)"><i class="fas fa-filter"></i> Filter: <strong id="rep-filter-label">All Time</strong> <i class="fas fa-chevron-down text-xs"></i></button>
+              <div id="rep-filter-panel" class="hidden absolute left-0 mt-2 bg-white rounded-xl shadow-lg border p-4 z-30" style="width:330px;max-width:92vw;">
+                <p class="text-xs font-semibold text-gray-500 mb-2">QUICK RANGE</p>
+                <div class="grid grid-cols-2 gap-2 mb-3">
+                  ${[['all','All Time'],['today','Today'],['yesterday','Yesterday'],['week','Last 7 Days'],['last30','Last 30 Days'],['month','This Month'],['lastmonth','Last Month'],['year','This Year']].map(([v, l]) => `<button type="button" data-preset="${v}" onclick="App._applyReportPreset('${v}')" class="btn btn-sm btn-secondary w-full">${l}</button>`).join('')}
+                </div>
+                <p class="text-xs font-semibold text-gray-500 mb-2 border-t pt-3">CUSTOM RANGE</p>
+                <div class="grid grid-cols-2 gap-2 mb-3">
+                  <div><label class="block text-xs text-gray-500 mb-1">From Date</label><input id="rep-from" type="date" class="input-field"></div>
+                  <div><label class="block text-xs text-gray-500 mb-1">To Date</label><input id="rep-to" type="date" class="input-field"></div>
+                </div>
+                <div class="flex gap-2 justify-end">
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="App.toggleReportFilter(event)">Cancel</button>
+                  <button type="button" class="btn btn-primary btn-sm" onclick="App._applyReportCustom()"><i class="fas fa-check"></i> Apply</button>
+                </div>
+              </div>
             </div>
           </div>
           <div class="flex gap-2 flex-wrap border-t pt-3">
@@ -7828,15 +7806,80 @@ const App = {
     await this.loadReport();
   },
 
-  _reportQuick(range) {
-    const today = new Date();
-    const iso = (d) => d.toISOString().slice(0, 10);
-    let from = '', to = '';
-    if (range === 'today') { from = to = iso(today); }
-    else if (range === 'week') { const d = new Date(today); d.setDate(d.getDate() - 6); from = iso(d); to = iso(today); }
-    else if (range === 'month') { from = iso(new Date(today.getFullYear(), today.getMonth(), 1)); to = iso(today); }
+  // ---- Reports Filter (aik hi button; saare options is ke panel me) ----
+  _reportIso(d) { const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; },
+
+  _reportRangeFor(preset) {
+    const now = new Date(); const today = this._reportIso(now);
+    const add = (days) => { const d = new Date(now); d.setDate(d.getDate() + days); return d; };
+    switch (preset) {
+      case 'today': return { from: today, to: today };
+      case 'yesterday': { const y = this._reportIso(add(-1)); return { from: y, to: y }; }
+      case 'week': return { from: this._reportIso(add(-6)), to: today };
+      case 'last30': return { from: this._reportIso(add(-29)), to: today };
+      case 'month': return { from: this._reportIso(new Date(now.getFullYear(), now.getMonth(), 1)), to: today };
+      case 'lastmonth': return { from: this._reportIso(new Date(now.getFullYear(), now.getMonth() - 1, 1)), to: this._reportIso(new Date(now.getFullYear(), now.getMonth(), 0)) };
+      case 'year': return { from: this._reportIso(new Date(now.getFullYear(), 0, 1)), to: today };
+      default: return { from: '', to: '' };
+    }
+  },
+
+  _reportPresetNames: { all: 'All Time', today: 'Today', yesterday: 'Yesterday', week: 'Last 7 Days', last30: 'Last 30 Days', month: 'This Month', lastmonth: 'Last Month', year: 'This Year', custom: 'Custom' },
+
+  _reportFilterLabel() {
+    const f = this._reportFilter || { preset: 'all', from: '', to: '' };
+    if (f.preset === 'custom') return `${f.from || '...'} → ${f.to || '...'}`;
+    return this._reportPresetNames[f.preset] || 'All Time';
+  },
+
+  _paintReportFilter() {
+    const lbl = document.getElementById('rep-filter-label');
+    if (lbl) lbl.textContent = this._reportFilterLabel();
     const f = document.getElementById('rep-from'); const t = document.getElementById('rep-to');
-    if (f) f.value = from; if (t) t.value = to;
+    if (f) f.value = this._reportFilter.from || '';
+    if (t) t.value = this._reportFilter.to || '';
+    document.querySelectorAll('#rep-filter-panel [data-preset]').forEach(b => {
+      const active = b.getAttribute('data-preset') === this._reportFilter.preset;
+      b.classList.toggle('btn-primary', active);
+      b.classList.toggle('btn-secondary', !active);
+    });
+  },
+
+  toggleReportFilter(ev) {
+    if (ev) ev.stopPropagation();
+    const panel = document.getElementById('rep-filter-panel');
+    if (!panel) return;
+    const willOpen = panel.classList.contains('hidden');
+    panel.classList.toggle('hidden');
+    if (willOpen) {
+      this._paintReportFilter();
+      if (!this._repFilterDocBound) {
+        this._repFilterDocBound = true;
+        document.addEventListener('click', (e) => {
+          const wrap = document.getElementById('rep-filter-wrap');
+          const pn = document.getElementById('rep-filter-panel');
+          if (wrap && pn && !wrap.contains(e.target)) pn.classList.add('hidden');
+        });
+      }
+    }
+  },
+
+  _closeReportFilter() { const pn = document.getElementById('rep-filter-panel'); if (pn) pn.classList.add('hidden'); },
+
+  _applyReportPreset(preset) {
+    const r = this._reportRangeFor(preset);
+    this._reportFilter = { preset, from: r.from, to: r.to };
+    this._paintReportFilter();
+    this._closeReportFilter();
+    this.loadReport();
+  },
+
+  _applyReportCustom() {
+    const from = document.getElementById('rep-from')?.value || '';
+    const to = document.getElementById('rep-to')?.value || '';
+    this._reportFilter = { preset: 'custom', from, to };
+    this._paintReportFilter();
+    this._closeReportFilter();
     this.loadReport();
   },
 
@@ -7846,10 +7889,8 @@ const App = {
   },
 
   _reportPeriod() {
-    return {
-      from: document.getElementById('rep-from')?.value || '',
-      to: document.getElementById('rep-to')?.value || ''
-    };
+    const f = this._reportFilter || { from: '', to: '' };
+    return { from: f.from || '', to: f.to || '' };
   },
 
   async loadReport() {
@@ -7868,10 +7909,7 @@ const App = {
         const d = await this.api.get(`/api/reports/suppliers?from=${from}&to=${to}`);
         this._reportData = d; this.renderReportSuppliers();
       } else {
-        // Stock ke liye default = is month (taake opening/closing ka hisaab saaf dikhe)
-        let f2 = from, t2 = to;
-        if (!f2 && !t2) { const td = new Date(); f2 = new Date(td.getFullYear(), td.getMonth(), 1).toISOString().slice(0, 10); t2 = td.toISOString().slice(0, 10); const fe = document.getElementById('rep-from'); const te = document.getElementById('rep-to'); if (fe) fe.value = f2; if (te) te.value = t2; }
-        const d = await this.api.get(`/api/reports/stock?section=${this._reportStockSection}&from=${f2}&to=${t2}`);
+        const d = await this.api.get(`/api/reports/stock?section=${this._reportStockSection}&from=${from}&to=${to}`);
         this._reportData = d; this.renderReportStock();
       }
     } catch (e) { body.innerHTML = '<p class="text-red-500 text-center py-8">Report load nahi ho saki.</p>'; }
@@ -7892,7 +7930,7 @@ const App = {
   },
 
   _reportStat(label, value, color) {
-    return `<div class="stat-card"><p class="text-xs text-gray-500">${label}</p><p class="text-xl font-bold ${color || 'text-gray-800'}">${value}</p></div>`;
+    return `<div class="stat-card"><p class="text-xs text-gray-500">${label}</p><p class="text-xl font-bold mt-1 ${color || 'text-gray-800'}">${value}</p></div>`;
   },
 
   renderReportCustomers() {
@@ -7918,12 +7956,12 @@ const App = {
       ${this._reportStat('Received', 'PKR ' + this.fmt(tPaid), 'amount-received')}
       ${this._reportStat('Outstanding (Baqaya)', 'PKR ' + this.fmt(tDue), 'amount-pending')}
     </div>`;
-    html += this._reportCard('Customers — Khareed Record', 'fa-users', `Period: ${this._reportRangeLabel(from, to)} · Kul items: ${this.fmt(tQty)} · Kisi customer par click karein — cheez-war detail popup me khulegi`,
+    html += this._reportCard('Customers — Khareed Record', 'fa-users', `Period: ${this._reportRangeLabel(from, to)}`,
       [{t:'#'},{t:'Customer'},{t:'Bills',r:1},{t:'Items Qty',r:1},{t:'Total Amount',r:1},{t:'Paid',r:1},{t:'Due',r:1},{t:'Detail'}], rows, 'Is period me koi bill nahi bana.');
     this._reportPdf = { title: 'Customer Purchase Report', subtitle: this._reportRangeLabel(from, to), headers: ['#', 'Customer', 'Bills', 'Items Qty', 'Total Amount', 'Paid', 'Due'],
       rows: cs.map((x, i) => [i + 1, x.customer_name, x.bills, this.fmt(x.total_qty), this.fmt(x.total_amount), this.fmt(x.total_paid), this.fmt(x.due)]),
       totals: ['', 'TOTAL', cs.reduce((s, x) => s + x.bills, 0), this.fmt(tQty), this.fmt(tAmt), this.fmt(tPaid), this.fmt(tDue)] };
-    document.getElementById('report-body').innerHTML = html;
+    document.getElementById('report-body').innerHTML = `<div class="space-y-5">${html}</div>`;
   },
 
   renderReportEmployees() {
@@ -7949,12 +7987,12 @@ const App = {
       ${this._reportStat('Scrap', this.fmt(tScrap), 'text-red-600')}
       ${this._reportStat('Total Payout', 'PKR ' + this.fmt(tPay), 'amount-received')}
     </div>`;
-    html += this._reportCard('Employees — Production Record', 'fa-user-tie', `Period: ${this._reportRangeLabel(from, to)} · Kul pieces (scrap samait): ${this.fmt(tTotal)} · Kisi employee par click karein — item-war detail popup me khulegi`,
+    html += this._reportCard('Employees — Production Record', 'fa-user-tie', `Period: ${this._reportRangeLabel(from, to)}`,
       [{t:'#'},{t:'Employee'},{t:'Entries',r:1},{t:'Good Pieces',r:1},{t:'Total Pieces',r:1},{t:'Scrap',r:1},{t:'Payout',r:1},{t:'Detail'}], rows, 'Is period me koi production entry nahi.');
     this._reportPdf = { title: 'Employee Production Report', subtitle: this._reportRangeLabel(from, to), headers: ['#', 'Employee', 'Entries', 'Good Pieces', 'Total Pieces', 'Scrap', 'Payout (PKR)'],
       rows: es.map((x, i) => [i + 1, x.employee_name, x.entries, this.fmt(x.good_pieces), this.fmt(x.total_pieces), this.fmt(x.scrap), this.fmt(x.payout)]),
       totals: ['', 'TOTAL', es.reduce((s, x) => s + x.entries, 0), this.fmt(tPieces), this.fmt(tTotal), this.fmt(tScrap), this.fmt(tPay)] };
-    document.getElementById('report-body').innerHTML = html;
+    document.getElementById('report-body').innerHTML = `<div class="space-y-5">${html}</div>`;
   },
 
   renderReportSuppliers() {
@@ -7979,12 +8017,12 @@ const App = {
       ${this._reportStat('Paid', 'PKR ' + this.fmt(tPaid), 'amount-received')}
       ${this._reportStat('Dena Baqi', 'PKR ' + this.fmt(tRem), 'amount-pending')}
     </div>`;
-    html += this._reportCard('Suppliers — Khareed Record', 'fa-truck', `Period: ${this._reportRangeLabel(from, to)} · Kisi supplier par click karein — material-war detail popup me khulegi`,
+    html += this._reportCard('Suppliers — Khareed Record', 'fa-truck', `Period: ${this._reportRangeLabel(from, to)}`,
       [{t:'#'},{t:'Supplier'},{t:'Purchases',r:1},{t:'Qty',r:1},{t:'Total Amount',r:1},{t:'Paid',r:1},{t:'Remaining',r:1},{t:'Detail'}], rows, 'Is period me koi purchase nahi.');
     this._reportPdf = { title: 'Supplier Purchase Report', subtitle: this._reportRangeLabel(from, to), headers: ['#', 'Supplier', 'Purchases', 'Qty', 'Total Amount', 'Paid', 'Remaining'],
       rows: ss.map((x, i) => [i + 1, x.supplier_name, x.purchases, this.fmt(x.total_qty), this.fmt(x.total_amount), this.fmt(x.total_paid), this.fmt(x.remaining)]),
       totals: ['', 'TOTAL', ss.reduce((s, x) => s + x.purchases, 0), '', this.fmt(tAmt), this.fmt(tPaid), this.fmt(tRem)] };
-    document.getElementById('report-body').innerHTML = html;
+    document.getElementById('report-body').innerHTML = `<div class="space-y-5">${html}</div>`;
   },
 
   renderReportStock() {
@@ -8014,17 +8052,17 @@ const App = {
           ${[['inventory','Finished Goods'],['raw','Raw Materials'],['components','Components']].map(([v, l]) => `<button onclick="App._reportStockSection='${v}'; App.loadReport()" class="btn btn-sm ${this._reportStockSection === v ? 'btn-primary' : 'btn-secondary'}">${l}</button>`).join('')}
         </div>
       </div>
-      <div class="px-4 py-2 text-xs text-gray-500 border-b">Period: <strong>${this._reportRangeLabel(d.from, d.to)}</strong> — Opening = period ke shuru me kitna stock tha · In = kitna naya aaya/bana · Out = kitna bika/use hua · Closing = period ke aakhir me kitna bacha (kul closing: <strong>${this.fmt(tClose)}</strong>)</div>
+      <div class="px-4 py-2 text-xs text-gray-500 border-b">Period: <strong>${this._reportRangeLabel(d.from, d.to)}</strong> · Kul Closing: <strong>${this.fmt(tClose)}</strong></div>
       <div class="overflow-x-auto"><table class="ledger-table">
         <thead><tr><th>#</th><th>Item</th><th class="text-right">Opening</th><th class="text-right">In (+)</th><th class="text-right">Out (-)</th><th class="text-right">Closing</th></tr></thead>
         <tbody>${rows || `<tr><td colspan="6" class="text-center py-8 text-gray-500">Is section me koi item nahi.</td></tr>`}</tbody>
       </table></div>
     </div>
-    <p class="text-xs text-gray-400"><i class="fas fa-triangle-exclamation mr-1"></i>Note: Closing maujooda stock se peeche hisaab karke nikala gaya hai. Bohat purani tareekhon ke liye (jab system me har movement record nahi hota tha) opening takreebi ho sakta hai — nayi entries ke baad ye bilkul exact rahega.</p>`;
+`;
     this._reportPdf = { title: `Stock Report — ${secLabel}`, subtitle: this._reportRangeLabel(d.from, d.to), headers: ['#', 'Item', 'Opening', 'In (+)', 'Out (-)', 'Closing'],
       rows: items.map((x, i) => [i + 1, `${x.name} (${x.unit || ''})`, this.fmt(x.opening), this.fmt(x.in_qty), this.fmt(x.out_qty), this.fmt(x.closing)]),
       totals: ['', 'TOTAL', this.fmt(tOpen), this.fmt(tIn), this.fmt(tOut), this.fmt(tClose)] };
-    document.getElementById('report-body').innerHTML = html;
+    document.getElementById('report-body').innerHTML = `<div class="space-y-5">${html}</div>`;
   },
 
   // Row ki detail POPUP (modal) me — page ke neeche nahi khulti.
@@ -8159,7 +8197,7 @@ const App = {
     area.innerHTML = `
       <div class="page-header">
         <div><h1 class="page-title"><i class="fas fa-palette text-pink-500"></i>Branding & Settings</h1>
-          <p class="page-subtitle">Customize CRM appearance and bill template</p></div>
+          </div>
       </div>
       <div class="p-4 md:p-6">
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -8626,7 +8664,7 @@ const App = {
       <div class="page-header">
         <div>
           <h1 class="page-title"><i class="fas fa-building-columns text-blue-600"></i> Banking / Payments</h1>
-          <p class="page-subtitle">${accs.length} account(s) · Total balance across all accounts</p>
+          
         </div>
         <div class="flex gap-2 flex-wrap">
           <button onclick="App.showBankTxnEditor('in')" class="btn btn-success"><i class="fas fa-arrow-down"></i> Money In</button>
@@ -8809,7 +8847,7 @@ const App = {
             <button onclick="App.showBanking()" class="text-gray-500 hover:text-gray-800 mr-2" title="Back"><i class="fas fa-arrow-left"></i></button>
             <i class="fas ${a.icon || tm.icon}" style="color:${a.color||'#2563eb'}"></i> ${this.escapeHtml(a.name)}
           </h1>
-          <p class="page-subtitle">${tm.label}${a.account_number ? ' · ' + this.escapeHtml(a.account_number) : ''}${a.bank_name ? ' · ' + this.escapeHtml(a.bank_name) : ''}</p>
+          
         </div>
         <div class="flex gap-2 flex-wrap">
           <button onclick="App.showBankTxnEditor('in', ${a.id})" class="btn btn-success"><i class="fas fa-arrow-down"></i> Money In</button>
@@ -9141,7 +9179,7 @@ const App = {
     area.innerHTML = `
       <div class="page-header">
         <div><h1 class="page-title"><i class="fas fa-barcode text-indigo-600"></i>Barcodes / Serial Numbers</h1>
-          <p class="page-subtitle">Har packed product ki unique identity · scan ya search karke verify karein</p></div>
+          </div>
       </div>
       <div class="p-4 md:p-6 space-y-5" id="barcode-page-body">
         <div class="text-center py-10 text-gray-500"><i class="fas fa-spinner fa-spin text-2xl"></i></div>
