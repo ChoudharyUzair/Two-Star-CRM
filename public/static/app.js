@@ -362,6 +362,9 @@ const App = {
           <button class="nav-btn ${this.state.view === 'employees' ? 'active' : ''}" id="nav-employees" onclick="App.showEmployees()">
             <i class="fas fa-users-gear"></i><i class="fas fa-user-tie" style="display:none;"></i><span>Employees</span>
           </button>
+          <button class="nav-btn ${this.state.view === 'reports' ? 'active' : ''}" id="nav-reports" onclick="App.showReports()">
+            <i class="fas fa-table"></i><span>Reports</span>
+          </button>
           <button class="nav-btn ${this.state.view === 'side-expenses' ? 'active' : ''}" id="nav-side-expenses" onclick="App.showSideExpenses()">
             <i class="fas fa-money-bill-wave"></i><span>Side Expenses</span>
           </button>
@@ -7742,6 +7745,295 @@ const App = {
       this.toast('Is device par direct PDF attach support nahi — PDF download kar diya, WhatsApp me attach karein', 'info');
       window.open(waUrl, '_blank');
     } catch (e) { this.toast('WhatsApp share failed', 'error'); }
+  },
+
+
+  // ========= REPORTS CENTER =========
+  // Har kisi ke proper records table ki surat me + date filter + PDF:
+  //   Customers (kis ne kitna maal khareeda, konsi cheez kitni)
+  //   Employees (kis ne kitna maal banaya, pieces + payout)
+  //   Suppliers (kis se kitna raw khareeda)
+  //   Stock (period me opening / in / out / closing)
+  _reportTab: 'customers',
+  _reportKey: null,
+  _reportData: null,
+  _reportPdf: null,
+  _reportStockSection: 'inventory',
+
+  async showReports(tab) {
+    if (tab) this._reportTab = tab;
+    this.state.view = 'reports';
+    this.state.currentFolderId = null;
+    this.state.currentClientId = null;
+    this.setActiveNav('reports');
+    this.closeSidebarOnMobile();
+    this.renderFolders();
+    const area = document.getElementById('content-area');
+    area.innerHTML = `
+      <div class="page-header">
+        <div><h1 class="page-title"><i class="fas fa-table text-indigo-500"></i>Reports</h1>
+          <p class="page-subtitle">Customers, Employees, Suppliers aur Stock ke mukammal records — date filter + PDF ke saath</p></div>
+        <button onclick="App.downloadReportPDF()" class="btn btn-primary"><i class="fas fa-file-pdf"></i> Download PDF</button>
+      </div>
+      <div class="p-4 md:p-6 space-y-4">
+        <div class="bg-white rounded-xl shadow-sm p-3 flex flex-wrap items-end gap-3">
+          <div><label class="block text-xs text-gray-500 mb-1">From Date</label><input id="rep-from" type="date" class="input-field" style="width:auto"></div>
+          <div><label class="block text-xs text-gray-500 mb-1">To Date</label><input id="rep-to" type="date" class="input-field" style="width:auto"></div>
+          <button onclick="App.loadReport()" class="btn btn-secondary btn-sm"><i class="fas fa-filter"></i> Filter</button>
+          <div class="flex gap-1 flex-wrap">
+            <button onclick="App._reportQuick('all')" class="btn btn-secondary btn-sm">All Time</button>
+            <button onclick="App._reportQuick('today')" class="btn btn-secondary btn-sm">Today</button>
+            <button onclick="App._reportQuick('week')" class="btn btn-secondary btn-sm">Last 7 Days</button>
+            <button onclick="App._reportQuick('month')" class="btn btn-secondary btn-sm">This Month</button>
+          </div>
+        </div>
+        <div class="flex gap-1 border-b text-sm flex-wrap">
+          ${[['customers','fa-users','Customers — Khareed'],['employees','fa-user-tie','Employees — Production'],['suppliers','fa-truck','Suppliers — Khareed'],['stock','fa-boxes','Stock Report']].map(([t,ic,lbl]) => `
+            <button onclick="App.showReports('${t}')" class="px-3 py-2 border-b-2 ${this._reportTab === t ? 'border-indigo-500 text-indigo-700 font-semibold' : 'border-transparent text-gray-600'}"><i class="fas ${ic} mr-1"></i>${lbl}</button>`).join('')}
+        </div>
+        <div id="report-body"><div class="text-gray-400 text-center py-8"><i class="fas fa-spinner fa-spin text-2xl"></i></div></div>
+      </div>`;
+    await this.loadReport();
+  },
+
+  _reportQuick(range) {
+    const today = new Date();
+    const iso = (d) => d.toISOString().slice(0, 10);
+    let from = '', to = '';
+    if (range === 'today') { from = to = iso(today); }
+    else if (range === 'week') { const d = new Date(today); d.setDate(d.getDate() - 6); from = iso(d); to = iso(today); }
+    else if (range === 'month') { from = iso(new Date(today.getFullYear(), today.getMonth(), 1)); to = iso(today); }
+    const f = document.getElementById('rep-from'); const t = document.getElementById('rep-to');
+    if (f) f.value = from; if (t) t.value = to;
+    this.loadReport();
+  },
+
+  _reportRangeLabel(from, to) {
+    if (!from && !to) return 'All Time (shuru se aaj tak)';
+    return `${from || '...'} se ${to || '...'} tak`;
+  },
+
+  async loadReport() {
+    const from = document.getElementById('rep-from')?.value || '';
+    const to = document.getElementById('rep-to')?.value || '';
+    const body = document.getElementById('report-body');
+    if (!body) return;
+    body.innerHTML = '<div class="text-gray-400 text-center py-8"><i class="fas fa-spinner fa-spin text-2xl"></i></div>';
+    this._reportKey = null;
+    try {
+      if (this._reportTab === 'customers') {
+        const d = await this.api.get(`/api/reports/customers?from=${from}&to=${to}`);
+        this._reportData = d; this.renderReportCustomers();
+      } else if (this._reportTab === 'employees') {
+        const d = await this.api.get(`/api/reports/employees?from=${from}&to=${to}`);
+        this._reportData = d; this.renderReportEmployees();
+      } else if (this._reportTab === 'suppliers') {
+        const d = await this.api.get(`/api/reports/suppliers?from=${from}&to=${to}`);
+        this._reportData = d; this.renderReportSuppliers();
+      } else {
+        // Stock ke liye default = is month (taake opening/closing ka hisaab saaf dikhe)
+        let f2 = from, t2 = to;
+        if (!f2 && !t2) { const td = new Date(); f2 = new Date(td.getFullYear(), td.getMonth(), 1).toISOString().slice(0, 10); t2 = td.toISOString().slice(0, 10); const fe = document.getElementById('rep-from'); const te = document.getElementById('rep-to'); if (fe) fe.value = f2; if (te) te.value = t2; }
+        const d = await this.api.get(`/api/reports/stock?section=${this._reportStockSection}&from=${f2}&to=${t2}`);
+        this._reportData = d; this.renderReportStock();
+      }
+    } catch (e) { body.innerHTML = '<p class="text-red-500 text-center py-8">Report load nahi ho saki.</p>'; }
+  },
+
+  _reportTable(headers, rowsHtml, emptyMsg) {
+    return `<div class="bg-white rounded-xl shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="ledger-table">
+      <thead><tr>${headers.map(h => `<th class="${h.r ? 'text-right' : ''}">${h.t}</th>`).join('')}</tr></thead>
+      <tbody>${rowsHtml || `<tr><td colspan="${headers.length}" class="text-center py-8 text-gray-500">${emptyMsg}</td></tr>`}</tbody></table></div></div>`;
+  },
+
+  renderReportCustomers() {
+    const d = this._reportData; if (!d) return;
+    const from = document.getElementById('rep-from')?.value || '', to = document.getElementById('rep-to')?.value || '';
+    const cs = d.customers || [];
+    const tAmt = cs.reduce((s, x) => s + (parseFloat(x.total_amount) || 0), 0);
+    const tQty = cs.reduce((s, x) => s + (parseFloat(x.total_qty) || 0), 0);
+    const tDue = cs.reduce((s, x) => s + (parseFloat(x.due) || 0), 0);
+    const rows = cs.map((x, i) => `
+      <tr class="cursor-pointer hover:bg-gray-50 ${this._reportKey === x.key ? 'bg-indigo-50' : ''}" onclick="App._selectReportKey('${x.key}')">
+        <td>${i + 1}</td><td class="font-semibold">${this.escapeHtml(x.customer_name)}</td>
+        <td class="text-right">${x.bills}</td><td class="text-right">${this.fmt(x.total_qty)}</td>
+        <td class="text-right font-bold">PKR ${this.fmt(x.total_amount)}</td>
+        <td class="text-right text-green-700">PKR ${this.fmt(x.total_paid)}</td>
+        <td class="text-right ${x.due > 0 ? 'text-red-600 font-bold' : 'text-gray-400'}">PKR ${this.fmt(x.due)}</td>
+      </tr>`).join('');
+    let html = `<p class="text-sm text-gray-600"><i class="fas fa-info-circle mr-1"></i>Period: <strong>${this._reportRangeLabel(from, to)}</strong> · Total sale: <strong>PKR ${this.fmt(tAmt)}</strong> · Kul items: <strong>${this.fmt(tQty)}</strong> · Kul baqaya: <strong class="text-red-600">PKR ${this.fmt(tDue)}</strong>. Kisi customer par click karein — neeche us ki cheez-war detail aa jayegi.</p>`;
+    html += this._reportTable([{t:'#'},{t:'Customer'},{t:'Bills',r:1},{t:'Items Qty',r:1},{t:'Total Amount',r:1},{t:'Paid',r:1},{t:'Due',r:1}], rows, 'Is period me koi bill nahi bana.');
+    this._reportPdf = { title: 'Customer Purchase Report', subtitle: this._reportRangeLabel(from, to), headers: ['#', 'Customer', 'Bills', 'Items Qty', 'Total Amount', 'Paid', 'Due'],
+      rows: cs.map((x, i) => [i + 1, x.customer_name, x.bills, this.fmt(x.total_qty), this.fmt(x.total_amount), this.fmt(x.total_paid), this.fmt(x.due)]),
+      totals: ['', 'TOTAL', cs.reduce((s, x) => s + x.bills, 0), this.fmt(tQty), this.fmt(tAmt), this.fmt(cs.reduce((s, x) => s + (parseFloat(x.total_paid) || 0), 0)), this.fmt(tDue)] };
+    if (this._reportKey) {
+      const sel = cs.find(x => x.key === this._reportKey);
+      const items = (d.items || []).filter(x => x.customer_key === this._reportKey);
+      const irows = items.map((x, i) => `<tr><td>${i + 1}</td><td>${this.escapeHtml(x.product_name)}</td><td class="text-right">${this.fmt(x.quantity)}</td><td class="text-right">${x.bills}</td><td class="text-right font-bold">PKR ${this.fmt(x.amount)}</td></tr>`).join('');
+      html += `<h3 class="font-bold text-gray-800 mt-4 mb-2"><i class="fas fa-list mr-1"></i>${this.escapeHtml(sel ? sel.customer_name : '')} — konsi cheez kitni khareedi</h3>`;
+      html += this._reportTable([{t:'#'},{t:'Product'},{t:'Qty',r:1},{t:'Bills',r:1},{t:'Amount',r:1}], irows, 'Koi item nahi.');
+      this._reportPdf = { title: `Customer Report — ${sel ? sel.customer_name : ''}`, subtitle: this._reportRangeLabel(from, to), headers: ['#', 'Product', 'Qty', 'Bills', 'Amount'],
+        rows: items.map((x, i) => [i + 1, x.product_name, this.fmt(x.quantity), x.bills, this.fmt(x.amount)]),
+        totals: ['', 'TOTAL', this.fmt(items.reduce((s, x) => s + (parseFloat(x.quantity) || 0), 0)), '', this.fmt(items.reduce((s, x) => s + (parseFloat(x.amount) || 0), 0))] };
+    }
+    document.getElementById('report-body').innerHTML = html;
+  },
+
+  renderReportEmployees() {
+    const d = this._reportData; if (!d) return;
+    const from = document.getElementById('rep-from')?.value || '', to = document.getElementById('rep-to')?.value || '';
+    const es = d.employees || [];
+    const tPieces = es.reduce((s, x) => s + (parseFloat(x.good_pieces) || 0), 0);
+    const tPay = es.reduce((s, x) => s + (parseFloat(x.payout) || 0), 0);
+    const tScrap = es.reduce((s, x) => s + (parseFloat(x.scrap) || 0), 0);
+    const rows = es.map((x, i) => `
+      <tr class="cursor-pointer hover:bg-gray-50 ${this._reportKey === x.key ? 'bg-indigo-50' : ''}" onclick="App._selectReportKey('${x.key}')">
+        <td>${i + 1}</td><td class="font-semibold">${this.escapeHtml(x.employee_name)}</td>
+        <td class="text-right">${x.entries}</td><td class="text-right font-bold">${this.fmt(x.good_pieces)}</td>
+        <td class="text-right">${this.fmt(x.total_pieces)}</td>
+        <td class="text-right ${x.scrap > 0 ? 'text-red-600' : 'text-gray-400'}">${this.fmt(x.scrap)}</td>
+        <td class="text-right font-bold text-green-700">PKR ${this.fmt(x.payout)}</td>
+      </tr>`).join('');
+    let html = `<p class="text-sm text-gray-600"><i class="fas fa-info-circle mr-1"></i>Period: <strong>${this._reportRangeLabel(from, to)}</strong> · Kul good pieces: <strong>${this.fmt(tPieces)}</strong> · Kul scrap: <strong class="text-red-600">${this.fmt(tScrap)}</strong> · Kul payout: <strong>PKR ${this.fmt(tPay)}</strong>. Kisi employee par click karein — neeche us ki item-war detail.</p>`;
+    html += this._reportTable([{t:'#'},{t:'Employee'},{t:'Entries',r:1},{t:'Good Pieces',r:1},{t:'Total Pieces',r:1},{t:'Scrap',r:1},{t:'Payout',r:1}], rows, 'Is period me koi production entry nahi.');
+    this._reportPdf = { title: 'Employee Production Report', subtitle: this._reportRangeLabel(from, to), headers: ['#', 'Employee', 'Entries', 'Good Pieces', 'Total Pieces', 'Scrap', 'Payout (PKR)'],
+      rows: es.map((x, i) => [i + 1, x.employee_name, x.entries, this.fmt(x.good_pieces), this.fmt(x.total_pieces), this.fmt(x.scrap), this.fmt(x.payout)]),
+      totals: ['', 'TOTAL', es.reduce((s, x) => s + x.entries, 0), this.fmt(tPieces), this.fmt(es.reduce((s, x) => s + (parseFloat(x.total_pieces) || 0), 0)), this.fmt(tScrap), this.fmt(tPay)] };
+    if (this._reportKey) {
+      const sel = es.find(x => x.key === this._reportKey);
+      const items = (d.items || []).filter(x => x.employee_key === this._reportKey);
+      const irows = items.map((x, i) => `<tr><td>${i + 1}</td><td>${this.escapeHtml(x.item_name)}</td><td class="text-right">${x.entries}</td><td class="text-right font-bold">${this.fmt(x.pieces)}</td><td class="text-right text-green-700">PKR ${this.fmt(x.payout)}</td></tr>`).join('');
+      html += `<h3 class="font-bold text-gray-800 mt-4 mb-2"><i class="fas fa-list mr-1"></i>${this.escapeHtml(sel ? sel.employee_name : '')} — konsi cheez kitni banayi</h3>`;
+      html += this._reportTable([{t:'#'},{t:'Item / Stage'},{t:'Entries',r:1},{t:'Pieces',r:1},{t:'Payout',r:1}], irows, 'Koi item nahi.');
+      this._reportPdf = { title: `Employee Report — ${sel ? sel.employee_name : ''}`, subtitle: this._reportRangeLabel(from, to), headers: ['#', 'Item / Stage', 'Entries', 'Pieces', 'Payout (PKR)'],
+        rows: items.map((x, i) => [i + 1, x.item_name, x.entries, this.fmt(x.pieces), this.fmt(x.payout)]),
+        totals: ['', 'TOTAL', items.reduce((s, x) => s + x.entries, 0), this.fmt(items.reduce((s, x) => s + (parseFloat(x.pieces) || 0), 0)), this.fmt(items.reduce((s, x) => s + (parseFloat(x.payout) || 0), 0))] };
+    }
+    document.getElementById('report-body').innerHTML = html;
+  },
+
+  renderReportSuppliers() {
+    const d = this._reportData; if (!d) return;
+    const from = document.getElementById('rep-from')?.value || '', to = document.getElementById('rep-to')?.value || '';
+    const ss = d.suppliers || [];
+    const tAmt = ss.reduce((s, x) => s + (parseFloat(x.total_amount) || 0), 0);
+    const tRem = ss.reduce((s, x) => s + (parseFloat(x.remaining) || 0), 0);
+    const rows = ss.map((x, i) => `
+      <tr class="cursor-pointer hover:bg-gray-50 ${this._reportKey === x.key ? 'bg-indigo-50' : ''}" onclick="App._selectReportKey('${x.key}')">
+        <td>${i + 1}</td><td class="font-semibold">${this.escapeHtml(x.supplier_name)}</td>
+        <td class="text-right">${x.purchases}</td><td class="text-right">${this.fmt(x.total_qty)}</td>
+        <td class="text-right font-bold">PKR ${this.fmt(x.total_amount)}</td>
+        <td class="text-right text-green-700">PKR ${this.fmt(x.total_paid)}</td>
+        <td class="text-right ${x.remaining > 0 ? 'text-red-600 font-bold' : 'text-gray-400'}">PKR ${this.fmt(x.remaining)}</td>
+      </tr>`).join('');
+    let html = `<p class="text-sm text-gray-600"><i class="fas fa-info-circle mr-1"></i>Period: <strong>${this._reportRangeLabel(from, to)}</strong> · Kul khareed: <strong>PKR ${this.fmt(tAmt)}</strong> · Suppliers ko kul dena baqi: <strong class="text-red-600">PKR ${this.fmt(tRem)}</strong>. Supplier par click karein — material-war detail neeche.</p>`;
+    html += this._reportTable([{t:'#'},{t:'Supplier'},{t:'Purchases',r:1},{t:'Qty',r:1},{t:'Total Amount',r:1},{t:'Paid',r:1},{t:'Remaining',r:1}], rows, 'Is period me koi purchase nahi.');
+    this._reportPdf = { title: 'Supplier Purchase Report', subtitle: this._reportRangeLabel(from, to), headers: ['#', 'Supplier', 'Purchases', 'Qty', 'Total Amount', 'Paid', 'Remaining'],
+      rows: ss.map((x, i) => [i + 1, x.supplier_name, x.purchases, this.fmt(x.total_qty), this.fmt(x.total_amount), this.fmt(x.total_paid), this.fmt(x.remaining)]),
+      totals: ['', 'TOTAL', ss.reduce((s, x) => s + x.purchases, 0), '', this.fmt(tAmt), this.fmt(ss.reduce((s, x) => s + (parseFloat(x.total_paid) || 0), 0)), this.fmt(tRem)] };
+    if (this._reportKey) {
+      const sel = ss.find(x => x.key === this._reportKey);
+      const items = (d.items || []).filter(x => x.supplier_key === this._reportKey);
+      const irows = items.map((x, i) => `<tr><td>${i + 1}</td><td>${this.escapeHtml(x.material_name)}</td><td class="text-right">${this.fmt(x.quantity)} ${this.escapeHtml(x.unit || '')}</td><td class="text-right font-bold">PKR ${this.fmt(x.amount)}</td></tr>`).join('');
+      html += `<h3 class="font-bold text-gray-800 mt-4 mb-2"><i class="fas fa-list mr-1"></i>${this.escapeHtml(sel ? sel.supplier_name : '')} — konsa material kitna liya</h3>`;
+      html += this._reportTable([{t:'#'},{t:'Material'},{t:'Qty',r:1},{t:'Amount',r:1}], irows, 'Koi material nahi.');
+    }
+    document.getElementById('report-body').innerHTML = html;
+  },
+
+  renderReportStock() {
+    const d = this._reportData; if (!d) return;
+    const items = d.items || [];
+    const secLabel = this._reportStockSection === 'raw' ? 'Raw Materials' : this._reportStockSection === 'components' ? 'Components' : 'Finished Goods (Inventory)';
+    const tOpen = items.reduce((s, x) => s + (parseFloat(x.opening) || 0), 0);
+    const tIn = items.reduce((s, x) => s + (parseFloat(x.in_qty) || 0), 0);
+    const tOut = items.reduce((s, x) => s + (parseFloat(x.out_qty) || 0), 0);
+    const tClose = items.reduce((s, x) => s + (parseFloat(x.closing) || 0), 0);
+    const rows = items.map((x, i) => `
+      <tr><td>${i + 1}</td><td class="font-semibold">${this.escapeHtml(x.name)} <span class="text-xs text-gray-400">${this.escapeHtml(x.unit || '')}</span></td>
+        <td class="text-right">${this.fmt(x.opening)}</td>
+        <td class="text-right text-green-700 font-semibold">+${this.fmt(x.in_qty)}</td>
+        <td class="text-right text-red-600 font-semibold">-${this.fmt(x.out_qty)}</td>
+        <td class="text-right font-bold">${this.fmt(x.closing)}</td></tr>`).join('');
+    let html = `
+      <div class="flex gap-2 flex-wrap items-center">
+        <span class="text-sm font-medium">Section:</span>
+        ${[['inventory','Finished Goods'],['raw','Raw Materials'],['components','Components']].map(([v, l]) => `<button onclick="App._reportStockSection='${v}'; App.loadReport()" class="btn btn-sm ${this._reportStockSection === v ? 'btn-primary' : 'btn-secondary'}">${l}</button>`).join('')}
+      </div>
+      <p class="text-sm text-gray-600"><i class="fas fa-info-circle mr-1"></i><strong>${secLabel}</strong> · Period: <strong>${this._reportRangeLabel(d.from, d.to)}</strong> — Opening = period ke shuru me kitna stock tha · In = kitna naya aaya/bana · Out = kitna bika/use hua · Closing = period ke aakhir me kitna bacha.</p>`;
+    html += this._reportTable([{t:'#'},{t:'Item'},{t:'Opening',r:1},{t:'In (+)',r:1},{t:'Out (-)',r:1},{t:'Closing',r:1}], rows, 'Is section me koi item nahi.');
+    html += `<p class="text-xs text-gray-400"><i class="fas fa-triangle-exclamation mr-1"></i>Note: Closing maujooda stock se peeche hisaab karke nikala gaya hai. Bohat purani tareekhon ke liye (jab system me har movement record nahi hota tha) opening takreebi ho sakta hai — nayi entries ke baad ye bilkul exact rahega.</p>`;
+    this._reportPdf = { title: `Stock Report — ${secLabel}`, subtitle: this._reportRangeLabel(d.from, d.to), headers: ['#', 'Item', 'Opening', 'In (+)', 'Out (-)', 'Closing'],
+      rows: items.map((x, i) => [i + 1, `${x.name} (${x.unit || ''})`, this.fmt(x.opening), this.fmt(x.in_qty), this.fmt(x.out_qty), this.fmt(x.closing)]),
+      totals: ['', 'TOTAL', this.fmt(tOpen), this.fmt(tIn), this.fmt(tOut), this.fmt(tClose)] };
+    document.getElementById('report-body').innerHTML = html;
+  },
+
+  _selectReportKey(key) {
+    this._reportKey = (this._reportKey === key) ? null : key;
+    if (this._reportTab === 'customers') this.renderReportCustomers();
+    else if (this._reportTab === 'employees') this.renderReportEmployees();
+    else if (this._reportTab === 'suppliers') this.renderReportSuppliers();
+  },
+
+  // Generic report PDF (text-based, bank statement wali style) — current tab
+  // aur current selection ki table hi PDF banti hai.
+  async downloadReportPDF() {
+    const rp = this._reportPdf;
+    if (!rp || !rp.rows || rp.rows.length === 0) { this.toast('PDF ke liye pehle report load karein / is period me data nahi', 'error'); return; }
+    if (!(await this._ensurePdfLibs())) { this.toast('PDF library load nahi hui — net check karein', 'error'); return; }
+    const jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
+    const b = this.state.branding || {};
+    const pdf = new jsPDFCtor({ orientation: rp.headers.length > 6 ? 'landscape' : 'portrait', unit: 'mm', format: 'a4' });
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    const margin = 10;
+    const headers = rp.headers;
+    const colW = headers.map((h, i) => i === 1 ? 2.2 : 1); // name column wider
+    const totW = colW.reduce((s, x) => s + x, 0);
+    const widths = colW.map(w => (pageW - margin * 2) * w / totW);
+    const drawHeader = () => {
+      pdf.setFillColor(37, 99, 235); pdf.rect(0, 0, pageW, 24, 'F');
+      pdf.setTextColor(255, 255, 255); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(14);
+      pdf.text(b.company_name || 'Two Star Industries', margin, 10);
+      pdf.setFontSize(11); pdf.text(rp.title, margin, 18);
+      pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9);
+      pdf.text(rp.subtitle || '', pageW - margin, 18, { align: 'right' });
+      pdf.setTextColor(0, 0, 0);
+      let x = margin; let y = 31;
+      pdf.setFont('helvetica', 'bold'); pdf.setFontSize(9);
+      headers.forEach((h, i) => { pdf.text(String(h), x + 1, y, { maxWidth: widths[i] - 2 }); x += widths[i]; });
+      pdf.setDrawColor(37, 99, 235); pdf.line(margin, y + 2, pageW - margin, y + 2);
+      return y + 8;
+    };
+    let y = drawHeader();
+    const rowH = 6;
+    const cell = (val, i, x) => {
+      const maxChars = Math.max(4, Math.floor((widths[i] - 2) / 1.9));
+      let t = String(val == null ? '' : val);
+      if (t.length > maxChars) t = t.slice(0, maxChars - 1) + '…';
+      pdf.text(t, x + 1, y);
+    };
+    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9);
+    for (const row of rp.rows) {
+      if (y > pageH - 16) { pdf.addPage(); y = drawHeader(); pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9); }
+      let x = margin;
+      row.forEach((val, i) => { cell(val, i, x); x += widths[i]; });
+      y += rowH;
+    }
+    if (rp.totals) {
+      if (y > pageH - 16) { pdf.addPage(); y = drawHeader(); }
+      pdf.setDrawColor(0, 0, 0); pdf.line(margin, y - 4, pageW - margin, y - 4);
+      pdf.setFont('helvetica', 'bold');
+      let x = margin;
+      rp.totals.forEach((val, i) => { cell(val, i, x); x += widths[i]; });
+      y += rowH;
+    }
+    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8); pdf.setTextColor(120, 120, 120);
+    pdf.text(`Generated: ${new Date().toLocaleString()} · ${b.company_name || 'Two Star Industries'}`, margin, pageH - 6);
+    const safe = rp.title.replace(/[^a-zA-Z0-9]+/g, '-');
+    pdf.save(`${safe}.pdf`);
+    this.toast('PDF download ho gaya', 'success');
   },
 
   // ========= BRANDING =========

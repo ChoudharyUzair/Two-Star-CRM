@@ -40,6 +40,14 @@
 - **Customer cards** par bhi chhota Reminder button (baqaya > 0 + phone ho to).
 - **Dashboard** par nayi section "Payment Reminders — Sab Se Zyada Baqaya": top 10 NET-due customers (backend ab `topPending` me net due + phone bhejta hai) — ek click par reminder.
 
+### 📊 8. Reports Center (naya page — sidebar me "Reports")
+Har kisi ke proper records, table ki surat me, **date filter** (All Time / Today / Last 7 Days / This Month / custom From–To) aur **PDF download** ke saath:
+- **Customers — Khareed:** kis customer ne aaj tak kitna maal khareeda (bills, total qty, amount, paid, due). Customer par click → us ki **cheez-war detail** (konsi cheez kitni, kitne bills me).
+- **Employees — Production:** kis worker ne kitna maal banaya (entries, good pieces, total pieces, scrap, payout). Click → **item/stage-war detail**.
+- **Suppliers — Khareed:** kis supplier se kitna raw material liya (purchases, qty, amount, paid, remaining). Click → material-war detail. (Ye report pehle missing thi — add kar di gayi.)
+- **Stock Report:** Finished Goods / Raw Materials / Components — selected period ke liye har item ka **Opening** (period shuru me kitna tha), **In** (kitna naya aaya/bana), **Out** (kitna bika/use hua), **Closing** (aakhir me kitna bacha). Closing maujooda stock se peeche hisaab karke nikala jata hai, isi liye purani tareekhon par bhi kaam karta hai (bohat purana opening takreebi ho sakta hai jahan system me movement record nahi tha).
+- Bill totals ki hardening: agar bill save karte waqt subtotal/total 0/missing aaye to server items ke qty × rate se khud hisaab kar leta hai (pehle 0-total bills reports kharab kar dete thay); bill_no number ki surat me bhejne par 500 error bhi fix.
+
 ### ⚡ 7. Speed fix
 - **Tailwind Play CDN hata diya** — wo browser me har load par poori CSS runtime par generate karta tha (slowness ki sab se bari wajah). Ab pehle se compiled static `public/static/tailwind.css` (24 KB) aati hai. Build: `npm run build` me `build:css` shamil hai; nayi Tailwind class use karo to build dobara chalana hoga.
 - **Heavy libraries lazy-load:** jsPDF, html2canvas, JsBarcode, html5-qrcode (~1 MB JS) ab pehle page load par NAHI aatein — sirf PDF / barcode / scanner kholne par pehli dafa load hoti hain.

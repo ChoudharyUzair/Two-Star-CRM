@@ -450,7 +450,7 @@ app.post('/api/transactions', requireAuth, async (c) => {
   const { client_id, entry_date, bill_no, amount_received, amount_pending, status, description, custom_data } = body
   const bank_account_id = body.bank_account_id
   if (!client_id) return c.json({ error: 'client_id required' }, 400)
-  const billNoT = (bill_no || '').trim()
+  const billNoT = String(bill_no || '').trim()
   if (billNoT) {
     if (!billNoValid(billNoT)) return c.json({ error: 'Bill No must contain at least 3 digits' }, 400)
     if (await isBillNoTaken(c.env, billNoT)) return c.json({ error: `Bill No "${billNoT}" already exists` }, 400)
@@ -483,7 +483,7 @@ app.put('/api/transactions/:id', requireAuth, async (c) => {
   const id = parseInt(c.req.param('id'))
   const body = await c.req.json()
   const { entry_date, bill_no, amount_received, amount_pending, status, description, custom_data } = body
-  const billNoT = (bill_no || '').trim()
+  const billNoT = String(bill_no || '').trim()
   const existingTx = await c.env.DB.prepare('SELECT bill_id, client_id, bank_txn_id FROM transactions WHERE id = ?').bind(id).first() as any
   const linkedBillId = existingTx?.bill_id ? parseInt(existingTx.bill_id) : undefined
   if (billNoT) {
@@ -1134,7 +1134,7 @@ async function computeAndSaveBillProfit(env: any, billId: number, items: any[]):
 
 app.post('/api/bills', requireAuth, async (c) => {
   const b = await c.req.json()
-  const billNo = (b.bill_no || '').trim() || generateUniqueBillNo()
+  const billNo = String(b.bill_no || '').trim() || generateUniqueBillNo()
   const billDate = b.bill_date || new Date().toISOString().slice(0, 10)
   if (!billNoValid(billNo)) return c.json({ error: 'Bill No must contain at least 3 digits' }, 400)
   if (await isBillNoTaken(c.env, billNo)) return c.json({ error: `Bill No "${billNo}" already exists` }, 400)
@@ -1148,6 +1148,16 @@ app.post('/api/bills', requireAuth, async (c) => {
     const r = await resolveBillItemProduct(c.env, it)
     if (qty > 0 && !r.product_id && r.product_name) stockWarnings.push(r.product_name)
     resolvedItems.push({ ...it, product_id: r.product_id, product_name: r.product_name, manufacturing_cost: r.manufacturing_cost, quantity: qty })
+  }
+
+  // TOTAL FIX: agar client ne subtotal/total nahi bheja (ya 0 bheja) lekin
+  // items ke qty x rate maujood hain to hisaab SERVER khud karega — warna
+  // bill 0-total ke saath save ho jata tha aur sales/reports ghalat aati theen.
+  const itemsSubtotalP = resolvedItems.reduce((sum, it) => sum + ((parseFloat(it.total) > 0) ? parseFloat(it.total) : (parseFloat(it.quantity) || 0) * (parseFloat(it.rate) || 0)), 0)
+  if (!(parseFloat(b.subtotal) > 0) && itemsSubtotalP > 0) b.subtotal = itemsSubtotalP
+  if (!(parseFloat(b.total) > 0)) {
+    const tcP = Math.max(0, ((parseFloat(b.subtotal) || 0) - (parseFloat(b.discount) || 0)) * (1 + (parseFloat(b.tax) || 0) / 100))
+    if (tcP > 0) b.total = tcP
   }
 
   const result = await c.env.DB.prepare(`
@@ -1174,7 +1184,7 @@ app.post('/api/bills', requireAuth, async (c) => {
         INSERT INTO bill_items (bill_id, product_id, product_name, quantity, rate, total, sort_order, manufacturing_cost)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(billId, it.product_id || null, it.product_name || '',
-              it.quantity, parseFloat(it.rate) || 0, parseFloat(it.total) || 0, i, parseFloat(it.manufacturing_cost) || 0))
+              it.quantity, parseFloat(it.rate) || 0, (parseFloat(it.total) > 0 ? parseFloat(it.total) : it.quantity * (parseFloat(it.rate) || 0)), i, parseFloat(it.manufacturing_cost) || 0))
       if (it.product_id && it.quantity > 0) {
         itemStmts.push(c.env.DB.prepare('UPDATE inventory SET quantity = quantity - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
           .bind(it.quantity, it.product_id))
@@ -1217,7 +1227,7 @@ app.post('/api/bills', requireAuth, async (c) => {
 app.put('/api/bills/:id', requireAuth, async (c) => {
   const id = parseInt(c.req.param('id'))
   const b = await c.req.json()
-  const billNoT = (b.bill_no || '').trim()
+  const billNoT = String(b.bill_no || '').trim()
   // Look up the bill's own linked ledger transaction so we can exclude it from the duplicate check
   const existingBill = await c.env.DB.prepare('SELECT ledger_transaction_id, bank_txn_id, bank_account_id FROM bills WHERE id = ?').bind(id).first() as any
   const linkedTxId = existingBill?.ledger_transaction_id ? parseInt(existingBill.ledger_transaction_id) : undefined
@@ -1238,6 +1248,14 @@ app.put('/api/bills/:id', requireAuth, async (c) => {
     resolvedItemsU.push({ ...it, product_id: r.product_id, product_name: r.product_name, manufacturing_cost: r.manufacturing_cost, quantity: qty })
   }
   b.items = resolvedItemsU
+
+  // TOTAL FIX (POST jaisa hi): missing/0 totals server khud hisaab karega.
+  const itemsSubtotalU = resolvedItemsU.reduce((sum, it) => sum + ((parseFloat(it.total) > 0) ? parseFloat(it.total) : (parseFloat(it.quantity) || 0) * (parseFloat(it.rate) || 0)), 0)
+  if (!(parseFloat(b.subtotal) > 0) && itemsSubtotalU > 0) b.subtotal = itemsSubtotalU
+  if (!(parseFloat(b.total) > 0)) {
+    const tcU = Math.max(0, ((parseFloat(b.subtotal) || 0) - (parseFloat(b.discount) || 0)) * (1 + (parseFloat(b.tax) || 0) / 100))
+    if (tcU > 0) b.total = tcU
+  }
 
   // HARDENING: reverse old stock, update bill, swap items, apply new stock — all in ONE atomic batch.
   const oldItems = await c.env.DB.prepare('SELECT product_id, quantity FROM bill_items WHERE bill_id = ?').bind(id).all()
@@ -1279,7 +1297,7 @@ app.put('/api/bills/:id', requireAuth, async (c) => {
         INSERT INTO bill_items (bill_id, product_id, product_name, quantity, rate, total, sort_order, manufacturing_cost)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(id, it.product_id || null, it.product_name || '',
-              parseFloat(it.quantity) || 0, parseFloat(it.rate) || 0, parseFloat(it.total) || 0, i, mfgCost))
+              parseFloat(it.quantity) || 0, parseFloat(it.rate) || 0, (parseFloat(it.total) > 0 ? parseFloat(it.total) : (parseFloat(it.quantity) || 0) * (parseFloat(it.rate) || 0)), i, mfgCost))
       if (it.product_id && parseFloat(it.quantity) > 0) {
         stmts.push(c.env.DB.prepare('UPDATE inventory SET quantity = quantity - ? WHERE id = ?').bind(parseFloat(it.quantity), it.product_id))
         stmts.push(c.env.DB.prepare(
@@ -3919,6 +3937,221 @@ app.get('/api/dashboard/transactions', requireAuth, async (c) => {
   ])
   const total = (countRow as any)?.c || 0
   return c.json({ transactions: rows.results, total, page, pages: Math.ceil(total / limit) })
+})
+
+// ============ REPORTS CENTER ============
+// Har kisi ke proper records — table ki surat me, date filter ke saath:
+//   - Customers: kis customer ne kitna maal khareeda, konsi cheez kitni
+//   - Employees: kis worker ne kitna maal banaya (pieces + payout)
+//   - Suppliers: kis supplier se kitna raw material khareeda
+//   - Stock: selected period me opening / in / out / closing — har cheez ka
+// Frontend inhein Reports page par dikhata hai aur PDF download deta hai.
+
+function reportDateOk(d: any, from: string, to: string): boolean {
+  if (!d) return false
+  const ds = String(d).slice(0, 10)
+  if (from && ds < from) return false
+  if (to && ds > to) return false
+  return true
+}
+
+app.get('/api/reports/customers', requireAuth, async (c) => {
+  const from = c.req.query('from') || ''
+  const to = c.req.query('to') || ''
+  const billsRes = await c.env.DB.prepare('SELECT id, client_id, customer_name, bill_date, total, paid FROM bills ORDER BY bill_date ASC, id ASC').all()
+  const bills = ((billsRes.results as any[]) || []).filter(b => reportDateOk(b.bill_date, from, to))
+  const clientsRes = await c.env.DB.prepare('SELECT id, name FROM clients').all()
+  const clientName: Record<number, string> = {}
+  for (const cl of ((clientsRes.results as any[]) || [])) clientName[cl.id] = cl.name
+  const billById: Record<number, any> = {}
+  for (const b of bills) billById[b.id] = b
+  const itemsRes = await c.env.DB.prepare('SELECT bill_id, product_name, quantity, total FROM bill_items').all()
+
+  const custMap: Record<string, any> = {}
+  const keyOf = (b: any) => b.client_id ? 'c' + b.client_id : 'n:' + String(b.customer_name || 'Unknown').trim().toLowerCase()
+  for (const b of bills) {
+    const k = keyOf(b)
+    if (!custMap[k]) custMap[k] = { key: k, client_id: b.client_id || null, customer_name: (b.client_id && clientName[b.client_id]) || b.customer_name || 'Unknown', bills: 0, total_qty: 0, total_amount: 0, total_paid: 0, due: 0 }
+    custMap[k].bills += 1
+    custMap[k].total_amount += parseFloat(b.total) || 0
+    custMap[k].total_paid += parseFloat(b.paid) || 0
+  }
+  const itemMap: Record<string, any> = {}
+  for (const it of ((itemsRes.results as any[]) || [])) {
+    const b = billById[it.bill_id]
+    if (!b) continue
+    const ck = keyOf(b)
+    const ik = ck + '|' + String(it.product_name || '').trim().toLowerCase()
+    if (!itemMap[ik]) itemMap[ik] = { customer_key: ck, product_name: it.product_name || '', quantity: 0, amount: 0, bill_ids: {} }
+    itemMap[ik].quantity += parseFloat(it.quantity) || 0
+    itemMap[ik].amount += parseFloat(it.total) || 0
+    itemMap[ik].bill_ids[it.bill_id] = 1
+    if (custMap[ck]) custMap[ck].total_qty += parseFloat(it.quantity) || 0
+  }
+  const customers = Object.values(custMap).map((x: any) => ({ ...x, due: x.total_amount - x.total_paid })).sort((a: any, b: any) => b.total_amount - a.total_amount)
+  const items = Object.values(itemMap).map((x: any) => ({ customer_key: x.customer_key, product_name: x.product_name, quantity: x.quantity, amount: x.amount, bills: Object.keys(x.bill_ids).length })).sort((a: any, b: any) => b.amount - a.amount)
+  return c.json({ customers, items, from, to })
+})
+
+app.get('/api/reports/employees', requireAuth, async (c) => {
+  const from = c.req.query('from') || ''
+  const to = c.req.query('to') || ''
+  const compRes = await c.env.DB.prepare('SELECT * FROM production_logs ORDER BY entry_date ASC, id ASC').all()
+  const prodRes = await c.env.DB.prepare('SELECT * FROM product_production_logs ORDER BY entry_date ASC, id ASC').all()
+  const empMap: Record<string, any> = {}
+  const itemMap: Record<string, any> = {}
+  const ensureEmp = (id: any, name: string) => {
+    const k = id ? 'e' + id : 'n:' + String(name || 'Unknown').trim().toLowerCase()
+    if (!empMap[k]) empMap[k] = { key: k, employee_id: id || null, employee_name: name || 'Unknown', entries: 0, total_pieces: 0, good_pieces: 0, scrap: 0, payout: 0 }
+    return empMap[k]
+  }
+  const addItem = (ek: string, label: string, pieces: number, payout: number) => {
+    const ik = ek + '|' + label.toLowerCase()
+    if (!itemMap[ik]) itemMap[ik] = { employee_key: ek, item_name: label, pieces: 0, payout: 0, entries: 0 }
+    itemMap[ik].pieces += pieces; itemMap[ik].payout += payout; itemMap[ik].entries += 1
+  }
+  for (const l of ((compRes.results as any[]) || [])) {
+    if (!l.employee_id && !l.employee_name) continue
+    if (!reportDateOk(l.entry_date, from, to)) continue
+    const e = ensureEmp(l.employee_id, l.employee_name)
+    const qty = parseFloat(l.quantity) || 0
+    const scrap = parseFloat(l.scrap_qty) || 0
+    const good = Math.max(0, qty - scrap)
+    e.entries += 1; e.total_pieces += qty; e.good_pieces += good; e.scrap += scrap; e.payout += parseFloat(l.payout) || 0
+    addItem(e.key, l.component_name || 'Component', good, parseFloat(l.payout) || 0)
+  }
+  for (const l of ((prodRes.results as any[]) || [])) {
+    if (!l.employee_id && !l.employee_name) continue
+    if (!reportDateOk(l.entry_date, from, to)) continue
+    const e = ensureEmp(l.employee_id, l.employee_name)
+    const qty = parseFloat(l.quantity) || 0
+    const stageLbl = l.stage === 'assemble' ? 'Assemble' : l.stage === 'paint' ? 'Paint' : 'Pack'
+    e.entries += 1; e.total_pieces += qty; e.good_pieces += qty; e.payout += parseFloat(l.payout) || 0
+    addItem(e.key, `${l.product_name || 'Product'} (${stageLbl})`, qty, parseFloat(l.payout) || 0)
+  }
+  const employees = Object.values(empMap).sort((a: any, b: any) => b.payout - a.payout)
+  const items = Object.values(itemMap).sort((a: any, b: any) => b.payout - a.payout)
+  return c.json({ employees, items, from, to })
+})
+
+app.get('/api/reports/suppliers', requireAuth, async (c) => {
+  const from = c.req.query('from') || ''
+  const to = c.req.query('to') || ''
+  const res = await c.env.DB.prepare(
+    `SELECT rmp.*, rm.name as raw_name, rm.unit as raw_unit, cl.name as supplier_name_resolved
+     FROM raw_material_purchases rmp
+     LEFT JOIN raw_materials rm ON rm.id = rmp.raw_material_id
+     LEFT JOIN clients cl ON cl.id = rmp.supplier_id
+     ORDER BY rmp.entry_date ASC, rmp.id ASC`
+  ).all()
+  const supMap: Record<string, any> = {}
+  const itemMap: Record<string, any> = {}
+  for (const r of ((res.results as any[]) || [])) {
+    if (String(r.notes || '').startsWith('[Stock Correction]')) continue // correction purchase nahi hai
+    if (!reportDateOk(r.entry_date, from, to)) continue
+    const sname = r.supplier_name_resolved || r.supplier_name || '(No supplier)'
+    const k = r.supplier_id ? 's' + r.supplier_id : 'n:' + String(sname).trim().toLowerCase()
+    if (!supMap[k]) supMap[k] = { key: k, supplier_id: r.supplier_id || null, supplier_name: sname, purchases: 0, total_qty: 0, total_amount: 0, total_paid: 0, remaining: 0 }
+    supMap[k].purchases += 1
+    supMap[k].total_qty += parseFloat(r.quantity) || 0
+    supMap[k].total_amount += parseFloat(r.total_amount) || 0
+    supMap[k].total_paid += parseFloat(r.paid_amount) || 0
+    supMap[k].remaining += parseFloat(r.remaining_amount) || 0
+    const ik = k + '|' + String(r.raw_name || '').trim().toLowerCase()
+    if (!itemMap[ik]) itemMap[ik] = { supplier_key: k, material_name: r.raw_name || '', unit: r.raw_unit || '', quantity: 0, amount: 0 }
+    itemMap[ik].quantity += parseFloat(r.quantity) || 0
+    itemMap[ik].amount += parseFloat(r.total_amount) || 0
+  }
+  const suppliers = Object.values(supMap).sort((a: any, b: any) => b.total_amount - a.total_amount)
+  const items = Object.values(itemMap).sort((a: any, b: any) => b.amount - a.amount)
+  return c.json({ suppliers, items, from, to })
+})
+
+// Stock report: har item ke liye selected period ka
+//   Opening (period shuru me kitna tha) / In (kitna naya aaya/bana) /
+//   Out (kitna gaya/bika/use hua) / Closing (period ke aakhir me kitna bacha)
+// Closing aaj ke current stock se peeche ki taraf hisaab karke nikalta hai:
+//   closing(period) = current - (period ke BAAD ke saare changes)
+//   opening = closing - (period ke andar ke changes)
+// Isi liye ye tareeqa snapshots ke baghair bhi sahi jawab deta hai.
+app.get('/api/reports/stock', requireAuth, async (c) => {
+  const from = c.req.query('from') || '0000-01-01'
+  const to = c.req.query('to') || '9999-12-31'
+  const section = c.req.query('section') || 'inventory'
+  const events: { item_id: any, item_name: string, entry_date: string, delta: number }[] = []
+  const push = (item_id: any, item_name: string, entry_date: any, delta: number) => {
+    if (!entry_date || !isFinite(delta) || delta === 0) return
+    events.push({ item_id, item_name: item_name || '', entry_date: String(entry_date).slice(0, 10), delta })
+  }
+  let items: any[] = []
+  if (section === 'raw') {
+    const it = await c.env.DB.prepare('SELECT id, name, unit, quantity FROM raw_materials ORDER BY name').all()
+    items = (it.results as any[]) || []
+    const pur = await c.env.DB.prepare('SELECT raw_material_id, quantity, entry_date FROM raw_material_purchases').all()
+    for (const r of ((pur.results as any[]) || [])) push(r.raw_material_id, '', r.entry_date, parseFloat(r.quantity) || 0)
+    const cu = await c.env.DB.prepare('SELECT u.raw_material_id, u.qty_used, l.entry_date FROM production_raw_usage u JOIN production_logs l ON l.id = u.production_log_id WHERE u.raw_material_id IS NOT NULL').all()
+    for (const r of ((cu.results as any[]) || [])) push(r.raw_material_id, '', r.entry_date, -(parseFloat(r.qty_used) || 0))
+    const au = await c.env.DB.prepare("SELECT u.source_id, u.qty_used, l.entry_date FROM product_recipe_usage u JOIN product_production_logs l ON l.id = u.product_log_id WHERE u.source_type = 'raw'").all()
+    for (const r of ((au.results as any[]) || [])) push(r.source_id, '', r.entry_date, -(parseFloat(r.qty_used) || 0))
+    const su = await c.env.DB.prepare("SELECT u.source_id, u.qty_used, l.entry_date FROM product_set_usage u JOIN product_production_logs l ON l.id = u.product_log_id WHERE u.source_type = 'raw'").all()
+    for (const r of ((su.results as any[]) || [])) push(r.source_id, '', r.entry_date, -(parseFloat(r.qty_used) || 0))
+  } else if (section === 'components') {
+    const it = await c.env.DB.prepare('SELECT id, name, unit, quantity FROM components ORDER BY name').all()
+    items = (it.results as any[]) || []
+    const pl = await c.env.DB.prepare('SELECT component_id, component_name, quantity, scrap_qty, stock_added, entry_date FROM production_logs').all()
+    for (const r of ((pl.results as any[]) || [])) {
+      const added = (r.stock_added !== null && r.stock_added !== undefined) ? (parseFloat(r.stock_added) || 0) : (parseFloat(r.quantity) || 0)
+      push(r.component_id, r.component_name, r.entry_date, added)
+    }
+    const cu = await c.env.DB.prepare('SELECT u.child_component_id, u.qty_used, l.entry_date FROM production_raw_usage u JOIN production_logs l ON l.id = u.production_log_id WHERE u.child_component_id IS NOT NULL').all()
+    for (const r of ((cu.results as any[]) || [])) push(r.child_component_id, '', r.entry_date, -(parseFloat(r.qty_used) || 0))
+    const au = await c.env.DB.prepare("SELECT u.source_id, u.item_name, u.qty_used, l.entry_date FROM product_recipe_usage u JOIN product_production_logs l ON l.id = u.product_log_id WHERE u.source_type = 'component'").all()
+    for (const r of ((au.results as any[]) || [])) push(r.source_id, r.item_name, r.entry_date, -(parseFloat(r.qty_used) || 0))
+    const su = await c.env.DB.prepare("SELECT u.source_id, u.item_name, u.qty_used, l.entry_date FROM product_set_usage u JOIN product_production_logs l ON l.id = u.product_log_id WHERE u.source_type = 'component'").all()
+    for (const r of ((su.results as any[]) || [])) push(r.source_id, r.item_name, r.entry_date, -(parseFloat(r.qty_used) || 0))
+  } else {
+    const it = await c.env.DB.prepare('SELECT id, name, unit, quantity FROM inventory ORDER BY name').all()
+    items = (it.results as any[]) || []
+    const mv = await c.env.DB.prepare('SELECT inventory_id, product_name, entry_date, type, quantity, direction FROM inventory_movements').all()
+    for (const m of ((mv.results as any[]) || [])) {
+      const q = Math.abs(parseFloat(m.quantity) || 0)
+      let d = 0
+      if (m.type === 'sale' || m.type === 'supplier_return') d = -q
+      else if (m.type === 'return' || m.type === 'restock' || m.type === 'production') d = q
+      else if (m.type === 'adjust') { const dir = (m.direction === 1 || m.direction === -1) ? m.direction : 1; d = dir * q }
+      push(m.inventory_id, m.product_name, m.entry_date, d)
+    }
+    // Purane bills (jinki sale movement abhi record nahi hoti thi) — un ki
+    // sales bill_items se le lo, lekin sirf un bills ki jinki movement NAHI hai
+    const legacy = await c.env.DB.prepare(
+      `SELECT bi.product_id, bi.product_name, bi.quantity, b.bill_date
+       FROM bill_items bi JOIN bills b ON b.id = bi.bill_id
+       WHERE bi.product_id IS NOT NULL
+         AND b.id NOT IN (SELECT bill_id FROM inventory_movements WHERE bill_id IS NOT NULL)`
+    ).all()
+    for (const r of ((legacy.results as any[]) || [])) push(r.product_id, r.product_name, r.bill_date, -(parseFloat(r.quantity) || 0))
+  }
+
+  // Aggregate per item
+  const byItem: Record<string, any> = {}
+  const ensure = (id: any, name: string, unit: string, current: number) => {
+    const k = 'i' + id
+    if (!byItem[k]) byItem[k] = { id, name: name || '', unit: unit || '', current, afterTo: 0, inPeriod: 0, inQty: 0, outQty: 0 }
+    return byItem[k]
+  }
+  for (const it of items) ensure(it.id, it.name, it.unit, parseFloat(it.quantity) || 0)
+  for (const e of events) {
+    const row = byItem['i' + e.item_id] || ensure(e.item_id, e.item_name, '', 0)
+    if (e.entry_date > to) row.afterTo += e.delta
+    else if (e.entry_date >= from) { row.inPeriod += e.delta; if (e.delta > 0) row.inQty += e.delta; else row.outQty += -e.delta }
+  }
+  const rows = Object.values(byItem).map((r: any) => {
+    const closing = r.current - r.afterTo
+    const opening = closing - r.inPeriod
+    return { id: r.id, name: r.name, unit: r.unit, opening, in_qty: r.inQty, out_qty: r.outQty, closing }
+  }).filter((r: any) => r.name || r.opening || r.closing || r.in_qty || r.out_qty)
+    .sort((a: any, b: any) => String(a.name).localeCompare(String(b.name)))
+  return c.json({ section, from: from === '0000-01-01' ? '' : from, to: to === '9999-12-31' ? '' : to, items: rows })
 })
 
 // ============ DASHBOARD ============
