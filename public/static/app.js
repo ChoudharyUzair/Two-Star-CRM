@@ -1038,7 +1038,7 @@ const App = {
         <tr data-id="${t.id}" class="${isAuto ? 'row-auto' : ''}">
           <td class="text-gray-500">${i + 1}${lockIcon}</td>
           <td class="cell-display">${t.entry_date || ''}</td>
-          <td class="cell-display">${this.escapeHtml(t.bill_no || '')}</td>
+          <td class="cell-display">${this.escapeHtml(t.bill_no || '')}${t.bill_id ? ` <button onclick="App.printBill(${t.bill_id})" class="btn btn-primary btn-sm" style="padding:1px 7px;font-size:11px;vertical-align:middle;" title="Bill dekhein — is bill me kya tha"><i class="fas fa-print"></i></button>` : ''}</td>
           <td class="amount-pending cell-display">${isPaid ? '<span class="text-gray-400">—</span>' : 'PKR ' + this.fmt(pen)}</td>
           <td class="amount-received cell-display">PKR ${this.fmt(rec)}</td>
           <td><span class="status-badge status-${statusClass}">${this.escapeHtml(statusDisplay)}</span></td>

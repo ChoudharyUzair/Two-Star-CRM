@@ -48,6 +48,10 @@ Har kisi ke proper records, table ki surat me, **date filter** (All Time / Today
 - **Stock Report:** Finished Goods / Raw Materials / Components — selected period ke liye har item ka **Opening** (period shuru me kitna tha), **In** (kitna naya aaya/bana), **Out** (kitna bika/use hua), **Closing** (aakhir me kitna bacha). Closing maujooda stock se peeche hisaab karke nikala jata hai, isi liye purani tareekhon par bhi kaam karta hai (bohat purana opening takreebi ho sakta hai jahan system me movement record nahi tha).
 - Bill totals ki hardening: agar bill save karte waqt subtotal/total 0/missing aaye to server items ke qty × rate se khud hisaab kar leta hai (pehle 0-total bills reports kharab kar dete thay); bill_no number ki surat me bhejne par 500 error bhi fix.
 
+### 🧾 9. Ledger me Bill View button
+- Customer ke ledger me jo entry kisi bill se auto-linked hai, us ke **Bill No ke saath ab neela print/view button** aata hai (Bills wali list jaisa hi icon). Click karte hi wahi bill khul jata hai — andar kya items thay, rate, total sab dikh jata hai — **ledger chhor kar Bills page par jane ki zaroorat nahi**.
+- Peeche API ab har ledger transaction ke saath us ke asal bill ka `bill_id` bheijti hai (`bills.ledger_transaction_id` se exact match). Manual entries (Cash, Discount waghera) par koi button nahi aata kyunke un ka koi bill nahi hota.
+
 ### ⚡ 7. Speed fix
 - **Tailwind Play CDN hata diya** — wo browser me har load par poori CSS runtime par generate karta tha (slowness ki sab se bari wajah). Ab pehle se compiled static `public/static/tailwind.css` (24 KB) aati hai. Build: `npm run build` me `build:css` shamil hai; nayi Tailwind class use karo to build dobara chalana hoga.
 - **Heavy libraries lazy-load:** jsPDF, html2canvas, JsBarcode, html5-qrcode (~1 MB JS) ab pehle page load par NAHI aatein — sirf PDF / barcode / scanner kholne par pehli dafa load hoti hain.

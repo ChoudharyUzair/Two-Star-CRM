@@ -425,8 +425,12 @@ app.get('/api/bill-no/check', requireAuth, async (c) => {
 // ============ TRANSACTIONS (LEDGER) ============
 app.get('/api/clients/:id/transactions', requireAuth, async (c) => {
   const id = c.req.param('id')
+  // bill_id: jo transaction kisi bill se auto-linked hai, us ke asal bill ka
+  // id bhi saath bhejo — taake ledger me Bill No ke saath "bill dekho" button
+  // lag sake aur user ledger chhore baghair bill ki detail dekh le.
   const result = await c.env.DB.prepare(
-    'SELECT * FROM transactions WHERE client_id = ? ORDER BY entry_date ASC, id ASC'
+    `SELECT t.*, (SELECT b.id FROM bills b WHERE b.ledger_transaction_id = t.id LIMIT 1) AS bill_id
+     FROM transactions t WHERE t.client_id = ? ORDER BY t.entry_date ASC, t.id ASC`
   ).bind(id).all()
   return c.json({ transactions: result.results })
 })
