@@ -84,6 +84,13 @@ Har kisi ke proper records, table ki surat me, **date filter** (All Time / Today
 - User ki hidayat par Reports **page par ab koi filter option nahi** hai — na button, na dropdown, na date fields. Upar wali card me sirf tab buttons (Customers / Employees / Suppliers / Stock) reh gaye hain, aur page hamesha **All Time** record dikhata hai.
 - Kisi khaas period ka record dekhna ho to shakhs ki **detail popup ke andar wala Filter** use hota hai (entry 14) — period wahin select hota hai.
 
+### 💬 17. Weekly Payment Reminder System (Tareeqa 1 — auto cycle + sent tracking)
+- **Hafta-war cycle:** Branding & Settings me **"Payment Reminder Day"** select hai (default **Wednesday**). Har hafte us din se naya cycle shuru hota hai.
+- **Bhej diya = button gayab:** Reminder button dabate hi WhatsApp khulta hai aur customer is hafte ke liye **"sent" mark** ho jata hai (naya table `payment_reminders`, migration 0027). Phir us customer ke **card se, ledger se aur Dashboard list se Reminder button gayab** — sirf un-sent customers par dikhta hai, bilkul user ki hidayat ke mutabiq.
+- **Dashboard panel:** "Payment Reminders" section ab cycle ki halat dikhati hai — Reminder Day, is hafte kitno ko bhej diya, kitne baqi, agla cycle kab. List me sirf **baqi (un-sent)** customers aate hain; bheje huon ke naam neeche chips me aate hain jahan se galti par **Undo** (dobara pending) bhi ho sakta hai.
+- **Agla hafta:** naya cycle shuru hote hi jin customers ka baqaya abhi baqi hai un ke button **khud wapas** aa jate hain; jin hon ne payment kar di un ke nahi aate.
+- Note: message bhejna ab bhi WhatsApp me ek "Send" click se hota hai (WhatsApp personal number se baghair click bhejna allow nahi karta) — lekin tracking, cycle aur button-hide wala poora system ab automatic hai. Naye endpoints: `GET /api/reminders`, `POST /api/reminders/mark`, `DELETE /api/reminders/mark/:clientId`; weekday `branding.reminder_weekday` me store hota hai. Dates Asia/Karachi ke hisaab se ginay jate hain. Tests: `tests/regression7.sh` (13 naye checks).
+
 ### ⚡ 7. Speed fix
 - **Tailwind Play CDN hata diya** — wo browser me har load par poori CSS runtime par generate karta tha (slowness ki sab se bari wajah). Ab pehle se compiled static `public/static/tailwind.css` (24 KB) aati hai. Build: `npm run build` me `build:css` shamil hai; nayi Tailwind class use karo to build dobara chalana hoga.
 - **Heavy libraries lazy-load:** jsPDF, html2canvas, JsBarcode, html5-qrcode (~1 MB JS) ab pehle page load par NAHI aatein — sirf PDF / barcode / scanner kholne par pehli dafa load hoti hain.

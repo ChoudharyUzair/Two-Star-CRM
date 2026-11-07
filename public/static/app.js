@@ -175,7 +175,7 @@ const App = {
   // ===== WhatsApp Payment Reminder =====
   // Customer ko us ke number par ready-made reminder message kholta hai.
   // due = NET baqaya (opening + pending - received). Supplier ke liye ye use nahi hota.
-  sendPaymentReminder(phone, customerName, due, extraLine) {
+  sendPaymentReminder(phone, customerName, due, extraLine, clientId) {
     const d = parseFloat(due) || 0;
     if (d <= 0) { this.toast('Is customer ka koi baqaya nahi hai', 'info'); return; }
     const num = this._waNumber(phone);
@@ -192,6 +192,7 @@ const App = {
       b.bill_phone ? `Rabta: ${b.bill_phone}` : ''
     ].filter(x => x !== '');
     window.open(`https://wa.me/${num}?text=${encodeURIComponent(lines.join('\n'))}`, '_blank');
+    if (clientId) this._markReminder(clientId, customerName, d);
   },
 
   // Ledger page ke liye: current client ka due khud calculate karke reminder.
@@ -202,7 +203,7 @@ const App = {
     let rec = 0, pen = 0;
     (this.state.transactions || []).forEach(t => { rec += parseFloat(t.amount_received) || 0; pen += parseFloat(t.amount_pending) || 0; });
     const due = opening + pen - rec;
-    this.sendPaymentReminder(c.phone, c.name, due);
+    this.sendPaymentReminder(c.phone, c.name, due, undefined, c.id);
   },
 
   // Dashboard / lists ke liye: data fetch karke due nikaal kar reminder.
@@ -216,8 +217,36 @@ const App = {
       const opening = parseFloat(c.opening_balance) || 0;
       let rec = 0, pen = 0;
       (tdata.transactions || []).forEach(t => { rec += parseFloat(t.amount_received) || 0; pen += parseFloat(t.amount_pending) || 0; });
-      this.sendPaymentReminder(c.phone, c.name, opening + pen - rec);
+      this.sendPaymentReminder(c.phone, c.name, opening + pen - rec, undefined, clientId);
     } catch (e) { this.toast('Reminder nahi khul saka', 'error'); }
+  },
+
+  // ===== Weekly Reminder tracking (is hafte kis ko bhej diya) =====
+  async _loadReminders() {
+    try {
+      const d = await this.api.get('/api/reminders');
+      this._reminderInfo = { weekday: d.weekday, cycle_date: d.cycle_date, next_date: d.next_date, sent: d.sent || [], sentIds: new Set((d.sent || []).map(x => x.client_id)) };
+    } catch { if (!this._reminderInfo) this._reminderInfo = { sent: [], sentIds: new Set() }; }
+  },
+
+  _reminderSent(id) { return !!(this._reminderInfo && this._reminderInfo.sentIds && this._reminderInfo.sentIds.has(id)); },
+
+  async _markReminder(clientId, name, amount) {
+    try {
+      await this.api.post('/api/reminders/mark', { client_id: clientId, client_name: name || '', amount: amount || 0 });
+      await this._loadReminders();
+      document.querySelectorAll(`[data-reminder-for="${clientId}"]`).forEach(el => el.remove());
+      if (this.state.view === 'dashboard') this.showDashboard();
+    } catch {}
+  },
+
+  async _unmarkReminder(clientId) {
+    try {
+      await this.api.delete(`/api/reminders/mark/${clientId}`);
+      await this._loadReminders();
+      if (this.state.view === 'dashboard') this.showDashboard();
+      else if (this.state.currentFolderId) this.openFolder(this.state.currentFolderId);
+    } catch { this.toast('Undo nahi ho saka', 'error'); }
   },
 
   async init() {
@@ -707,6 +736,7 @@ const App = {
     try {
       const data = await this.api.get(`/api/folders/${folderId}/clients`);
       this.state.clients = data.clients || [];
+      await this._loadReminders();
       this.renderFolders();
       this.renderFolderView();
     } catch (e) {}
@@ -749,7 +779,7 @@ const App = {
                     <h3 class="font-bold text-gray-800 text-lg truncate">${this.escapeHtml(c.name)}</h3>
                     ${c.phone ? `<p class="text-sm text-gray-500 mt-1"><i class="fas fa-phone mr-1"></i>${this.escapeHtml(c.phone)}</p>` : ''}
                     <p class="text-xs text-gray-500 mt-2">Due: <span class="amount-running font-bold">PKR ${this.fmt(due)}</span></p>
-                    ${due > 0 && c.phone && folder.ledger_type !== 'supplier' ? `<button class="btn btn-sm mt-2" style="background:#25d366; color:#fff;" onclick="event.stopPropagation(); App.remindClientById(${c.id})" title="WhatsApp payment reminder bhejein"><i class="fab fa-whatsapp"></i> Reminder</button>` : ''}
+                    ${due > 0 && c.phone && folder.ledger_type !== 'supplier' && !this._reminderSent(c.id) ? `<button data-reminder-for="${c.id}" class="btn btn-sm mt-2" style="background:#25d366; color:#fff;" onclick="event.stopPropagation(); App.remindClientById(${c.id})" title="WhatsApp payment reminder bhejein"><i class="fab fa-whatsapp"></i> Reminder</button>` : ''}
                   </div>
                   <i class="fas fa-arrow-right text-blue-500 ml-2"></i>
                 </div>
@@ -813,6 +843,7 @@ const App = {
       this.state.columnLabels = cdata.column_labels || {};
       const tdata = await this.api.get(`/api/clients/${clientId}/transactions`);
       this.state.transactions = tdata.transactions || [];
+      await this._loadReminders();
       this.state.currentFolderId = cdata.client.folder_id;
       const fdata = await this.api.get(`/api/folders/${cdata.client.folder_id}/clients`);
       this.state.clients = fdata.clients || [];
@@ -887,7 +918,7 @@ const App = {
           ${isSupplier
             ? `<button onclick="App.showSupplierRates()" class="btn btn-primary btn-sm" title="Is supplier se items kis rate par lete hain — buy rate set karein"><i class="fas fa-tags"></i> Product Rates</button>`
             : `<button onclick="App.showCustomerRates()" class="btn btn-primary btn-sm" title="Is customer ke liye products ke special selling rate set karein"><i class="fas fa-tags"></i> Product Rates</button>`}
-          ${!isSupplier && netBalance > 0 ? `<button onclick="App.remindCurrentClient()" class="btn btn-sm" style="background:#25d366; color:#fff;" title="Customer ko WhatsApp par payment reminder bhejein (baqaya: PKR ${this.fmt(netBalance)})"><i class="fab fa-whatsapp"></i> Payment Reminder</button>` : ''}
+          ${!isSupplier && netBalance > 0 && !this._reminderSent(this.state.currentClientId) ? `<button data-reminder-for="${this.state.currentClientId}" onclick="App.remindCurrentClient()" class="btn btn-sm" style="background:#25d366; color:#fff;" title="Customer ko WhatsApp par payment reminder bhejein (baqaya: PKR ${this.fmt(netBalance)})"><i class="fab fa-whatsapp"></i> Payment Reminder</button>` : ''}
           <button onclick="App.showLedgerPdfModal()" class="btn btn-success btn-sm" title="Customer ko ledger PDF form mein bhejein"><i class="fas fa-file-pdf"></i> Send PDF</button>
           <button onclick="App.showEditClient()" class="btn btn-secondary btn-sm"><i class="fas fa-edit"></i> Edit</button>
           <button onclick="App.showCustomColumns()" class="btn btn-secondary btn-sm"><i class="fas fa-columns"></i> Columns</button>
@@ -1805,6 +1836,7 @@ const App = {
 
   // ========= Dashboard =========
   async showDashboard() {
+    await this._loadReminders();
     this.state.view = 'dashboard';
     this.state.currentFolderId = null;
     this.state.currentClientId = null;
@@ -1871,6 +1903,10 @@ const App = {
             rawList, empList, expenseList, empPaidStats, profitStats, productList, invMfgList,
             salesTodayStats, salesMonthStats, salesWeekStats,
             salesTodayProducts, salesMonthProducts, salesWeekProducts } = data;
+    const remInfo = this._reminderInfo || { sent: [], sentIds: new Set(), weekday: 3, next_date: '' };
+    const remPending = (topPending || []).filter(cl => !(remInfo.sentIds && remInfo.sentIds.has(cl.id)));
+    const remSent = remInfo.sent || [];
+    const remDayName = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][remInfo.weekday ?? 3];
     const totalProfit = profitStats?.total_profit || 0;
     const profitMonth = profitStats?.profit_this_month || 0;
     const profitToday = profitStats?.profit_today || 0;
@@ -1994,22 +2030,28 @@ const App = {
           </div>
         </section>
 
-        ${(topPending && topPending.length > 0) ? `
+        ${(remPending.length > 0 || remSent.length > 0) ? `
         <!-- ============ PAYMENT REMINDERS (WhatsApp) ============ -->
         <section id="dash-reminders" class="bg-white rounded-xl shadow-sm p-5">
           <h2 class="dash-card-title"><span><i class="fab fa-whatsapp text-green-500 mr-2"></i>Payment Reminders — Sab Se Zyada Baqaya</span></h2>
-          <p class="text-xs text-gray-500 mb-3">Ye customers ka NET baqaya sab se zyada hai. <strong>Reminder</strong> dabate hi WhatsApp par ready-made message khul jayega — bas Send karna hai.</p>
-          <div class="space-y-2">
-            ${(topPending || []).map(cl => `
+          <p class="text-xs text-gray-500 mb-3">Reminder Day: <strong>${remDayName}</strong> · Is hafte bhej diye: <strong>${remSent.length}</strong> · Baqi: <strong>${remPending.length}</strong> · Agla cycle: <strong>${remInfo.next_date || ''}</strong></p>
+          ${remPending.length > 0 ? `<div class="space-y-2">
+            ${remPending.map(cl => `
               <div class="flex items-center justify-between gap-2 border rounded-lg px-3 py-2">
                 <div class="min-w-0">
                   <a href="#" onclick="App.openClient(${cl.id}); return false;" class="font-semibold text-blue-700 hover:underline">${this.escapeHtml(cl.name || '')}</a>
                   <span class="text-xs text-gray-400 ml-2">${this.escapeHtml(cl.folder_name || '')}</span>
                   <div class="text-xs text-gray-500">Baqaya: <strong class="text-red-600">PKR ${this.fmt(cl.net_due)}</strong>${cl.phone ? '' : ' · <span class="text-amber-600">phone save nahi hai</span>'}</div>
                 </div>
-                ${cl.phone ? `<button class="btn btn-sm" style="background:#25d366; color:#fff; white-space:nowrap;" onclick="App.remindClientById(${cl.id})"><i class="fab fa-whatsapp"></i> Reminder</button>` : `<button class="btn btn-secondary btn-sm" onclick="App.openClient(${cl.id})">Phone Add Karein</button>`}
+                ${cl.phone ? `<button data-reminder-for="${cl.id}" class="btn btn-sm" style="background:#25d366; color:#fff; white-space:nowrap;" onclick="App.remindClientById(${cl.id})"><i class="fab fa-whatsapp"></i> Reminder</button>` : `<button class="btn btn-secondary btn-sm" onclick="App.openClient(${cl.id})">Phone Add Karein</button>`}
               </div>`).join('')}
-          </div>
+          </div>` : `<p class="text-sm text-green-600 font-semibold"><i class="fas fa-check-circle mr-1"></i>Is hafte ke saare reminders bhej diye gaye hain.</p>`}
+          ${remSent.length > 0 ? `<div class="mt-3 pt-3 border-t">
+            <p class="text-xs text-gray-400 mb-2">Bhej diye gaye (galti ho to wapas lein):</p>
+            <div class="flex flex-wrap gap-1">
+              ${remSent.map(x => `<span class="inline-flex items-center gap-1 bg-gray-100 text-gray-600 text-xs rounded-full px-2 py-1">${this.escapeHtml(x.client_name || '')} <button type="button" class="text-blue-600 hover:text-blue-800" title="Undo — dobara pending kar dein" onclick="App._unmarkReminder(${x.client_id})"><i class="fas fa-undo"></i></button></span>`).join('')}
+            </div>
+          </div>` : ''}
         </section>` : ''}
 
         <!-- ============ SECTION 2: PROFIT OVERVIEW (Gross → costs → Net) ============ -->
@@ -8244,6 +8286,13 @@ const App = {
                 <label>${n}</label>
                 <code class="text-xs text-gray-500" id="br-${k}-code">${v}</code>
               </div>`).join('')}
+            <div class="md:col-span-2 border rounded-lg p-3">
+              <label class="block text-sm font-bold mb-2"><i class="fab fa-whatsapp text-green-500 mr-2"></i>Payment Reminder Day</label>
+              <select id="br-reminder-weekday" class="input-field" style="width:auto">
+                ${['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((dn, i) => `<option value="${i}" ${parseInt(b.reminder_weekday ?? 3) === i ? 'selected' : ''}>${dn}</option>`).join('')}
+              </select>
+              <p class="text-xs text-gray-500 mt-2">Har hafte is din se naya reminder cycle shuru hota hai — bheje hue customers ke Reminder button khud wapas aa jate hain agar un ka baqaya baqi ho.</p>
+            </div>
             <div class="flex gap-2 justify-end pt-3 border-t">
               <button onclick="App._resetBranding()" class="btn btn-secondary"><i class="fas fa-undo"></i> Reset</button>
               <button onclick="App._saveBranding()" class="btn btn-primary"><i class="fas fa-save"></i> Save Changes</button>
@@ -8350,7 +8399,8 @@ const App = {
       bill_phone: document.getElementById('br-phone').value,
       bill_email: document.getElementById('br-email')?.value || '',
       bill_website: document.getElementById('br-website')?.value || '',
-      bill_footer: document.getElementById('br-footer').value
+      bill_footer: document.getElementById('br-footer').value,
+      reminder_weekday: parseInt(document.getElementById('br-reminder-weekday')?.value ?? '3')
     };
     try {
       await this.api.put('/api/branding', b);

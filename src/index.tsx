@@ -219,6 +219,15 @@ app.get('/api/branding', async (c) => {
 
 app.put('/api/branding', requireAuth, async (c) => {
   const b = await c.req.json()
+  let reminderWeekday = 3
+  if (b.reminder_weekday !== undefined && b.reminder_weekday !== null && b.reminder_weekday !== '') {
+    const w = parseInt(b.reminder_weekday as any)
+    reminderWeekday = isNaN(w) ? 3 : Math.min(6, Math.max(0, w))
+  } else {
+    const cur = await c.env.DB.prepare('SELECT reminder_weekday FROM branding WHERE id = 1').first()
+    const cw = parseInt((cur as any)?.reminder_weekday as any)
+    reminderWeekday = isNaN(cw) ? 3 : Math.min(6, Math.max(0, cw))
+  }
   await c.env.DB.prepare(`
     UPDATE branding SET 
       company_name = ?, crm_name = ?, logo_url = ?,
@@ -226,6 +235,7 @@ app.put('/api/branding', requireAuth, async (c) => {
       received_color = ?, pending_color = ?, running_color = ?,
       bill_address = ?, bill_phone = ?, bill_footer = ?,
       bill_website = ?, bill_email = ?,
+      reminder_weekday = ?,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = 1
   `).bind(
@@ -241,7 +251,8 @@ app.put('/api/branding', requireAuth, async (c) => {
     b.bill_phone || '',
     b.bill_footer || '',
     b.bill_website || '',
-    b.bill_email || ''
+    b.bill_email || '',
+    reminderWeekday
   ).run()
   return c.json({ success: true })
 })
@@ -3946,6 +3957,57 @@ app.get('/api/dashboard/transactions', requireAuth, async (c) => {
   ])
   const total = (countRow as any)?.c || 0
   return c.json({ transactions: rows.results, total, page, pages: Math.ceil(total / limit) })
+})
+
+// ============ PAYMENT REMINDERS (weekly cycle) ============
+// Har hafte aik fix din (branding.reminder_weekday, default Wednesday)
+// se naya cycle shuru hota hai. Jis customer ko is cycle me reminder
+// bhej diya jaye wo payment_reminders me mark ho jata hai — frontend
+// us ka Reminder button chhupa deta hai. Dates Asia/Karachi (UTC+5)
+// ke hisaab se hain kyunke business Pakistan me hai.
+function pktDateStr(d: Date): string { return d.toISOString().slice(0, 10) }
+async function getReminderWeekday(env: any): Promise<number> {
+  const r: any = await env.DB.prepare('SELECT reminder_weekday FROM branding WHERE id = 1').first()
+  const w = parseInt(r?.reminder_weekday as any)
+  return isNaN(w) || w < 0 || w > 6 ? 3 : w
+}
+function reminderCycleDates(weekday: number): { cycle_date: string; next_date: string } {
+  const now = new Date(Date.now() + 5 * 60 * 60 * 1000) // PKT
+  const diff = (now.getUTCDay() - weekday + 7) % 7
+  const start = new Date(now); start.setUTCDate(start.getUTCDate() - diff)
+  const next = new Date(start); next.setUTCDate(next.getUTCDate() + 7)
+  return { cycle_date: pktDateStr(start), next_date: pktDateStr(next) }
+}
+
+app.get('/api/reminders', requireAuth, async (c) => {
+  const weekday = await getReminderWeekday(c.env)
+  const { cycle_date, next_date } = reminderCycleDates(weekday)
+  const res = await c.env.DB.prepare(
+    'SELECT client_id, client_name, amount, sent_at FROM payment_reminders WHERE cycle_date = ? ORDER BY sent_at ASC, id ASC'
+  ).bind(cycle_date).all()
+  return c.json({ weekday, cycle_date, next_date, sent: res.results })
+})
+
+app.post('/api/reminders/mark', requireAuth, async (c) => {
+  const b: any = await c.req.json().catch(() => ({}))
+  const clientId = parseInt(b.client_id)
+  if (!clientId) return c.json({ error: 'client_id required' }, 400)
+  const weekday = await getReminderWeekday(c.env)
+  const { cycle_date } = reminderCycleDates(weekday)
+  await c.env.DB.prepare('DELETE FROM payment_reminders WHERE client_id = ? AND cycle_date = ?').bind(clientId, cycle_date).run()
+  await c.env.DB.prepare(
+    'INSERT INTO payment_reminders (client_id, client_name, amount, cycle_date) VALUES (?, ?, ?, ?)'
+  ).bind(clientId, String(b.client_name || ''), parseFloat(b.amount) || 0, cycle_date).run()
+  return c.json({ success: true, cycle_date })
+})
+
+app.delete('/api/reminders/mark/:clientId', requireAuth, async (c) => {
+  const clientId = parseInt(c.req.param('clientId'))
+  if (!clientId) return c.json({ error: 'client_id required' }, 400)
+  const weekday = await getReminderWeekday(c.env)
+  const { cycle_date } = reminderCycleDates(weekday)
+  await c.env.DB.prepare('DELETE FROM payment_reminders WHERE client_id = ? AND cycle_date = ?').bind(clientId, cycle_date).run()
+  return c.json({ success: true, cycle_date })
 })
 
 // ============ REPORTS CENTER ============
