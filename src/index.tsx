@@ -4015,7 +4015,13 @@ app.delete('/api/reminders/mark/:clientId', requireAuth, async (c) => {
 // customer ke ledger ka online link bheja jata hai: /s/<token> par
 // us ka poora khata (statement) khul jata hai, PDF print bhi ho jata
 // hai. Token 64-hex ka ghair-andaza hai; regenerate = purana band.
-function genStatementToken(): string { return (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, '') }
+function genStatementToken(): string {
+  // 12 random bytes = 16 base64url characters — chhota sa code, lekin
+  // andaza lagana emkaan ke qareeb namumkin (96-bit). Purane 64-char
+  // walay tokens bhi chalte rehte hain (lookup exact match par hai).
+  const bytes = new Uint8Array(12); crypto.getRandomValues(bytes)
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
 async function ensureStatementToken(env: any, clientId: number): Promise<string | null> {
   const cl: any = await env.DB.prepare('SELECT statement_token FROM clients WHERE id = ?').bind(clientId).first()
   if (!cl) return null
@@ -4080,6 +4086,10 @@ app.get('/s/:token', async (c) => {
   const html = `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ledger Statement — ${esc(cl.name)}</title>
+<meta property="og:title" content="${esc(company)} — Ledger Statement">
+<meta property="og:description" content="${esc(cl.name)} ka khata (ledger) — balance aur entries dekhne ke liye link kholein.">
+<meta property="og:site_name" content="${esc(company)}">
+<meta property="og:type" content="website">
 <style>
   body { font-family: Arial, Helvetica, sans-serif; background:#f1f5f9; margin:0; padding:16px; color:#0f172a; }
   .sheet { max-width: 820px; margin: 0 auto; background:#fff; border-radius:12px; padding:28px; box-shadow:0 2px 12px rgba(0,0,0,.08); }

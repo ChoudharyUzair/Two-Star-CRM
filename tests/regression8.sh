@@ -42,7 +42,7 @@ echo "== Checks: statement link =="
 L1=$(req POST "/api/clients/$CID/statement-link" '{}')
 TOK1=$(py "d.get('token','')" "$L1")
 check "path /s/ se shuru" "True" "$(py "str(d.get('path','')).startswith('/s/')" "$L1")"
-check "token lamba (kam az kam 32 char)" "True" "$(python3 -c "print(len('$TOK1')>=32)")"
+check "token chhota (16 char)" "True" "$(python3 -c "print(len('$TOK1')==16)")"
 L2=$(req POST "/api/clients/$CID/statement-link" '{}')
 check "dobara call par wahi token" "$TOK1" "$(py "d.get('token','')" "$L2")"
 
@@ -59,7 +59,7 @@ check "ghalat token => 404" "404" "$CODE"
 echo "== Checks: regenerate =="
 L3=$(req POST "/api/clients/$CID/statement-link/regenerate" '{}')
 TOK2=$(py "d.get('token','')" "$L3")
-check "naya token purane se alag" "True" "$(python3 -c "print('$TOK2' != '$TOK1' and len('$TOK2')>=32)")"
+check "naya token purane se alag" "True" "$(python3 -c "print('$TOK2' != '$TOK1' and len('$TOK2')==16)")"
 CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/s/$TOK1")
 check "purana link band (404)" "404" "$CODE"
 CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/s/$TOK2")
