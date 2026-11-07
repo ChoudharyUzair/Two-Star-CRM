@@ -4363,6 +4363,7 @@ const App = {
         <div class="flex gap-2 flex-wrap">
           <input type="text" id="prod-search" placeholder="Search products..." class="input-field" style="max-width:200px;" oninput="App.renderProducts(this.value)" value="${this.escapeAttr(filter)}">
           <button onclick="App.showProductProductionEditor()" class="btn btn-secondary"><i class="fas fa-hard-hat"></i> Log Production</button>
+          <button onclick="App.showBulkProductProduction()" class="btn btn-secondary"><i class="fas fa-layer-group"></i> Bulk Entry</button>
           <button onclick="App.showProductEditor()" class="btn btn-primary"><i class="fas fa-plus"></i> Add Product</button>
         </div>
       </div>
@@ -5332,6 +5333,157 @@ const App = {
     });
   },
 
+  // ===== Bulk Entry — Products Manufacturing =====
+  // Aik hi worker + date par kai products/stages ki entries aik saath.
+  // Har row peeche se wahi single POST /api/product-production hai —
+  // stock, payout, barcode sab waisa hi hota hai jaise single entry me.
+  _pprodRateFor(empId, prodId, stage) {
+    const p = (this.state.products || []).find(x => x.id === parseInt(prodId));
+    const emp = (this.state.employees || []).find(e => e.id === parseInt(empId));
+    if (emp && p && Array.isArray(emp.items)) {
+      const norm = (x) => (x || '').trim().toLowerCase();
+      const prodName = norm(p.name); const stageName = norm(stage);
+      const candidates = [prodName + ' ' + stageName, stageName + ' ' + prodName, prodName + ' - ' + stageName, prodName];
+      for (const cand of candidates) {
+        const it = emp.items.find(x => norm(x.item_name) === cand);
+        if (it && parseFloat(it.rate) > 0) return parseFloat(it.rate);
+      }
+    }
+    if (p) { const r = stage === 'assemble' ? p.assemble_rate : stage === 'paint' ? p.paint_rate : p.pack_rate; if (parseFloat(r) > 0) return parseFloat(r); }
+    return 0;
+  },
+
+  showBulkProductProduction() {
+    const prods = this.state.products || [];
+    const emps = (this.state.employees || []).filter(e => e.active);
+    if (!prods.length) { this.toast('Pehle koi product add karein', 'error'); return; }
+    const today = new Date().toISOString().slice(0, 10);
+    this._bppSeq = 0;
+    this.openModal(`
+      <h2 class="text-xl font-bold mb-4"><i class="fas fa-layer-group text-purple-600 mr-2"></i>Bulk Entry — Product Production</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+        <div><label class="block text-sm font-medium mb-1">Worker</label>
+          <select id="bpp-emp" class="input-field" onchange="App._bppWorkerChange()"><option value="">-- (Optional) Select Worker --</option>${emps.map(e => `<option value="${e.id}">${this.escapeHtml(e.name)}</option>`).join('')}</select></div>
+        <div><label class="block text-sm font-medium mb-1">Date</label>
+          <input id="bpp-date" type="date" class="input-field" value="${today}"></div>
+      </div>
+      <div class="flex flex-wrap gap-4 mb-3 text-sm">
+        <label class="flex items-center gap-2"><input id="bpp-deduct" type="checkbox" checked> Auto-deduct previous-stage stock / set items</label>
+        <label class="flex items-center gap-2"><input id="bpp-barcode" type="checkbox" ${this._barcodeState?.settings?.auto_on_pack === false ? '' : 'checked'}> Pack entries ke barcode banayein</label>
+      </div>
+      <div id="bpp-rows" class="space-y-2 mb-3"></div>
+      <button type="button" class="btn btn-secondary btn-sm mb-4" onclick="App._bppAddRow()"><i class="fas fa-plus"></i> Add Row</button>
+      <div class="flex flex-wrap gap-2 justify-between items-center pt-3 border-t">
+        <span class="text-sm text-gray-600">Total Payout (est.): <strong id="bpp-total" class="text-gray-800">PKR 0.00</strong></span>
+        <span class="flex gap-2">
+          <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button type="button" class="btn btn-primary" id="bpp-save" onclick="App._bppSave()"><i class="fas fa-save"></i> Save All</button>
+        </span>
+      </div>`, 'modal-lg');
+    this._bppAddRow(); this._bppAddRow(); this._bppAddRow();
+  },
+
+  _bppAddRow() {
+    const wrap = document.getElementById('bpp-rows');
+    if (!wrap) return;
+    const prods = this.state.products || [];
+    const n = ++this._bppSeq;
+    const div = document.createElement('div');
+    div.className = 'bulk-row border rounded-lg p-2';
+    div.id = `bpp-row-${n}`;
+    div.innerHTML = `
+      <div class="grid grid-cols-12 gap-2 items-end">
+        <div class="col-span-12 md:col-span-4"><label class="block text-xs text-gray-500 mb-1">Product</label>
+          <select class="input-field bpp-prod" onchange="App._bppRowChange(${n})"><option value="">-- Select Product --</option>${prods.map(pr => `<option value="${pr.id}">${this.escapeHtml(pr.name)}</option>`).join('')}</select></div>
+        <div class="col-span-6 md:col-span-2"><label class="block text-xs text-gray-500 mb-1">Stage</label>
+          <select class="input-field bpp-stage" onchange="App._bppRowChange(${n})">
+            <option value="assemble">Assemble</option><option value="paint">Paint</option><option value="pack">Pack</option>
+          </select></div>
+        <div class="col-span-6 md:col-span-2"><label class="block text-xs text-gray-500 mb-1">Pieces</label>
+          <input type="number" step="any" min="0" class="input-field bpp-qty" placeholder="0" oninput="App._bppRecalc()"></div>
+        <div class="col-span-6 md:col-span-2"><label class="block text-xs text-gray-500 mb-1">Rate (PKR)</label>
+          <input type="number" step="any" min="0" class="input-field bpp-rate" placeholder="0" oninput="App._bppRecalc()"></div>
+        <div class="col-span-5 md:col-span-1"><label class="block text-xs text-gray-500 mb-1">Payout</label>
+          <div class="bpp-pay text-sm font-semibold py-2">PKR 0</div></div>
+        <div class="col-span-1 flex justify-end"><button type="button" class="btn btn-secondary btn-sm" title="Row hatayein" onclick="App._bppRemoveRow(${n})"><i class="fas fa-times"></i></button></div>
+      </div>
+      <div class="bpp-status text-xs mt-1"></div>`;
+    wrap.appendChild(div);
+    this._bppRecalc();
+  },
+
+  _bppRemoveRow(n) { const r = document.getElementById(`bpp-row-${n}`); if (r) r.remove(); this._bppRecalc(); },
+
+  _bppRowChange(n) {
+    const row = document.getElementById(`bpp-row-${n}`); if (!row || row.dataset.saved) return;
+    const empId = document.getElementById('bpp-emp').value || null;
+    const prodId = row.querySelector('.bpp-prod').value;
+    const stage = row.querySelector('.bpp-stage').value;
+    if (prodId) row.querySelector('.bpp-rate').value = this._pprodRateFor(empId, prodId, stage) || '';
+    this._bppRecalc();
+  },
+
+  _bppWorkerChange() {
+    document.querySelectorAll('#bpp-rows .bulk-row').forEach(row => {
+      if (row.dataset.saved) return;
+      const prodId = row.querySelector('.bpp-prod').value;
+      const stage = row.querySelector('.bpp-stage').value;
+      const empId = document.getElementById('bpp-emp').value || null;
+      if (prodId) row.querySelector('.bpp-rate').value = this._pprodRateFor(empId, prodId, stage) || '';
+    });
+    this._bppRecalc();
+  },
+
+  _bppRecalc() {
+    let total = 0;
+    document.querySelectorAll('#bpp-rows .bulk-row').forEach(row => {
+      const qty = parseFloat(row.querySelector('.bpp-qty').value) || 0;
+      const rate = parseFloat(row.querySelector('.bpp-rate').value) || 0;
+      const pay = qty * rate;
+      row.querySelector('.bpp-pay').textContent = `PKR ${this.fmt(pay)}`;
+      if (!row.dataset.saved) total += pay;
+    });
+    const t = document.getElementById('bpp-total');
+    if (t) t.textContent = `PKR ${this.fmt(total)}`;
+  },
+
+  async _bppSave() {
+    const btn = document.getElementById('bpp-save');
+    const empId = document.getElementById('bpp-emp').value || null;
+    const date = document.getElementById('bpp-date').value || new Date().toISOString().slice(0, 10);
+    const deduct = document.getElementById('bpp-deduct').checked;
+    const barcode = document.getElementById('bpp-barcode').checked;
+    const rows = [...document.querySelectorAll('#bpp-rows .bulk-row')].filter(r => !r.dataset.saved);
+    const usable = rows.filter(r => r.querySelector('.bpp-prod').value || (parseFloat(r.querySelector('.bpp-qty').value) || 0) > 0);
+    if (!usable.length) { this.toast('Kam az kam aik row me product aur pieces likhein', 'error'); return; }
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...'; }
+    let ok = 0, fail = 0;
+    for (const row of usable) {
+      const status = row.querySelector('.bpp-status');
+      const prodId = row.querySelector('.bpp-prod').value;
+      const stage = row.querySelector('.bpp-stage').value;
+      const qty = parseFloat(row.querySelector('.bpp-qty').value) || 0;
+      const rate = parseFloat(row.querySelector('.bpp-rate').value) || 0;
+      const failRow = (msg) => { fail++; status.innerHTML = `<span class="text-red-600 font-semibold">✗ ${this.escapeHtml(msg)}</span>`; };
+      if (!prodId) { failRow('Product select karein'); continue; }
+      if (qty <= 0) { failRow('Pieces 0 se zyada hon'); continue; }
+      try {
+        const res = await this.api.post('/api/product-production', { entry_date: date, stage, employee_id: empId, product_id: prodId, quantity: qty, rate, deduct, notes: '', generate_barcodes: stage === 'pack' ? barcode : false });
+        if (res && res.error) { let m = res.error; if (res.shortages) m += ' — ' + res.shortages.join('; '); failRow(m); continue; }
+        ok++;
+        row.dataset.saved = '1';
+        row.classList.add('bg-green-50', 'border-green-300');
+        row.querySelectorAll('input, select, button').forEach(el => { el.disabled = true; });
+        status.innerHTML = '<span class="text-green-600 font-semibold">✓ Saved</span>';
+      } catch { failRow('Save nahi ho saki — dobara try karein'); }
+    }
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-save"></i> Save All'; }
+    this._bppRecalc();
+    if (this.state.view === 'products') await this.showProducts();
+    if (fail === 0) { this.closeModal(); this.toast(`${ok} entries save ho gayin`, 'success'); }
+    else this.toast(`${ok} save ho gayin, ${fail} fail — fail wali rows par wajah likhi hai`, 'error');
+  },
+
   _onPProdChange() {
     this._autoFillPProdRate(true);
     this._onPProdRecalc();
@@ -5500,6 +5652,7 @@ const App = {
         <div class="flex gap-2 flex-wrap">
           <input type="text" id="comp-search" placeholder="Search components..." class="input-field" style="max-width:220px;" oninput="App.renderComponents(this.value)" value="${this.escapeAttr(filter)}">
           <button onclick="App.showProductionEditor()" class="btn btn-secondary"><i class="fas fa-hard-hat"></i> Log Production</button>
+          <button onclick="App.showBulkProduction()" class="btn btn-secondary"><i class="fas fa-layer-group"></i> Bulk Entry</button>
           <button onclick="App.showComponentEditor()" class="btn btn-primary"><i class="fas fa-plus"></i> Add Component</button>
         </div>
       </div>
@@ -5818,6 +5971,145 @@ const App = {
         this.toast('Production saved', 'success');
       } catch (err) { this.toast('Failed to save', 'error'); }
     });
+  },
+
+  // ===== Bulk Entry — Component Production =====
+  // Aik hi worker + date par kai components ki entries aik saath.
+  // Har row peeche se wahi single POST /api/production hai.
+  _cprodRateFor(empId, compId) {
+    const comp = (this.state.components || []).find(x => x.id === parseInt(compId));
+    const emp = (this.state.employees || []).find(e => e.id === parseInt(empId));
+    if (emp && comp && Array.isArray(emp.items)) {
+      const it = emp.items.find(x => (x.item_name || '').trim().toLowerCase() === (comp.name || '').trim().toLowerCase());
+      if (it && parseFloat(it.rate) > 0) return parseFloat(it.rate);
+    }
+    return comp ? (parseFloat(comp.default_rate) || 0) : 0;
+  },
+
+  showBulkProduction() {
+    const comps = this.state.components || [];
+    const emps = (this.state.employees || []).filter(e => e.active);
+    if (!comps.length) { this.toast('Pehle koi component add karein', 'error'); return; }
+    const today = new Date().toISOString().slice(0, 10);
+    this._bcpSeq = 0;
+    this.openModal(`
+      <h2 class="text-xl font-bold mb-4"><i class="fas fa-layer-group text-teal-600 mr-2"></i>Bulk Entry — Component Production</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+        <div><label class="block text-sm font-medium mb-1">Worker</label>
+          <select id="bcp-emp" class="input-field" onchange="App._bcpWorkerChange()"><option value="">-- (Optional) Select Worker --</option>${emps.map(e => `<option value="${e.id}">${this.escapeHtml(e.name)}</option>`).join('')}</select></div>
+        <div><label class="block text-sm font-medium mb-1">Date</label>
+          <input id="bcp-date" type="date" class="input-field" value="${today}"></div>
+      </div>
+      <div class="flex flex-wrap gap-4 mb-3 text-sm">
+        <label class="flex items-center gap-2"><input id="bcp-deduct" type="checkbox" checked> Auto-deduct raw material</label>
+      </div>
+      <div id="bcp-rows" class="space-y-2 mb-3"></div>
+      <button type="button" class="btn btn-secondary btn-sm mb-4" onclick="App._bcpAddRow()"><i class="fas fa-plus"></i> Add Row</button>
+      <div class="flex flex-wrap gap-2 justify-between items-center pt-3 border-t">
+        <span class="text-sm text-gray-600">Total Payout (est.): <strong id="bcp-total" class="text-gray-800">PKR 0.00</strong></span>
+        <span class="flex gap-2">
+          <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button type="button" class="btn btn-primary" id="bcp-save" onclick="App._bcpSave()"><i class="fas fa-save"></i> Save All</button>
+        </span>
+      </div>`, 'modal-lg');
+    this._bcpAddRow(); this._bcpAddRow(); this._bcpAddRow();
+  },
+
+  _bcpAddRow() {
+    const wrap = document.getElementById('bcp-rows');
+    if (!wrap) return;
+    const comps = this.state.components || [];
+    const n = ++this._bcpSeq;
+    const div = document.createElement('div');
+    div.className = 'bulk-row border rounded-lg p-2';
+    div.id = `bcp-row-${n}`;
+    div.innerHTML = `
+      <div class="grid grid-cols-12 gap-2 items-end">
+        <div class="col-span-12 md:col-span-4"><label class="block text-xs text-gray-500 mb-1">Component</label>
+          <select class="input-field bcp-comp" onchange="App._bcpRowChange(${n})"><option value="">-- Select Component --</option>${comps.map(cm => `<option value="${cm.id}">${this.escapeHtml(cm.name)} (Stock: ${this.fmt(cm.quantity)})</option>`).join('')}</select></div>
+        <div class="col-span-6 md:col-span-2"><label class="block text-xs text-gray-500 mb-1">Pieces Made</label>
+          <input type="number" step="any" min="0" class="input-field bcp-qty" placeholder="0" oninput="App._bcpRecalc()"></div>
+        <div class="col-span-6 md:col-span-2"><label class="block text-xs text-gray-500 mb-1">Scrap</label>
+          <input type="number" step="any" min="0" class="input-field bcp-scrap" placeholder="0" oninput="App._bcpRecalc()"></div>
+        <div class="col-span-6 md:col-span-2"><label class="block text-xs text-gray-500 mb-1">Rate (PKR)</label>
+          <input type="number" step="any" min="0" class="input-field bcp-rate" placeholder="0" oninput="App._bcpRecalc()"></div>
+        <div class="col-span-5 md:col-span-1"><label class="block text-xs text-gray-500 mb-1">Payout</label>
+          <div class="bcp-pay text-sm font-semibold py-2">PKR 0</div></div>
+        <div class="col-span-1 flex justify-end"><button type="button" class="btn btn-secondary btn-sm" title="Row hatayein" onclick="App._bcpRemoveRow(${n})"><i class="fas fa-times"></i></button></div>
+      </div>
+      <div class="bcp-status text-xs mt-1"></div>`;
+    wrap.appendChild(div);
+    this._bcpRecalc();
+  },
+
+  _bcpRemoveRow(n) { const r = document.getElementById(`bcp-row-${n}`); if (r) r.remove(); this._bcpRecalc(); },
+
+  _bcpRowChange(n) {
+    const row = document.getElementById(`bcp-row-${n}`); if (!row || row.dataset.saved) return;
+    const empId = document.getElementById('bcp-emp').value || null;
+    const compId = row.querySelector('.bcp-comp').value;
+    if (compId) row.querySelector('.bcp-rate').value = this._cprodRateFor(empId, compId) || '';
+    this._bcpRecalc();
+  },
+
+  _bcpWorkerChange() {
+    document.querySelectorAll('#bcp-rows .bulk-row').forEach(row => {
+      if (row.dataset.saved) return;
+      const compId = row.querySelector('.bcp-comp').value;
+      const empId = document.getElementById('bcp-emp').value || null;
+      if (compId) row.querySelector('.bcp-rate').value = this._cprodRateFor(empId, compId) || '';
+    });
+    this._bcpRecalc();
+  },
+
+  _bcpRecalc() {
+    let total = 0;
+    document.querySelectorAll('#bcp-rows .bulk-row').forEach(row => {
+      const qty = parseFloat(row.querySelector('.bcp-qty').value) || 0;
+      const rate = parseFloat(row.querySelector('.bcp-rate').value) || 0;
+      const pay = qty * rate;
+      row.querySelector('.bcp-pay').textContent = `PKR ${this.fmt(pay)}`;
+      if (!row.dataset.saved) total += pay;
+    });
+    const t = document.getElementById('bcp-total');
+    if (t) t.textContent = `PKR ${this.fmt(total)}`;
+  },
+
+  async _bcpSave() {
+    const btn = document.getElementById('bcp-save');
+    const empId = document.getElementById('bcp-emp').value || null;
+    const date = document.getElementById('bcp-date').value || new Date().toISOString().slice(0, 10);
+    const deduct = document.getElementById('bcp-deduct').checked;
+    const rows = [...document.querySelectorAll('#bcp-rows .bulk-row')].filter(r => !r.dataset.saved);
+    const usable = rows.filter(r => r.querySelector('.bcp-comp').value || (parseFloat(r.querySelector('.bcp-qty').value) || 0) > 0);
+    if (!usable.length) { this.toast('Kam az kam aik row me component aur pieces likhein', 'error'); return; }
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...'; }
+    let ok = 0, fail = 0;
+    for (const row of usable) {
+      const status = row.querySelector('.bcp-status');
+      const compId = row.querySelector('.bcp-comp').value;
+      const qty = parseFloat(row.querySelector('.bcp-qty').value) || 0;
+      const scrap = parseFloat(row.querySelector('.bcp-scrap').value) || 0;
+      const rate = parseFloat(row.querySelector('.bcp-rate').value) || 0;
+      const failRow = (msg) => { fail++; status.innerHTML = `<span class="text-red-600 font-semibold">✗ ${this.escapeHtml(msg)}</span>`; };
+      if (!compId) { failRow('Component select karein'); continue; }
+      if (qty <= 0) { failRow('Pieces 0 se zyada hon'); continue; }
+      try {
+        const res = await this.api.post('/api/production', { entry_date: date, employee_id: empId, component_id: compId, quantity: qty, rate, deduct_raw: deduct, scrap_qty: scrap, notes: '' });
+        if (res && res.error) { let m = res.error; if (res.shortages) m += ' — ' + res.shortages.join('; '); failRow(m); continue; }
+        ok++;
+        row.dataset.saved = '1';
+        row.classList.add('bg-green-50', 'border-green-300');
+        row.querySelectorAll('input, select, button').forEach(el => { el.disabled = true; });
+        status.innerHTML = '<span class="text-green-600 font-semibold">✓ Saved</span>';
+      } catch { failRow('Save nahi ho saki — dobara try karein'); }
+    }
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-save"></i> Save All'; }
+    this._bcpRecalc();
+    if (this.state.view === 'components') await this.showComponents();
+    else if (this.state.currentEmployee) await this.openEmployee(this.state.currentEmployee.id);
+    if (fail === 0) { this.closeModal(); this.toast(`${ok} entries save ho gayin`, 'success'); }
+    else this.toast(`${ok} save ho gayin, ${fail} fail — fail wali rows par wajah likhi hai`, 'error');
   },
 
   _onProdCompChange() {

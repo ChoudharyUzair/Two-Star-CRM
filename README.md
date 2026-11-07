@@ -98,6 +98,16 @@ Har kisi ke proper records, table ki surat me, **date filter** (All Time / Today
 - **Ledger page par "Ledger Link" button:** wahan se link dekh/copy kar sakte hain, aur **"Naya Link Banayein"** se purana link band karke naya ban jata hai (link kahin leak ho jaye to yahi safety hai).
 - Endpoints: `POST /api/clients/:id/statement-link` (token banta/pehli dafa generate hota hai, phir stable rehta hai), `POST /api/clients/:id/statement-link/regenerate`, public `GET /s/:token` (baghair login, sirf token wale customer ka khata). Tests: `tests/regression8.sh` (11 naye checks).
 - Note: asal PDF **file attachment** sirf WhatsApp Business API (Tareeqa 2) se mumkin hai; link wala tareeqa har phone/desktop par chalta hai aur customer ko hamesha latest khata dikhata hai.
+### 19. Bulk Entry — Products Manufacturing + Component Production (2026-11-07)
+
+- Dono production pages par **"Bulk Entry"** button aa gaya hai. Masla ye tha: aik hi worker (masalan Sohail) ki aik hi date ki kai entries — 4-5 products, mukhtalif stages (assemble / paint / pack) — har aik ke liye alag form kholna parta tha.
+- Bulk modal me **Worker aur Date sirf aik dafa** select hote hain; neeche jitni chahen **rows** add karein — har row me product/component, stage (products), pieces, scrap (components) aur rate. **Rate har row ka khud auto-fill** hota hai (worker ka saved rate pehle, warna product/component ka default rate) — worker badalne par saari rows ke rate refresh ho jate hain. Har row ke samne payout aur neeche **Total Payout** live hisaab bhi dikhta hai.
+- Products wale modal me do shared options: **Auto-deduct** (previous-stage stock / set items) aur **Pack entries ke barcode banayein**; components wale me Auto-deduct raw material.
+- **Save All** par har row ki entry alag save hoti hai (peeche se wahi single-entry wala system hai — stock, salary, barcode sab bilkul waisa hi). Jo row save ho jaye wo **green ✓ Saved** ho kar lock ho jati hai; jo fail ho (masalan stock kam ho) us par **lal rang me wajah** likhi aa jati hai aur wo row theek karke dobara Save All kiya ja sakta hai — baqi rows dobara save nahi hoti (duplicate nahi banta).
+- Tests: `tests/regression9.sh` — 17 naye checks (bulk sequence, beech me fail wali row, us ke baad wali rows ka save hona, stage flow, salary total). Kul ab **133 checks PASS**.
+
+---
+
 - **Update (user ki hidayat):** message **SHORT** kar diya gaya hai — khulasa (Opening/Udhar/Wasool wali lines) aur aakhri entries ki list message se **hata di gayi** hai. Ab message me sirf: salaam, company line, total baqaya, ledger ka link, aur closing line aati hai. Tafseel sirf link wale statement page par hai. Aur company ka naam reminder message + statement page par **"Two Star Essentials"** (CRM name) aata hai, "Two Star Industries" nahi — bills par jo naam hai wo waisa hi hai.
 
 ### ⚡ 7. Speed fix
