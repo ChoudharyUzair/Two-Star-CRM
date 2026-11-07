@@ -175,19 +175,57 @@ const App = {
   // ===== WhatsApp Payment Reminder =====
   // Customer ko us ke number par ready-made reminder message kholta hai.
   // due = NET baqaya (opening + pending - received). Supplier ke liye ye use nahi hota.
-  sendPaymentReminder(phone, customerName, due, extraLine, clientId) {
+  async sendPaymentReminder(phone, customerName, due, extraLine, clientId, opts) {
     const d = parseFloat(due) || 0;
     if (d <= 0) { this.toast('Is customer ka koi baqaya nahi hai', 'info'); return; }
     const num = this._waNumber(phone);
     if (!num) { this.toast('Is customer ka WhatsApp number save nahi hai — pehle Edit karke phone add karein', 'error'); return; }
     const b = this.state.branding || {};
     const company = b.company_name || 'Two Star Industries';
+    // Ledger ka link (statement page) — reminder ke saath jata hai
+    let stmtUrl = '';
+    if (clientId) {
+      try { const r = await this.api.post(`/api/clients/${clientId}/statement-link`, {}); if (r?.path) stmtUrl = `${location.origin}${r.path}`; } catch {}
+    }
+    // Message ke andar ledger ka khulasa + aakhri entries
+    let summaryBlock = '';
+    if (opts && (opts.transactions || opts.opening !== undefined)) {
+      const txns = opts.transactions || [];
+      const opening = parseFloat(opts.opening) || 0;
+      let tPen = 0, tRec = 0;
+      txns.forEach(t => { tPen += parseFloat(t.amount_pending) || 0; tRec += parseFloat(t.amount_received) || 0; });
+      const parts = [
+        'Aap ke ledger ka khulasa:',
+        `• Opening Balance: PKR ${this.fmt(opening)}`,
+        `• Kul Udhar/Bills: PKR ${this.fmt(tPen)}`,
+        `• Kul Wasool: PKR ${this.fmt(tRec)}`,
+        `• Total Baqaya: *PKR ${this.fmt(d)}*`
+      ];
+      const last = [...txns].slice(-5).reverse();
+      if (last.length) {
+        parts.push('', 'Aakhri entries:');
+        last.forEach(t => {
+          const pen = parseFloat(t.amount_pending) || 0;
+          const rec = parseFloat(t.amount_received) || 0;
+          const amt = pen > 0 ? `+PKR ${this.fmt(pen)}` : `-PKR ${this.fmt(rec)}`;
+          let desc = t.description || (t.bill_no ? `Bill ${t.bill_no}` : 'Entry');
+          if (desc.length > 42) desc = desc.slice(0, 42) + '…';
+          parts.push(`• ${t.entry_date || ''} — ${desc} — ${amt}`);
+        });
+      }
+      if (stmtUrl) parts.push('', 'Poora ledger (PDF) dekhne ke liye:', stmtUrl);
+      summaryBlock = parts.join('\n');
+    } else if (stmtUrl) {
+      summaryBlock = `Aap ka poora ledger (PDF) dekhne ke liye:\n${stmtUrl}`;
+    }
     const lines = [
       `Assalam-o-Alaikum ${customerName || ''}!`,
       ``,
       `Ye *${company}* ki taraf se payment reminder hai.`,
       `Aap ka total baqaya: *PKR ${this.fmt(d)}* hai.`,
       extraLine || '',
+      summaryBlock,
+      ``,
       `Meherbani karke apni payment jald az jald clear kar dein. JazakAllah!`,
       b.bill_phone ? `Rabta: ${b.bill_phone}` : ''
     ].filter(x => x !== '');
@@ -203,7 +241,7 @@ const App = {
     let rec = 0, pen = 0;
     (this.state.transactions || []).forEach(t => { rec += parseFloat(t.amount_received) || 0; pen += parseFloat(t.amount_pending) || 0; });
     const due = opening + pen - rec;
-    this.sendPaymentReminder(c.phone, c.name, due, undefined, c.id);
+    this.sendPaymentReminder(c.phone, c.name, due, undefined, c.id, { opening, transactions: this.state.transactions || [] });
   },
 
   // Dashboard / lists ke liye: data fetch karke due nikaal kar reminder.
@@ -217,7 +255,7 @@ const App = {
       const opening = parseFloat(c.opening_balance) || 0;
       let rec = 0, pen = 0;
       (tdata.transactions || []).forEach(t => { rec += parseFloat(t.amount_received) || 0; pen += parseFloat(t.amount_pending) || 0; });
-      this.sendPaymentReminder(c.phone, c.name, opening + pen - rec, undefined, clientId);
+      this.sendPaymentReminder(c.phone, c.name, opening + pen - rec, undefined, clientId, { opening, transactions: tdata.transactions || [] });
     } catch (e) { this.toast('Reminder nahi khul saka', 'error'); }
   },
 
@@ -919,6 +957,7 @@ const App = {
             ? `<button onclick="App.showSupplierRates()" class="btn btn-primary btn-sm" title="Is supplier se items kis rate par lete hain — buy rate set karein"><i class="fas fa-tags"></i> Product Rates</button>`
             : `<button onclick="App.showCustomerRates()" class="btn btn-primary btn-sm" title="Is customer ke liye products ke special selling rate set karein"><i class="fas fa-tags"></i> Product Rates</button>`}
           ${!isSupplier && netBalance > 0 && !this._reminderSent(this.state.currentClientId) ? `<button data-reminder-for="${this.state.currentClientId}" onclick="App.remindCurrentClient()" class="btn btn-sm" style="background:#25d366; color:#fff;" title="Customer ko WhatsApp par payment reminder bhejein (baqaya: PKR ${this.fmt(netBalance)})"><i class="fab fa-whatsapp"></i> Payment Reminder</button>` : ''}
+          <button onclick="App.showStatementLink()" class="btn btn-secondary btn-sm" title="Customer ke ledger ka online link — WhatsApp reminder ke saath yahi link jata hai"><i class="fas fa-link"></i> Ledger Link</button>
           <button onclick="App.showLedgerPdfModal()" class="btn btn-success btn-sm" title="Customer ko ledger PDF form mein bhejein"><i class="fas fa-file-pdf"></i> Send PDF</button>
           <button onclick="App.showEditClient()" class="btn btn-secondary btn-sm"><i class="fas fa-edit"></i> Edit</button>
           <button onclick="App.showCustomColumns()" class="btn btn-secondary btn-sm"><i class="fas fa-columns"></i> Columns</button>
@@ -1202,6 +1241,47 @@ const App = {
   // ===== LEDGER PDF (Feature #7) =====
   // Show a small modal to choose how many recent entries to include, then
   // generate a Two Star branded ledger PDF for the current customer.
+  // Customer ke ledger ka online (statement) link — dekhna/copy/regenerate
+  async showStatementLink() {
+    const id = this.state.currentClientId;
+    if (!id) return;
+    try {
+      const r = await this.api.post(`/api/clients/${id}/statement-link`, {});
+      const url = `${location.origin}${r.path}`;
+      this.openModal(`
+        <h2 class="text-xl font-bold mb-3"><i class="fas fa-link text-blue-500 mr-2"></i>Customer Ledger Link</h2>
+        <p class="text-sm text-gray-500 mb-3">Is link se customer apna poora ledger dekh aur PDF download kar sakta hai. Jiske paas ye link hoga wahi ledger dekh sakega — link sambhal kar share karein.</p>
+        <div class="flex gap-2 mb-4">
+          <input id="stmt-link" type="text" readonly class="input-field" value="${url}">
+          <button type="button" class="btn btn-primary" style="white-space:nowrap" onclick="App._copyStatementLink()"><i class="fas fa-copy"></i> Copy</button>
+        </div>
+        <div class="flex gap-2 justify-between">
+          <button type="button" class="btn btn-secondary" onclick="App.regenerateStatementLink()"><i class="fas fa-rotate"></i> Naya Link Banayein</button>
+          <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Close</button>
+        </div>`);
+    } catch { this.toast('Link nahi ban saka', 'error'); }
+  },
+
+  async regenerateStatementLink() {
+    const id = this.state.currentClientId;
+    if (!id) return;
+    try {
+      const r = await this.api.post(`/api/clients/${id}/statement-link/regenerate`, {});
+      const el = document.getElementById('stmt-link');
+      if (el) el.value = `${location.origin}${r.path}`;
+      this.toast('Naya link ban gaya — purana link band ho gaya hai', 'success');
+    } catch { this.toast('Naya link nahi ban saka', 'error'); }
+  },
+
+  _copyStatementLink() {
+    const el = document.getElementById('stmt-link');
+    if (!el) return;
+    el.select();
+    if (navigator.clipboard) navigator.clipboard.writeText(el.value).catch(() => {});
+    else document.execCommand('copy');
+    this.toast('Link copy ho gaya', 'success');
+  },
+
   showLedgerPdfModal() {
     const c = this.state.currentClient;
     if (!c) return;

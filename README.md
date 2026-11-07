@@ -91,6 +91,14 @@ Har kisi ke proper records, table ki surat me, **date filter** (All Time / Today
 - **Agla hafta:** naya cycle shuru hote hi jin customers ka baqaya abhi baqi hai un ke button **khud wapas** aa jate hain; jin hon ne payment kar di un ke nahi aate.
 - Note: message bhejna ab bhi WhatsApp me ek "Send" click se hota hai (WhatsApp personal number se baghair click bhejna allow nahi karta) — lekin tracking, cycle aur button-hide wala poora system ab automatic hai. Naye endpoints: `GET /api/reminders`, `POST /api/reminders/mark`, `DELETE /api/reminders/mark/:clientId`; weekday `branding.reminder_weekday` me store hota hai. Dates Asia/Karachi ke hisaab se ginay jate hain. Tests: `tests/regression7.sh` (13 naye checks).
 
+### 🔗 18. Reminder ke saath customer ka LEDGER bhi — Statement Link
+- User ki hidayat: reminder sirf khaali message na ho, us ke saath customer ka **ledger (khata)** bhi jaye. WhatsApp ke link (wa.me) se asal file attach nahi ho sakti, is liye is ka kaam ka hal ye banaya gaya hai:
+- **Message ke andar ledger ka khulasa:** Opening Balance, Kul Udhar/Bills, Kul Wasool, Total Baqaya — aur **aakhri 5 entries** (date, description, +/- amount) message ke andar hi likhi aati hain.
+- **Poora ledger ka link:** Har customer ke liye aik ghair-andaza token wala **statement link** (`/s/<token>`, migration 0028) — message ke aakhir me ye link jata hai; customer us par click karke apna **poora ledger** dekh sakta hai aur wahi se **PDF print/download** bhi kar sakta hai (company branding ke saath saaf statement page: summary boxes + poori entries table + running balance).
+- **Ledger page par "Ledger Link" button:** wahan se link dekh/copy kar sakte hain, aur **"Naya Link Banayein"** se purana link band karke naya ban jata hai (link kahin leak ho jaye to yahi safety hai).
+- Endpoints: `POST /api/clients/:id/statement-link` (token banta/pehli dafa generate hota hai, phir stable rehta hai), `POST /api/clients/:id/statement-link/regenerate`, public `GET /s/:token` (baghair login, sirf token wale customer ka khata). Tests: `tests/regression8.sh` (11 naye checks).
+- Note: asal PDF **file attachment** sirf WhatsApp Business API (Tareeqa 2) se mumkin hai; link wala tareeqa har phone/desktop par chalta hai aur customer ko hamesha latest khata dikhata hai.
+
 ### ⚡ 7. Speed fix
 - **Tailwind Play CDN hata diya** — wo browser me har load par poori CSS runtime par generate karta tha (slowness ki sab se bari wajah). Ab pehle se compiled static `public/static/tailwind.css` (24 KB) aati hai. Build: `npm run build` me `build:css` shamil hai; nayi Tailwind class use karo to build dobara chalana hoga.
 - **Heavy libraries lazy-load:** jsPDF, html2canvas, JsBarcode, html5-qrcode (~1 MB JS) ab pehle page load par NAHI aatein — sirf PDF / barcode / scanner kholne par pehli dafa load hoti hain.

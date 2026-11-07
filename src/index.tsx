@@ -4010,6 +4010,123 @@ app.delete('/api/reminders/mark/:clientId', requireAuth, async (c) => {
   return c.json({ success: true, cycle_date })
 })
 
+// ============ CUSTOMER STATEMENT LINK (public ledger page) ============
+// WhatsApp se asal file attach nahi hoti, is liye reminder ke saath
+// customer ke ledger ka online link bheja jata hai: /s/<token> par
+// us ka poora khata (statement) khul jata hai, PDF print bhi ho jata
+// hai. Token 64-hex ka ghair-andaza hai; regenerate = purana band.
+function genStatementToken(): string { return (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, '') }
+async function ensureStatementToken(env: any, clientId: number): Promise<string | null> {
+  const cl: any = await env.DB.prepare('SELECT statement_token FROM clients WHERE id = ?').bind(clientId).first()
+  if (!cl) return null
+  if (cl.statement_token) return cl.statement_token as string
+  const t = genStatementToken()
+  await env.DB.prepare('UPDATE clients SET statement_token = ? WHERE id = ?').bind(t, clientId).run()
+  return t
+}
+
+app.post('/api/clients/:id/statement-link', requireAuth, async (c) => {
+  const id = parseInt(c.req.param('id'))
+  const t = await ensureStatementToken(c.env, id)
+  if (!t) return c.json({ error: 'client not found' }, 404)
+  return c.json({ path: `/s/${t}`, token: t })
+})
+
+app.post('/api/clients/:id/statement-link/regenerate', requireAuth, async (c) => {
+  const id = parseInt(c.req.param('id'))
+  const cl: any = await c.env.DB.prepare('SELECT id FROM clients WHERE id = ?').bind(id).first()
+  if (!cl) return c.json({ error: 'client not found' }, 404)
+  const t = genStatementToken()
+  await c.env.DB.prepare('UPDATE clients SET statement_token = ? WHERE id = ?').bind(t, id).run()
+  return c.json({ path: `/s/${t}`, token: t })
+})
+
+app.get('/s/:token', async (c) => {
+  const token = c.req.param('token')
+  const cl: any = await c.env.DB.prepare(
+    `SELECT cl.*, f.name AS folder_name, f.ledger_type AS ledger_type
+     FROM clients cl LEFT JOIN folders f ON f.id = cl.folder_id
+     WHERE cl.statement_token = ?`
+  ).bind(token).first()
+  const esc = (x: any) => String(x ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  if (!cl) {
+    return c.html(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Link Invalid</title></head>
+<body style="font-family:Arial,sans-serif;text-align:center;padding:60px 20px;color:#334155;">
+<h2>Ye link durust nahi hai</h2><p>Ho sakta hai naya link ban gaya ho. Meherbani karke company se rabta karein.</p></body></html>`, 404)
+  }
+  const txns = ((await c.env.DB.prepare(
+    'SELECT * FROM transactions WHERE client_id = ? ORDER BY entry_date ASC, id ASC'
+  ).bind(cl.id).all()).results || []) as any[]
+  const b: any = (await c.env.DB.prepare('SELECT * FROM branding WHERE id = 1').first()) || {}
+  const fmt = (n: any) => (parseFloat(n as any) || 0).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const opening = parseFloat(cl.opening_balance) || 0
+  let bal = opening, tPen = 0, tRec = 0
+  const rows = txns.map((t: any) => {
+    const pen = parseFloat(t.amount_pending) || 0
+    const rec = parseFloat(t.amount_received) || 0
+    tPen += pen; tRec += rec; bal += pen - rec
+    return `<tr>
+      <td>${esc(t.entry_date || '')}</td>
+      <td>${esc(t.bill_no || '')}</td>
+      <td>${esc(t.description || '')}</td>
+      <td style="text-align:right">${pen ? fmt(pen) : ''}</td>
+      <td style="text-align:right">${rec ? fmt(rec) : ''}</td>
+      <td style="text-align:right;font-weight:bold">${fmt(bal)}</td>
+    </tr>`
+  }).join('')
+  const isSup = cl.ledger_type === 'supplier'
+  const today = new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  const html = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ledger Statement — ${esc(cl.name)}</title>
+<style>
+  body { font-family: Arial, Helvetica, sans-serif; background:#f1f5f9; margin:0; padding:16px; color:#0f172a; }
+  .sheet { max-width: 820px; margin: 0 auto; background:#fff; border-radius:12px; padding:28px; box-shadow:0 2px 12px rgba(0,0,0,.08); }
+  h1 { font-size:22px; margin:0; } h2 { font-size:17px; margin:18px 0 8px; }
+  .muted { color:#64748b; font-size:13px; }
+  .boxes { display:flex; flex-wrap:wrap; gap:10px; margin:16px 0; }
+  .box { flex:1 1 150px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:12px; }
+  .box .lbl { font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:.4px; }
+  .box .val { font-size:17px; font-weight:bold; margin-top:4px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th { background:#f1f5f9; text-align:left; padding:8px; border-bottom:2px solid #cbd5e1; font-size:11px; text-transform:uppercase; letter-spacing:.4px; }
+  td { padding:7px 8px; border-bottom:1px solid #e2e8f0; vertical-align:top; }
+  .btn { display:inline-block; background:#2563eb; color:#fff; border:none; padding:10px 18px; border-radius:8px; font-size:14px; cursor:pointer; }
+  .top { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; }
+  @media print { body { background:#fff; padding:0; } .sheet { box-shadow:none; } .no-print { display:none; } }
+</style></head>
+<body>
+<div class="sheet">
+  <div class="top">
+    <div>
+      <h1>${esc(b.company_name || 'Two Star Industries')}</h1>
+      <div class="muted">${esc(b.bill_address || '')}${b.bill_phone ? ' · ' + esc(b.bill_phone) : ''}</div>
+      <h2>Ledger Statement (Khata)</h2>
+      <div class="muted">Customer: <strong style="color:#0f172a">${esc(cl.name)}</strong>${cl.phone ? ' · ' + esc(cl.phone) : ''}${cl.folder_name ? ' · ' + esc(cl.folder_name) : ''}</div>
+      <div class="muted">Date: ${today} · Kul entries: ${txns.length}</div>
+    </div>
+    <button class="btn no-print" onclick="window.print()">Download / Print PDF</button>
+  </div>
+  <div class="boxes">
+    <div class="box"><div class="lbl">Opening Balance</div><div class="val">PKR ${fmt(opening)}</div></div>
+    <div class="box"><div class="lbl">Total Pending / Bills</div><div class="val">PKR ${fmt(tPen)}</div></div>
+    <div class="box"><div class="lbl">Total Received</div><div class="val" style="color:#16a34a">PKR ${fmt(tRec)}</div></div>
+    <div class="box"><div class="lbl">${isSup ? 'Net Balance (Dena)' : 'Net Balance (Baqaya)'}</div><div class="val" style="color:#dc2626">PKR ${fmt(bal)}</div></div>
+  </div>
+  <table>
+    <thead><tr><th>Date</th><th>Bill No</th><th>Description</th><th style="text-align:right">Pending (+)</th><th style="text-align:right">Received (-)</th><th style="text-align:right">Balance</th></tr></thead>
+    <tbody>
+      <tr><td></td><td></td><td><em>Opening Balance</em></td><td></td><td></td><td style="text-align:right;font-weight:bold">${fmt(opening)}</td></tr>
+      ${rows || '<tr><td colspan="6" style="text-align:center;color:#64748b;padding:16px">Abhi koi entry nahi hai.</td></tr>'}
+    </tbody>
+  </table>
+  <p class="muted" style="margin-top:18px">Ye statement ${esc(b.company_name || 'Two Star Industries')} ke system se bani hai. Koi ghalat entry lage to meherbani karke rabta karein${b.bill_phone ? ': ' + esc(b.bill_phone) : ''}.</p>
+</div>
+</body></html>`
+  c.header('Cache-Control', 'no-store')
+  return c.html(html)
+})
+
 // ============ REPORTS CENTER ============
 // Har kisi ke proper records — table ki surat me, date filter ke saath:
 //   - Customers: kis customer ne kitna maal khareeda, konsi cheez kitni
