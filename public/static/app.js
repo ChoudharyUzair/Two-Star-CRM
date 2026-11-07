@@ -181,43 +181,14 @@ const App = {
     const num = this._waNumber(phone);
     if (!num) { this.toast('Is customer ka WhatsApp number save nahi hai — pehle Edit karke phone add karein', 'error'); return; }
     const b = this.state.branding || {};
-    const company = b.company_name || 'Two Star Industries';
+    const company = b.crm_name || b.company_name || 'Two Star Essentials';
     // Ledger ka link (statement page) — reminder ke saath jata hai
     let stmtUrl = '';
     if (clientId) {
       try { const r = await this.api.post(`/api/clients/${clientId}/statement-link`, {}); if (r?.path) stmtUrl = `${location.origin}${r.path}`; } catch {}
     }
-    // Message ke andar ledger ka khulasa + aakhri entries
-    let summaryBlock = '';
-    if (opts && (opts.transactions || opts.opening !== undefined)) {
-      const txns = opts.transactions || [];
-      const opening = parseFloat(opts.opening) || 0;
-      let tPen = 0, tRec = 0;
-      txns.forEach(t => { tPen += parseFloat(t.amount_pending) || 0; tRec += parseFloat(t.amount_received) || 0; });
-      const parts = [
-        'Aap ke ledger ka khulasa:',
-        `• Opening Balance: PKR ${this.fmt(opening)}`,
-        `• Kul Udhar/Bills: PKR ${this.fmt(tPen)}`,
-        `• Kul Wasool: PKR ${this.fmt(tRec)}`,
-        `• Total Baqaya: *PKR ${this.fmt(d)}*`
-      ];
-      const last = [...txns].slice(-5).reverse();
-      if (last.length) {
-        parts.push('', 'Aakhri entries:');
-        last.forEach(t => {
-          const pen = parseFloat(t.amount_pending) || 0;
-          const rec = parseFloat(t.amount_received) || 0;
-          const amt = pen > 0 ? `+PKR ${this.fmt(pen)}` : `-PKR ${this.fmt(rec)}`;
-          let desc = t.description || (t.bill_no ? `Bill ${t.bill_no}` : 'Entry');
-          if (desc.length > 42) desc = desc.slice(0, 42) + '…';
-          parts.push(`• ${t.entry_date || ''} — ${desc} — ${amt}`);
-        });
-      }
-      if (stmtUrl) parts.push('', 'Poora ledger (PDF) dekhne ke liye:', stmtUrl);
-      summaryBlock = parts.join('\n');
-    } else if (stmtUrl) {
-      summaryBlock = `Aap ka poora ledger (PDF) dekhne ke liye:\n${stmtUrl}`;
-    }
+    // Message SHORT rakha hai — hisaab ki tafseel nahi, sirf ledger ka link
+    const summaryBlock = stmtUrl ? `Poora ledger (PDF) dekhne ke liye:\n${stmtUrl}` : '';
     const lines = [
       `Assalam-o-Alaikum ${customerName || ''}!`,
       ``,

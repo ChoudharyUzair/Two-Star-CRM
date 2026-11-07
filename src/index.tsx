@@ -4058,6 +4058,7 @@ app.get('/s/:token', async (c) => {
     'SELECT * FROM transactions WHERE client_id = ? ORDER BY entry_date ASC, id ASC'
   ).bind(cl.id).all()).results || []) as any[]
   const b: any = (await c.env.DB.prepare('SELECT * FROM branding WHERE id = 1').first()) || {}
+  const company = b.crm_name || b.company_name || 'Two Star Essentials'
   const fmt = (n: any) => (parseFloat(n as any) || 0).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   const opening = parseFloat(cl.opening_balance) || 0
   let bal = opening, tPen = 0, tRec = 0
@@ -4099,7 +4100,7 @@ app.get('/s/:token', async (c) => {
 <div class="sheet">
   <div class="top">
     <div>
-      <h1>${esc(b.company_name || 'Two Star Industries')}</h1>
+      <h1>${esc(company)}</h1>
       <div class="muted">${esc(b.bill_address || '')}${b.bill_phone ? ' · ' + esc(b.bill_phone) : ''}</div>
       <h2>Ledger Statement (Khata)</h2>
       <div class="muted">Customer: <strong style="color:#0f172a">${esc(cl.name)}</strong>${cl.phone ? ' · ' + esc(cl.phone) : ''}${cl.folder_name ? ' · ' + esc(cl.folder_name) : ''}</div>
@@ -4120,7 +4121,7 @@ app.get('/s/:token', async (c) => {
       ${rows || '<tr><td colspan="6" style="text-align:center;color:#64748b;padding:16px">Abhi koi entry nahi hai.</td></tr>'}
     </tbody>
   </table>
-  <p class="muted" style="margin-top:18px">Ye statement ${esc(b.company_name || 'Two Star Industries')} ke system se bani hai. Koi ghalat entry lage to meherbani karke rabta karein${b.bill_phone ? ': ' + esc(b.bill_phone) : ''}.</p>
+  <p class="muted" style="margin-top:18px">Ye statement ${esc(company)} ke system se bani hai. Koi ghalat entry lage to meherbani karke rabta karein${b.bill_phone ? ': ' + esc(b.bill_phone) : ''}.</p>
 </div>
 </body></html>`
   c.header('Cache-Control', 'no-store')
